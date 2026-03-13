@@ -6,7 +6,7 @@
 - Implement the feature code
 - Make sure code is compilable by `mix compile` and has no warnings
 - Run all tests with `mix test` and ensure they pass
-- Make sure code runs in `iex -S mix` without errors
+- Make sure code runs in `iex -S mix phx.server` without errors
 - Check with `mix dialyzer` for type issues
 - Update documentation and AGENTS.md if needed
 - Run `mix format` to ensure code style compliance
