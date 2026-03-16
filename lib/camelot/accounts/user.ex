@@ -34,9 +34,7 @@ defmodule Camelot.Accounts.User do
         registration_enabled?(true)
         require_interaction?(true)
 
-        sender(
-          Camelot.Accounts.User.Senders.SendMagicLink
-        )
+        sender(Camelot.Accounts.User.Senders.SendMagicLink)
       end
     end
 

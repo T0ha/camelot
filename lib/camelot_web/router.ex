@@ -2,6 +2,9 @@ defmodule CamelotWeb.Router do
   use CamelotWeb, :router
   use AshAuthentication.Phoenix.Router
 
+  alias AshAuthentication.Phoenix.Overrides.Default
+  alias Camelot.Accounts.User
+
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
@@ -24,25 +27,25 @@ defmodule CamelotWeb.Router do
       auth_routes_prefix: "/auth",
       overrides: [
         CamelotWeb.AuthOverrides,
-        AshAuthentication.Phoenix.Overrides.Default
+        Default
       ]
     )
 
     sign_out_route(CamelotWeb.AuthController)
 
     magic_sign_in_route(
-      Camelot.Accounts.User,
+      User,
       :magic_link,
       auth_routes_prefix: "/auth",
       overrides: [
         CamelotWeb.AuthOverrides,
-        AshAuthentication.Phoenix.Overrides.Default
+        Default
       ]
     )
 
     auth_routes(
       CamelotWeb.AuthController,
-      Camelot.Accounts.User,
+      User,
       path: "/auth"
     )
   end
