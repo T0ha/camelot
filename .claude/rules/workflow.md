@@ -1,5 +1,7 @@
 # Feature Implementation Flow
 
+** Follow this flow when implementing a new feature to ensure code quality and maintainability: **
+
 - Plan the feature and ask for feedback
 - Create a new branch from `main` for the feature
 - Implement tests first (TDD) and ask for approve
