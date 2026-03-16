@@ -33,10 +33,13 @@ defmodule CamelotWeb.BoardLive do
   end
 
   @impl true
-  def handle_event("create_task", %{"task" => params}, socket) do
-    user = socket.assigns.current_user
+  @task_fields ~w(title description priority project_id)
 
-    case Ash.create(Task, Map.put(params, "creator_id", user.id)) do
+  def handle_event("create_task", params, socket) do
+    user = socket.assigns.current_user
+    task_params = Map.take(params, @task_fields)
+
+    case Ash.create(Task, Map.put(task_params, "creator_id", user.id)) do
       {:ok, task} ->
         broadcast_task_event(:task_created, task)
 

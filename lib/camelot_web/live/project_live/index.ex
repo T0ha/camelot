@@ -57,9 +57,15 @@ defmodule CamelotWeb.ProjectLive.Index do
   end
 
   def handle_event("validate", params, socket) do
-    project_params = extract_project_params(params)
-    form_params = update_path_from_name(project_params, socket)
-    {:noreply, assign(socket, form: to_form(form_params))}
+    target = params["_target"] |> List.wrap() |> List.last()
+
+    project_params =
+      params
+      |> extract_project_params()
+      |> update_path_from_name(socket)
+      |> detect_github_fields(target)
+
+    {:noreply, assign(socket, form: to_form(project_params))}
   end
 
   def handle_event("save", params, socket) do
@@ -68,8 +74,11 @@ defmodule CamelotWeb.ProjectLive.Index do
 
   @impl true
   def handle_info({:folder_selected, path}, socket) do
-    params = socket.assigns.form.params
-    form_params = Map.put(params, "path", path)
+    form_params =
+      socket.assigns.form.params
+      |> Map.put("path", path)
+      |> detect_github_from_git(path)
+
     {:noreply, assign(socket, form: to_form(form_params))}
   end
 
@@ -148,6 +157,93 @@ defmodule CamelotWeb.ProjectLive.Index do
       Map.put(params, "path", default_project_path(name))
     else
       params
+    end
+  end
+
+  defp detect_github_fields(params, "github_repo_url") do
+    case parse_github_url(params["github_repo_url"]) do
+      {owner, repo} ->
+        params
+        |> Map.put("github_owner", owner)
+        |> Map.put("github_repo", repo)
+
+      nil ->
+        params
+    end
+  end
+
+  defp detect_github_fields(params, target) when target in ["github_owner", "github_repo"] do
+    owner = params["github_owner"] || ""
+    repo = params["github_repo"] || ""
+
+    if owner != "" and repo != "" do
+      Map.put(params, "github_repo_url", "https://github.com/#{owner}/#{repo}")
+    else
+      params
+    end
+  end
+
+  defp detect_github_fields(params, "path") do
+    detect_github_from_git(params, params["path"])
+  end
+
+  defp detect_github_fields(params, _target), do: params
+
+  @github_url_pattern ~r{github\.com[/:]([^/]+)/([^/.]+)}
+
+  defp parse_github_url(nil), do: nil
+  defp parse_github_url(""), do: nil
+
+  defp parse_github_url(url) do
+    case Regex.run(@github_url_pattern, url) do
+      [_, owner, repo] -> {owner, repo}
+      _ -> nil
+    end
+  end
+
+  defp detect_github_from_git(params, nil), do: params
+  defp detect_github_from_git(params, ""), do: params
+
+  defp detect_github_from_git(params, path) do
+    has_github? =
+      (params["github_repo_url"] || "") != "" or
+        (params["github_owner"] || "") != ""
+
+    if has_github? do
+      params
+    else
+      case read_git_remote(path) do
+        {:ok, url} ->
+          case parse_github_url(url) do
+            {owner, repo} ->
+              params
+              |> Map.put("github_repo_url", "https://github.com/#{owner}/#{repo}")
+              |> Map.put("github_owner", owner)
+              |> Map.put("github_repo", repo)
+
+            nil ->
+              params
+          end
+
+        :error ->
+          params
+      end
+    end
+  end
+
+  defp read_git_remote(path) do
+    git_config = Path.join([path, ".git", "config"])
+
+    with true <- File.exists?(git_config),
+         {:ok, content} <- File.read(git_config),
+         [_, url] <-
+           Regex.run(
+             ~r/\[remote "origin"\][^\[]*url\s*=\s*(.+)/s,
+             content
+           ) do
+      {:ok, String.trim(url)}
+    else
+      _ -> :error
     end
   end
 
