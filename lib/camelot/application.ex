@@ -12,9 +12,10 @@ defmodule Camelot.Application do
       Camelot.Repo,
       {DNSCluster, query: Application.get_env(:camelot, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Camelot.PubSub},
-      # Start a worker by calling: Camelot.Worker.start_link(arg)
-      # {Camelot.Worker, arg},
-      # Start to serve requests, typically the last entry
+      {Oban, Application.fetch_env!(:camelot, Oban)},
+      {AshAuthentication.Supervisor, otp_app: :camelot},
+      Camelot.Runtime.AgentRegistry,
+      Camelot.Runtime.AgentSupervisor,
       CamelotWeb.Endpoint
     ]
 

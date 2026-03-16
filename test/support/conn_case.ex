@@ -17,22 +17,49 @@ defmodule CamelotWeb.ConnCase do
 
   use ExUnit.CaseTemplate
 
+  alias AshAuthentication.Plug.Helpers, as: AuthHelpers
+  alias Camelot.Accounts.User
+
   using do
     quote do
+      use CamelotWeb, :verified_routes
+
+      import CamelotWeb.ConnCase
+      import Phoenix.ConnTest
+      import Plug.Conn
       # The default endpoint for testing
       @endpoint CamelotWeb.Endpoint
 
-      use CamelotWeb, :verified_routes
-
       # Import conveniences for testing with connections
-      import Plug.Conn
-      import Phoenix.ConnTest
-      import CamelotWeb.ConnCase
     end
   end
 
   setup tags do
     Camelot.DataCase.setup_sandbox(tags)
     {:ok, conn: Phoenix.ConnTest.build_conn()}
+  end
+
+  @doc """
+  Registers a user and stores them in the connection
+  session for authenticated test requests.
+  """
+  @spec register_and_log_in_user(%{conn: Plug.Conn.t()}) ::
+          %{conn: Plug.Conn.t(), user: Ash.Resource.record()}
+  def register_and_log_in_user(%{conn: conn}) do
+    email = "test-#{System.unique_integer()}@example.com"
+
+    user = Ash.Seed.seed!(User, %{email: email})
+
+    {:ok, token, _claims} =
+      AshAuthentication.Jwt.token_for_user(user)
+
+    user = %{user | __metadata__: Map.put(user.__metadata__, :token, token)}
+
+    conn =
+      conn
+      |> Phoenix.ConnTest.init_test_session(%{})
+      |> AuthHelpers.store_in_session(user)
+
+    %{conn: conn, user: user}
   end
 end

@@ -23,10 +23,11 @@ defmodule CamelotWeb do
     quote do
       use Phoenix.Router, helpers: false
 
-      # Import common connection and controller functions to use in pipelines
-      import Plug.Conn
       import Phoenix.Controller
       import Phoenix.LiveView.Router
+
+      # Import common connection and controller functions to use in pipelines
+      import Plug.Conn
     end
   end
 
@@ -39,7 +40,6 @@ defmodule CamelotWeb do
   def controller do
     quote do
       use Phoenix.Controller, formats: [:html, :json]
-
       use Gettext, backend: CamelotWeb.Gettext
 
       import Plug.Conn
@@ -50,7 +50,8 @@ defmodule CamelotWeb do
 
   def live_view do
     quote do
-      use Phoenix.LiveView
+      use Phoenix.LiveView,
+        layout: {CamelotWeb.Layouts, :app}
 
       unquote(html_helpers())
     end
@@ -82,14 +83,15 @@ defmodule CamelotWeb do
       # Translation
       use Gettext, backend: CamelotWeb.Gettext
 
+      import CamelotWeb.CoreComponents
+
       # HTML escaping functionality
       import Phoenix.HTML
       # Core UI components
-      import CamelotWeb.CoreComponents
 
       # Common modules used in templates
-      alias Phoenix.LiveView.JS
       alias CamelotWeb.Layouts
+      alias Phoenix.LiveView.JS
 
       # Routes generation with the ~p sigil
       unquote(verified_routes())

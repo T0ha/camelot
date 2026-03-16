@@ -1,0 +1,47 @@
+<header class="navbar px-4 sm:px-6 lg:px-8 bg-base-200">
+  <div class="flex-1">
+    <a href="/" class="flex items-center gap-2 font-bold text-lg">
+      Camelot
+    </a>
+  </div>
+  <div class="flex-none">
+    <ul class="flex px-1 space-x-2 items-center">
+      <li>
+        <a href="/" class="btn btn-ghost btn-sm">
+          Board
+        </a>
+      </li>
+      <li>
+        <a href="/projects" class="btn btn-ghost btn-sm">
+          Projects
+        </a>
+      </li>
+      <li>
+        <a href="/agents" class="btn btn-ghost btn-sm">
+          Agents
+        </a>
+      </li>
+      <li>
+        <.theme_toggle />
+      </li>
+      <%= if assigns[:current_user] do %>
+        <li>
+          <a
+            href="/sign-out"
+            class="btn btn-ghost btn-sm"
+          >
+            Sign out
+          </a>
+        </li>
+      <% end %>
+    </ul>
+  </div>
+</header>
+
+<main class="px-4 py-8 sm:px-6 lg:px-8">
+  <div class="mx-auto max-w-6xl space-y-4">
+    {@inner_content}
+  </div>
+</main>
+
+<.flash_group flash={@flash} />

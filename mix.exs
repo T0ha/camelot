@@ -10,6 +10,7 @@ defmodule Camelot.MixProject do
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
+      usage_rules: usage_rules(),
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
       listeners: [Phoenix.CodeReloader]
     ]
@@ -40,7 +41,14 @@ defmodule Camelot.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
+      {:tidewave, "~> 0.5", only: [:dev]},
+      {:ash, "~> 3.0"},
       {:ash_postgres, "~> 2.0"},
+      {:ash_authentication, "~> 4.0"},
+      {:ash_authentication_phoenix, "~> 2.0"},
+      {:ash_oban, "~> 0.2"},
+      {:ash_phoenix, "~> 2.0"},
+      {:oban, "~> 2.18"},
       {:igniter, "~> 0.6", only: [:dev, :test]},
       {:phoenix, "~> 1.8.3"},
       {:phoenix_ecto, "~> 4.5"},
@@ -54,12 +62,7 @@ defmodule Camelot.MixProject do
       {:esbuild, "~> 0.10", runtime: Mix.env() == :dev},
       {:tailwind, "~> 0.3", runtime: Mix.env() == :dev},
       {:heroicons,
-       github: "tailwindlabs/heroicons",
-       tag: "v2.2.0",
-       sparse: "optimized",
-       app: false,
-       compile: false,
-       depth: 1},
+       github: "tailwindlabs/heroicons", tag: "v2.2.0", sparse: "optimized", app: false, compile: false, depth: 1},
       {:swoosh, "~> 1.16"},
       {:req, "~> 0.5"},
       {:telemetry_metrics, "~> 1.0"},
@@ -67,7 +70,11 @@ defmodule Camelot.MixProject do
       {:gettext, "~> 1.0"},
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.2.0"},
-      {:bandit, "~> 1.5"}
+      {:bandit, "~> 1.5"},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:styler, "~> 1.0", only: [:dev, :test], runtime: false},
+      {:usage_rules, "~> 1.2", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -77,6 +84,28 @@ defmodule Camelot.MixProject do
   #     $ mix setup
   #
   # See the documentation for `Mix` for more info on aliases.
+  defp usage_rules do
+    [
+      file: "CLAUDE.md",
+      usage_rules: ["usage_rules:all"],
+      skills: [
+        location: ".claude/skills",
+        build: [
+          "ash-framework": [
+            description:
+              "Use this skill working with Ash Framework " <>
+                "or any of its extensions.",
+            usage_rules: [:ash, ~r/^ash_/]
+          ],
+          "phoenix-framework": [
+            description: "Use this skill working with Phoenix Framework.",
+            usage_rules: [:phoenix, ~r/^phoenix_/]
+          ]
+        ]
+      ]
+    ]
+  end
+
   defp aliases do
     [
       setup: ["deps.get", "ecto.setup", "assets.setup", "assets.build"],

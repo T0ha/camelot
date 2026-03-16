@@ -29,6 +29,8 @@ defmodule CamelotWeb.CoreComponents do
   use Phoenix.Component
   use Gettext, backend: CamelotWeb.Gettext
 
+  alias Phoenix.HTML.Form
+  alias Phoenix.HTML.FormField
   alias Phoenix.LiveView.JS
 
   @doc """
@@ -166,8 +168,7 @@ defmodule CamelotWeb.CoreComponents do
     values: ~w(checkbox color date datetime-local email file month number password
                search select tel text textarea time url week hidden)
 
-  attr :field, Phoenix.HTML.FormField,
-    doc: "a form field struct retrieved from the form, for example: @form[:email]"
+  attr :field, FormField, doc: "a form field struct retrieved from the form, for example: @form[:email]"
 
   attr :errors, :list, default: []
   attr :checked, :boolean, doc: "the checked flag for checkbox inputs"
@@ -177,11 +178,10 @@ defmodule CamelotWeb.CoreComponents do
   attr :class, :any, default: nil, doc: "the input class to use over defaults"
   attr :error_class, :any, default: nil, doc: "the input error class to use over defaults"
 
-  attr :rest, :global,
-    include: ~w(accept autocomplete capture cols disabled form list max maxlength min minlength
+  attr :rest, :global, include: ~w(accept autocomplete capture cols disabled form list max maxlength min minlength
                 multiple pattern placeholder readonly required rows size step)
 
-  def input(%{field: %Phoenix.HTML.FormField{} = field} = assigns) do
+  def input(%{field: %FormField{} = field} = assigns) do
     errors = if Phoenix.Component.used_input?(field), do: field.errors, else: []
 
     assigns
@@ -201,7 +201,7 @@ defmodule CamelotWeb.CoreComponents do
   def input(%{type: "checkbox"} = assigns) do
     assigns =
       assign_new(assigns, :checked, fn ->
-        Phoenix.HTML.Form.normalize_value("checkbox", assigns[:value])
+        Form.normalize_value("checkbox", assigns[:value])
       end)
 
     ~H"""
@@ -419,6 +419,93 @@ defmodule CamelotWeb.CoreComponents do
   end
 
   @doc """
+  Renders a modal dialog.
+
+  ## Examples
+
+      <.modal id="my-modal" show>
+        Content here
+      </.modal>
+  """
+  attr :id, :string, required: true
+  attr :show, :boolean, default: false
+  attr :on_cancel, :any, default: nil
+
+  slot :inner_block, required: true
+
+  def modal(assigns) do
+    ~H"""
+    <dialog
+      id={@id}
+      class="modal"
+      open={@show}
+      phx-mounted={@show && show_modal(@id)}
+    >
+      <div class="modal-box">
+        <form method="dialog">
+          <button
+            class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2"
+            phx-click={@on_cancel || hide_modal(@id)}
+          >
+            <.icon name="hero-x-mark" class="size-5" />
+          </button>
+        </form>
+        {render_slot(@inner_block)}
+      </div>
+      <form
+        method="dialog"
+        class="modal-backdrop"
+      >
+        <button phx-click={@on_cancel || hide_modal(@id)}>
+          close
+        </button>
+      </form>
+    </dialog>
+    """
+  end
+
+  @doc """
+  Renders a simple form with standard styling.
+
+  ## Examples
+
+      <.simple_form for={@form} phx-submit="save">
+        <.input field={@form[:name]} label="Name" />
+        <:actions>
+          <.button>Save</.button>
+        </:actions>
+      </.simple_form>
+  """
+  attr :for, :any, required: true
+  attr :as, :any, default: nil
+  attr :rest, :global, include: ~w(id phx-change phx-submit)
+
+  slot :inner_block, required: true
+  slot :actions
+
+  def simple_form(assigns) do
+    ~H"""
+    <.form
+      :let={f}
+      for={@for}
+      as={@as}
+      {@rest}
+    >
+      <div class="space-y-4">
+        {render_slot(@inner_block, f)}
+
+        <div
+          :for={action <- @actions}
+          class="flex items-center justify-end gap-4 mt-6"
+        >
+          {render_slot(action, f)}
+        </div>
+      </div>
+    </.form>
+    """
+  end
+
+  @doc """
   Renders a [Heroicon](https://heroicons.com).
 
   Heroicons come in three styles – outline, solid, and mini.
@@ -447,13 +534,22 @@ defmodule CamelotWeb.CoreComponents do
 
   ## JS Commands
 
+  def show_modal(id) do
+    %JS{}
+    |> JS.set_attribute({"open", ""}, to: "##{id}")
+    |> JS.focus_first(to: "##{id} .modal-box")
+  end
+
+  def hide_modal(id) do
+    JS.remove_attribute(%JS{}, "open", to: "##{id}")
+  end
+
   def show(js \\ %JS{}, selector) do
     JS.show(js,
       to: selector,
       time: 300,
       transition:
-        {"transition-all ease-out duration-300",
-         "opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95",
+        {"transition-all ease-out duration-300", "opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95",
          "opacity-100 translate-y-0 sm:scale-100"}
     )
   end
