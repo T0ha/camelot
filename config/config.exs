@@ -37,6 +37,7 @@ config :camelot, Oban,
   queues: [default: 10, tasks: 5, github: 3],
   plugins: [{Oban.Plugins.Cron, crontab: []}]
 
+config :camelot, :default_projects_dir, "~/projects"
 config :camelot, :token_signing_secret, "dev-only-signing-secret-change-in-prod"
 
 config :camelot,

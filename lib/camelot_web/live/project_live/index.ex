@@ -5,6 +5,7 @@ defmodule CamelotWeb.ProjectLive.Index do
   use CamelotWeb, :live_view
 
   alias Camelot.Projects.Project
+  alias CamelotWeb.Components.FolderPicker
   alias Phoenix.LiveView.Socket
 
   @impl true
@@ -55,8 +56,21 @@ defmodule CamelotWeb.ProjectLive.Index do
      |> load_projects()}
   end
 
-  def handle_event("save", %{"project" => params}, socket) do
-    save_project(socket, socket.assigns.live_action, params)
+  def handle_event("validate", params, socket) do
+    project_params = extract_project_params(params)
+    form_params = update_path_from_name(project_params, socket)
+    {:noreply, assign(socket, form: to_form(form_params))}
+  end
+
+  def handle_event("save", params, socket) do
+    save_project(socket, socket.assigns.live_action, extract_project_params(params))
+  end
+
+  @impl true
+  def handle_info({:folder_selected, path}, socket) do
+    params = socket.assigns.form.params
+    form_params = Map.put(params, "path", path)
+    {:noreply, assign(socket, form: to_form(form_params))}
   end
 
   defp save_project(socket, :new, params) do
@@ -116,6 +130,44 @@ defmodule CamelotWeb.ProjectLive.Index do
     Map.get(changeset, :params, %{})
   end
 
+  @project_fields ~w(name path description github_repo_url
+                     github_owner github_repo status)
+
+  defp extract_project_params(params) do
+    Map.take(params, @project_fields)
+  end
+
+  defp update_path_from_name(params, socket) do
+    name = Map.get(params, "name", "")
+    current_path = Map.get(params, "path", "")
+    old_name = socket.assigns.form.params["name"] || ""
+
+    expected_old_path = default_project_path(old_name)
+
+    if current_path == "" or current_path == expected_old_path do
+      Map.put(params, "path", default_project_path(name))
+    else
+      params
+    end
+  end
+
+  defp default_project_path(""), do: ""
+
+  defp default_project_path(name) do
+    slug =
+      name
+      |> String.downcase()
+      |> String.replace(~r/[^a-z0-9]+/, "-")
+      |> String.trim("-")
+
+    base_dir =
+      :camelot
+      |> Application.get_env(:default_projects_dir, "~/projects")
+      |> Path.expand()
+
+    Path.join(base_dir, slug)
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -143,6 +195,7 @@ defmodule CamelotWeb.ProjectLive.Index do
           <.simple_form
             for={@form}
             id="project-form"
+            phx-change="validate"
             phx-submit="save"
           >
             <.input
@@ -151,9 +204,11 @@ defmodule CamelotWeb.ProjectLive.Index do
               label="Name"
             />
             <%= if @live_action == :new do %>
-              <.input
-                field={@form[:path]}
-                type="text"
+              <.live_component
+                module={FolderPicker}
+                id="path-picker"
+                name={@form[:path].name}
+                value={@form[:path].value}
                 label="Path"
               />
             <% end %>
