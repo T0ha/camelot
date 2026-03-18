@@ -16,6 +16,8 @@ Follow: [OTP design principles](https://www.erlang.org/doc/system/design_princip
 - Don't mix Ash DSL with functions in the same module, separate them into different modules
 - Don't use type guards in function heads, use pattern matching instead
 - Don't use type guards to check spec. Dialyzer should be used for that
+- Use existing phoenix components instead of creating new ones when possible
+- Reuse existig already defined functions instead of creating new ones when possible
 
 
 # Docs
