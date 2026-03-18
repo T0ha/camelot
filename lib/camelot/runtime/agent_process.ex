@@ -8,6 +8,7 @@ defmodule Camelot.Runtime.AgentProcess do
 
   alias Camelot.Agents.Agent
   alias Camelot.Agents.Session
+  alias Camelot.Board.Task
   alias Camelot.Runtime.AgentRegistry
 
   require Logger
@@ -111,6 +112,7 @@ defmodule Camelot.Runtime.AgentProcess do
     Logger.info("Agent #{state.agent_id} CLI exited with code #{exit_code}")
 
     finish_session(state, exit_code)
+    submit_task_plan(state, exit_code)
     mark_agent_idle(state.agent_id)
 
     broadcast_agent_update(state.agent_id)
@@ -145,12 +147,12 @@ defmodule Camelot.Runtime.AgentProcess do
   # --- Private ---
 
   defp start_cli(agent_id, task_id, prompt) do
-    agent = Ash.get!(Agent, agent_id)
+    agent = Ash.get!(Agent, agent_id, load: [:project])
 
     cli =
       case agent.type do
-        :claude_code -> "claude"
-        :codex -> "codex"
+        :claude_code -> System.find_executable("claude")
+        :codex -> System.find_executable("codex")
       end
 
     {:ok, session} =
@@ -159,15 +161,21 @@ defmodule Camelot.Runtime.AgentProcess do
         task_id: task_id
       })
 
+    cli_args = build_cli_args(agent.type, prompt)
+
+    # Use sh wrapper so stdin is /dev/null — prevents the CLI from
+    # blocking on stdin input while still capturing stdout/stderr.
     port =
       Port.open(
-        {:spawn_executable, System.find_executable(cli)},
+        {:spawn_executable, System.find_executable("sh")},
         [
           :binary,
           :exit_status,
           :use_stdio,
           :stderr_to_stdout,
-          args: build_cli_args(agent.type, prompt)
+          cd: to_charlist(agent.project.path),
+          env: [{~c"CLAUDECODE", false}],
+          args: ["-c", ~s(exec "$@" </dev/null), "--", cli | cli_args]
         ]
       )
 
@@ -184,6 +192,42 @@ defmodule Camelot.Runtime.AgentProcess do
 
   defp build_cli_args(:codex, prompt) do
     ["--quiet", prompt]
+  end
+
+  defp submit_task_plan(state, exit_code) do
+    if state.current_task_id && exit_code == 0 &&
+         state.output_buffer != "" do
+      task = Ash.get!(Task, state.current_task_id)
+
+      if task.status == :planning do
+        case Ash.update(task, %{plan: state.output_buffer},
+               action: :submit_plan
+             ) do
+          {:ok, updated} ->
+            broadcast_task_update(updated)
+
+          {:error, error} ->
+            Logger.warning(
+              "Failed to submit plan for task " <>
+                "#{state.current_task_id}: #{inspect(error)}"
+            )
+        end
+      end
+    end
+  end
+
+  defp broadcast_task_update(task) do
+    Phoenix.PubSub.broadcast(
+      Camelot.PubSub,
+      "task:#{task.id}",
+      {:task_updated, task}
+    )
+
+    Phoenix.PubSub.broadcast(
+      Camelot.PubSub,
+      "board",
+      {:task_updated, task}
+    )
   end
 
   defp finish_session(state, exit_code) do

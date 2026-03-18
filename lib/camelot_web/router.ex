@@ -71,7 +71,8 @@ defmodule CamelotWeb.Router do
 
       live "/projects/:id", ProjectLive.Show, :show
 
-      live "/agents", AgentLive.Index
+      live "/agents", AgentLive.Index, :index
+      live "/agents/new", AgentLive.Index, :new
       live "/agents/:id", AgentLive.Show
     end
   end

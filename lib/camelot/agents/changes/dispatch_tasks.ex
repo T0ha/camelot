@@ -67,25 +67,33 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
   end
 
   defp dispatch_task(agent, task) do
-    ensure_agent_process(agent.id)
+    with {:ok, task} <-
+           Ash.update(task, %{}, action: :start_planning),
+         {:ok, task} <-
+           Ash.update(task, %{agent_id: agent.id},
+             action: :assign_agent
+           ) do
+      broadcast_task_update(task)
+      ensure_agent_process(agent.id)
+      prompt = build_prompt(task)
 
-    prompt = build_prompt(task)
+      case AgentProcess.dispatch(agent.id, task.id, prompt) do
+        :ok ->
+          Logger.info(
+            "Dispatched task #{task.id} to agent #{agent.id}"
+          )
 
-    case AgentProcess.dispatch(agent.id, task.id, prompt) do
-      :ok ->
-        Ash.update!(task, %{}, action: :start_planning)
-
-        Ash.update!(task, %{},
-          action: :assign_agent,
-          arguments: %{agent_id: agent.id}
-        )
-
-        Logger.info("Dispatched task #{task.id} to agent #{agent.id}")
-
-      {:error, reason} ->
+        {:error, reason} ->
+          Logger.warning(
+            "Failed to dispatch task #{task.id}: " <>
+              "#{inspect(reason)}"
+          )
+      end
+    else
+      {:error, error} ->
         Logger.warning(
-          "Failed to dispatch task #{task.id}: " <>
-            "#{inspect(reason)}"
+          "Failed to update task #{task.id}: " <>
+            "#{inspect(error)}"
         )
     end
   end
@@ -95,6 +103,20 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
       nil -> AgentSupervisor.start_agent(agent_id)
       _pid -> :ok
     end
+  end
+
+  defp broadcast_task_update(task) do
+    Phoenix.PubSub.broadcast(
+      Camelot.PubSub,
+      "board",
+      {:task_updated, task}
+    )
+
+    Phoenix.PubSub.broadcast(
+      Camelot.PubSub,
+      "task:#{task.id}",
+      {:task_updated, task}
+    )
   end
 
   defp build_prompt(task) do

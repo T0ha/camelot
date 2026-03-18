@@ -12,7 +12,11 @@ defmodule Camelot.Application do
       Camelot.Repo,
       {DNSCluster, query: Application.get_env(:camelot, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Camelot.PubSub},
-      {Oban, Application.fetch_env!(:camelot, Oban)},
+      {Oban,
+       AshOban.config(
+         Application.fetch_env!(:camelot, :ash_domains),
+         Application.fetch_env!(:camelot, Oban)
+       )},
       {AshAuthentication.Supervisor, otp_app: :camelot},
       Camelot.Runtime.AgentRegistry,
       Camelot.Runtime.AgentSupervisor,

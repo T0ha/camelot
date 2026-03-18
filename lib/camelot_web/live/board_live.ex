@@ -29,7 +29,8 @@ defmodule CamelotWeb.BoardLive do
   end
 
   def handle_info({:task_created, _task}, socket) do
-    {:noreply, load_board(socket)}
+    # load_board(socket)}
+    {:noreply, socket}
   end
 
   @impl true
@@ -105,7 +106,7 @@ defmodule CamelotWeb.BoardLive do
         <h1 class="text-2xl font-bold">Board</h1>
         <button
           class="btn btn-primary btn-sm"
-          onclick="document.getElementById('new-task-modal').showModal()"
+          phx-click={show_modal("new-task-modal")}
         >
           New Task
         </button>
@@ -125,53 +126,46 @@ defmodule CamelotWeb.BoardLive do
         </.column>
       </div>
 
-      <dialog id="new-task-modal" class="modal">
-        <div class="modal-box">
-          <h3 class="font-bold text-lg mb-4">New Task</h3>
-          <form method="dialog">
-            <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">
-              ✕
-            </button>
-          </form>
-          <.simple_form
-            for={@task_form}
-            phx-submit="create_task"
-            id="new-task-form"
-          >
-            <.input
-              field={@task_form[:title]}
-              type="text"
-              label="Title"
-              required
-            />
-            <.input
-              field={@task_form[:description]}
-              type="textarea"
-              label="Description"
-            />
-            <.input
-              field={@task_form[:project_id]}
-              type="select"
-              label="Project"
-              prompt="Select project"
-              options={Enum.map(@projects, &{&1.name, &1.id})}
-            />
-            <.input
-              field={@task_form[:priority]}
-              type="number"
-              label="Priority"
-            />
-            <:actions>
-              <.button class="btn btn-primary">
-                Create Task
-              </.button>
-            </:actions>
-          </.simple_form>
-        </div>
-        <form method="dialog" class="modal-backdrop">
-          <button>close</button>
-        </form>
-      </dialog>
+      <.modal id="new-task-modal">
+        <h3 class="font-bold text-lg mb-4">New Task</h3>
+        <.simple_form
+          for={@task_form}
+          phx-submit={
+            hide_modal("new-task-modal")
+            |> JS.push("create_task")
+          }
+          id="new-task-form"
+        >
+          <.input
+            field={@task_form[:title]}
+            type="text"
+            label="Title"
+            required
+          />
+          <.input
+            field={@task_form[:description]}
+            type="textarea"
+            label="Description"
+          />
+          <.input
+            field={@task_form[:project_id]}
+            type="select"
+            label="Project"
+            prompt="Select project"
+            options={Enum.map(@projects, &{&1.name, &1.id})}
+          />
+          <.input
+            field={@task_form[:priority]}
+            type="number"
+            label="Priority"
+          />
+          <:actions>
+            <.button class="btn btn-primary">
+              Create Task
+            </.button>
+          </:actions>
+        </.simple_form>
+      </.modal>
     </div>
     """
   end

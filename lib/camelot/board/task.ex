@@ -206,6 +206,7 @@ defmodule Camelot.Board.Task do
 
     update :assign_agent do
       accept([])
+      require_atomic?(false)
 
       argument :agent_id, :uuid do
         allow_nil?(false)
