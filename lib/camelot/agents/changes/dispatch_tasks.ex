@@ -70,18 +70,14 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
     with {:ok, task} <-
            Ash.update(task, %{}, action: :start_planning),
          {:ok, task} <-
-           Ash.update(task, %{agent_id: agent.id},
-             action: :assign_agent
-           ) do
+           Ash.update(task, %{agent_id: agent.id}, action: :assign_agent) do
       broadcast_task_update(task)
       ensure_agent_process(agent.id)
       prompt = build_prompt(task)
 
       case AgentProcess.dispatch(agent.id, task.id, prompt) do
         :ok ->
-          Logger.info(
-            "Dispatched task #{task.id} to agent #{agent.id}"
-          )
+          Logger.info("Dispatched task #{task.id} to agent #{agent.id}")
 
         {:error, reason} ->
           Logger.warning(

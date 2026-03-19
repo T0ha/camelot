@@ -46,6 +46,12 @@ defmodule Camelot.Agents.Agent do
       constraints(one_of: [:idle, :busy])
     end
 
+    attribute :max_retries, :integer do
+      allow_nil?(false)
+      public?(true)
+      default(3)
+    end
+
     timestamps()
   end
 
@@ -66,7 +72,7 @@ defmodule Camelot.Agents.Agent do
 
     create :create do
       primary?(true)
-      accept([:name, :type])
+      accept([:name, :type, :max_retries])
 
       argument :project_id, :uuid do
         allow_nil?(false)
@@ -77,7 +83,7 @@ defmodule Camelot.Agents.Agent do
 
     update :update do
       primary?(true)
-      accept([:name, :type])
+      accept([:name, :type, :max_retries])
     end
 
     update :mark_busy do

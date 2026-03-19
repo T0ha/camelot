@@ -68,13 +68,18 @@ defmodule CamelotWeb.BoardLive do
   end
 
   defp load_board(socket) do
-    tasks = Ash.read!(Task, load: [:project])
+    tasks = Ash.read!(Task, load: [:project, :sessions])
     projects = Ash.read!(Project)
+
+    {error_tasks, normal_tasks} =
+      Enum.split_with(tasks, &has_error?/1)
 
     columns =
       Enum.map(Task.column_statuses(), fn status ->
-        {status, Enum.filter(tasks, &(&1.status == status))}
+        {status, Enum.filter(normal_tasks, &(&1.status == status))}
       end)
+
+    columns = columns ++ [{:error, error_tasks}]
 
     assign(socket,
       page_title: "Board",
@@ -88,6 +93,13 @@ defmodule CamelotWeb.BoardLive do
           "project_id" => ""
         })
     )
+  end
+
+  defp has_error?(task) do
+    task.status not in [:done, :cancelled] &&
+      task.sessions != [] &&
+      Enum.any?(task.sessions, &(&1.status == :failed)) &&
+      Enum.all?(task.sessions, &(&1.status != :running))
   end
 
   defp broadcast_task_event(event, task) do
@@ -121,6 +133,7 @@ defmodule CamelotWeb.BoardLive do
           <.task_card
             :for={task <- tasks}
             task={task}
+            error={status == :error}
             on_click={JS.navigate(~p"/tasks/#{task.id}")}
           />
         </.column>

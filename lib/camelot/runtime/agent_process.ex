@@ -3,6 +3,7 @@ defmodule Camelot.Runtime.AgentProcess do
   GenServer managing a single AI agent's CLI process.
   Opens a Port to the CLI tool (claude/codex), streams
   output via PubSub, and creates Session records on exit.
+  Supports automatic retries with exponential backoff.
   """
   use GenServer, restart: :transient
 
@@ -10,22 +11,33 @@ defmodule Camelot.Runtime.AgentProcess do
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
   alias Camelot.Runtime.AgentRegistry
+  alias Camelot.Runtime.OutputParser
 
   require Logger
 
+  @base_retry_delay_ms 5_000
+
   defstruct [
     :agent_id,
+    :agent_type,
     :current_task_id,
     :current_session_id,
+    :current_prompt,
     :port,
+    max_retries: 0,
+    retry_count: 0,
     output_buffer: ""
   ]
 
   @type t :: %__MODULE__{
           agent_id: String.t(),
+          agent_type: :claude_code | :codex | nil,
           current_task_id: String.t() | nil,
           current_session_id: String.t() | nil,
+          current_prompt: String.t() | nil,
           port: port() | nil,
+          max_retries: non_neg_integer(),
+          retry_count: non_neg_integer(),
           output_buffer: String.t()
         }
 
@@ -46,6 +58,14 @@ defmodule Camelot.Runtime.AgentProcess do
     case AgentRegistry.lookup(agent_id) do
       nil -> {:error, :not_found}
       pid -> GenServer.call(pid, {:dispatch, task_id, prompt})
+    end
+  end
+
+  @spec retry(String.t()) :: :ok | {:error, :not_found | :no_task}
+  def retry(agent_id) do
+    case AgentRegistry.lookup(agent_id) do
+      nil -> {:error, :not_found}
+      pid -> GenServer.call(pid, :retry)
     end
   end
 
@@ -71,13 +91,19 @@ defmodule Camelot.Runtime.AgentProcess do
     if state.port do
       {:reply, {:error, :busy}, state}
     else
+      agent = Ash.get!(Agent, state.agent_id)
+
       case start_cli(state.agent_id, task_id, prompt) do
-        {:ok, port, session_id} ->
+        {:ok, port, session_id, agent_type} ->
           new_state = %{
             state
             | port: port,
               current_task_id: task_id,
               current_session_id: session_id,
+              current_prompt: prompt,
+              agent_type: agent_type,
+              max_retries: agent.max_retries,
+              retry_count: 0,
               output_buffer: ""
           }
 
@@ -87,6 +113,20 @@ defmodule Camelot.Runtime.AgentProcess do
         {:error, reason} ->
           {:reply, {:error, reason}, state}
       end
+    end
+  end
+
+  def handle_call(:retry, _from, state) do
+    cond do
+      state.port ->
+        {:reply, {:error, :busy}, state}
+
+      is_nil(state.current_task_id) || is_nil(state.current_prompt) ->
+        {:reply, {:error, :no_task}, state}
+
+      true ->
+        do_retry(state, 0)
+        {:reply, :ok, state}
     end
   end
 
@@ -111,42 +151,121 @@ defmodule Camelot.Runtime.AgentProcess do
   def handle_info({port, {:exit_status, exit_code}}, %{port: port} = state) do
     Logger.info("Agent #{state.agent_id} CLI exited with code #{exit_code}")
 
-    finish_session(state, exit_code)
-    submit_task_plan(state, exit_code)
-    mark_agent_idle(state.agent_id)
+    parsed =
+      OutputParser.parse(state.agent_type, state.output_buffer)
 
-    broadcast_agent_update(state.agent_id)
+    finish_session(state, exit_code, parsed)
 
-    {:noreply,
-     %{
-       state
-       | port: nil,
-         current_task_id: nil,
-         current_session_id: nil,
-         output_buffer: ""
-     }}
+    failed? = exit_code != 0 or match?({:error, _}, parsed)
+
+    if failed? && state.retry_count < state.max_retries do
+      schedule_retry(state)
+    else
+      submit_task_plan(state, exit_code, parsed)
+      mark_agent_idle(state.agent_id)
+      broadcast_agent_update(state.agent_id)
+
+      {:noreply, reset_port(state)}
+    end
   end
 
   def handle_info({:EXIT, port, _reason}, %{port: port} = state) do
-    finish_session(state, 1)
-    mark_agent_idle(state.agent_id)
-    broadcast_agent_update(state.agent_id)
+    parsed =
+      OutputParser.parse(
+        state.agent_type || :codex,
+        state.output_buffer
+      )
 
-    {:noreply,
-     %{
-       state
-       | port: nil,
-         current_task_id: nil,
-         current_session_id: nil,
-         output_buffer: ""
-     }}
+    finish_session(state, 1, parsed)
+
+    if state.retry_count < state.max_retries do
+      schedule_retry(state)
+    else
+      mark_agent_idle(state.agent_id)
+      broadcast_agent_update(state.agent_id)
+      {:noreply, reset_port(state)}
+    end
+  end
+
+  def handle_info(:retry, state) do
+    if state.port do
+      {:noreply, state}
+    else
+      do_retry(state, state.retry_count)
+    end
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
 
   # --- Private ---
 
-  defp start_cli(agent_id, task_id, prompt) do
+  defp schedule_retry(state) do
+    delay = retry_delay(state.retry_count)
+
+    Logger.info(
+      "Agent #{state.agent_id} scheduling retry " <>
+        "#{state.retry_count + 1}/#{state.max_retries} " <>
+        "in #{delay}ms"
+    )
+
+    Process.send_after(self(), :retry, delay)
+    {:noreply, %{state | port: nil, output_buffer: ""}}
+  end
+
+  defp do_retry(state, retry_count) do
+    next_retry = retry_count + 1
+
+    case start_cli(
+           state.agent_id,
+           state.current_task_id,
+           state.current_prompt,
+           next_retry
+         ) do
+      {:ok, port, session_id, agent_type} ->
+        if retry_count == 0, do: mark_agent_busy(state.agent_id)
+
+        new_state = %{
+          state
+          | port: port,
+            current_session_id: session_id,
+            agent_type: agent_type,
+            retry_count: next_retry,
+            output_buffer: ""
+        }
+
+        broadcast_agent_update(state.agent_id)
+        {:noreply, new_state}
+
+      {:error, reason} ->
+        Logger.error(
+          "Agent #{state.agent_id} retry failed to start: " <>
+            "#{inspect(reason)}"
+        )
+
+        mark_agent_idle(state.agent_id)
+        broadcast_agent_update(state.agent_id)
+        {:noreply, reset_port(state)}
+    end
+  end
+
+  defp reset_port(state) do
+    %{
+      state
+      | port: nil,
+        current_task_id: nil,
+        current_session_id: nil,
+        current_prompt: nil,
+        agent_type: nil,
+        retry_count: 0,
+        output_buffer: ""
+    }
+  end
+
+  defp retry_delay(retry_count) do
+    @base_retry_delay_ms * Integer.pow(2, retry_count)
+  end
+
+  defp start_cli(agent_id, task_id, prompt, retry_number \\ 0) do
     agent = Ash.get!(Agent, agent_id, load: [:project])
 
     cli =
@@ -158,13 +277,25 @@ defmodule Camelot.Runtime.AgentProcess do
     {:ok, session} =
       Ash.create(Session, %{
         agent_id: agent_id,
-        task_id: task_id
+        task_id: task_id,
+        retry_number: retry_number
       })
 
     cli_args = build_cli_args(agent.type, prompt)
 
-    # Use sh wrapper so stdin is /dev/null — prevents the CLI from
-    # blocking on stdin input while still capturing stdout/stderr.
+    case open_port(cli, cli_args, agent.project.path) do
+      {:ok, port} ->
+        {:ok, port, session.id, agent.type}
+
+      {:error, reason} ->
+        fail_session(session, "CLI failed to start: #{inspect(reason)}")
+        {:error, :cli_start_failed}
+    end
+  end
+
+  defp open_port(cli, cli_args, project_path) do
+    # Use sh wrapper so stdin is /dev/null — prevents the CLI
+    # from blocking on stdin while still capturing stdout/stderr.
     port =
       Port.open(
         {:spawn_executable, System.find_executable("sh")},
@@ -173,36 +304,53 @@ defmodule Camelot.Runtime.AgentProcess do
           :exit_status,
           :use_stdio,
           :stderr_to_stdout,
-          cd: to_charlist(agent.project.path),
+          cd: to_charlist(project_path),
           env: [{~c"CLAUDECODE", false}],
-          args: ["-c", ~s(exec "$@" </dev/null), "--", cli | cli_args]
+          args: [
+            "-c",
+            ~s(exec "$@" </dev/null),
+            "--",
+            cli | cli_args
+          ]
         ]
       )
 
-    {:ok, port, session.id}
+    {:ok, port}
   rescue
     e ->
-      Logger.error("Failed to start CLI: #{inspect(e)}")
-      {:error, :cli_start_failed}
+      Logger.error("Failed to open port: #{inspect(e)}")
+      {:error, e}
+  end
+
+  defp fail_session(session, error_message) do
+    Ash.update(
+      session,
+      %{error_message: error_message},
+      action: :fail
+    )
   end
 
   defp build_cli_args(:claude_code, prompt) do
-    ["--print", "--output-format", "text", prompt]
+    ["--print", "--output-format", "json", prompt]
   end
 
   defp build_cli_args(:codex, prompt) do
     ["--quiet", prompt]
   end
 
-  defp submit_task_plan(state, exit_code) do
+  defp submit_task_plan(state, exit_code, parsed) do
     if state.current_task_id && exit_code == 0 &&
          state.output_buffer != "" do
       task = Ash.get!(Task, state.current_task_id)
 
+      plan_text =
+        case parsed do
+          {:ok, %{result_text: text}} -> text
+          {:error, _} -> state.output_buffer
+        end
+
       if task.status == :planning do
-        case Ash.update(task, %{plan: state.output_buffer},
-               action: :submit_plan
-             ) do
+        case Ash.update(task, %{plan: plan_text}, action: :submit_plan) do
           {:ok, updated} ->
             broadcast_task_update(updated)
 
@@ -230,16 +378,23 @@ defmodule Camelot.Runtime.AgentProcess do
     )
   end
 
-  defp finish_session(state, exit_code) do
+  defp finish_session(state, exit_code, parsed) do
     if state.current_session_id do
       session = Ash.get!(Session, state.current_session_id)
       action = if exit_code == 0, do: :complete, else: :fail
+
+      error_message =
+        case parsed do
+          {:error, msg} -> msg
+          _ -> nil
+        end
 
       Ash.update(
         session,
         %{
           output_log: state.output_buffer,
-          exit_code: exit_code
+          exit_code: exit_code,
+          error_message: error_message
         },
         action: action
       )

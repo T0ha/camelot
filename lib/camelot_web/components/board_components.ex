@@ -43,12 +43,17 @@ defmodule CamelotWeb.BoardComponents do
 
   attr :task, :map, required: true
   attr :on_click, :any, default: nil
+  attr :error, :boolean, default: false
 
   @spec task_card(map()) :: Rendered.t()
   def task_card(assigns) do
     ~H"""
     <div
-      class="card bg-base-100 shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+      class={[
+        "card bg-base-100 shadow-sm cursor-pointer",
+        "hover:shadow-md transition-shadow",
+        @error && "border border-error/40"
+      ]}
       phx-click={@on_click}
     >
       <div class="card-body p-3">
@@ -62,6 +67,15 @@ defmodule CamelotWeb.BoardComponents do
           {@task.description}
         </p>
         <div class="flex items-center gap-2 mt-1">
+          <span
+            :if={@error}
+            class={[
+              "badge badge-xs",
+              status_badge_class(@task.status)
+            ]}
+          >
+            {format_status(@task.status)}
+          </span>
           <span
             :if={@task.pr_url}
             class="badge badge-xs badge-outline"
@@ -91,5 +105,6 @@ defmodule CamelotWeb.BoardComponents do
   defp status_badge_class(:pr_review), do: "badge-warning"
   defp status_badge_class(:pr_fix), do: "badge-error"
   defp status_badge_class(:done), do: "badge-success"
+  defp status_badge_class(:error), do: "badge-error"
   defp status_badge_class(_status), do: "badge-ghost"
 end

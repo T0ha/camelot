@@ -44,6 +44,17 @@ defmodule Camelot.Agents.Session do
       public?(true)
     end
 
+    attribute :error_message, :string do
+      allow_nil?(true)
+      public?(true)
+    end
+
+    attribute :retry_number, :integer do
+      allow_nil?(false)
+      public?(true)
+      default(0)
+    end
+
     timestamps()
   end
 
@@ -62,7 +73,7 @@ defmodule Camelot.Agents.Session do
 
     create :create do
       primary?(true)
-      accept([:started_at])
+      accept([:started_at, :retry_number])
 
       argument :agent_id, :uuid do
         allow_nil?(false)
@@ -78,14 +89,14 @@ defmodule Camelot.Agents.Session do
     end
 
     update :complete do
-      accept([:output_log, :exit_code])
+      accept([:output_log, :exit_code, :error_message])
 
       change(set_attribute(:status, :completed))
       change(set_attribute(:finished_at, &DateTime.utc_now/0))
     end
 
     update :fail do
-      accept([:output_log, :exit_code])
+      accept([:output_log, :exit_code, :error_message])
 
       change(set_attribute(:status, :failed))
       change(set_attribute(:finished_at, &DateTime.utc_now/0))

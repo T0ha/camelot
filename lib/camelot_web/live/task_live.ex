@@ -6,6 +6,9 @@ defmodule CamelotWeb.TaskLive do
   use CamelotWeb, :live_view
 
   alias Camelot.Board.Task
+  alias Camelot.Runtime.AgentProcess
+  alias Camelot.Runtime.AgentRegistry
+  alias Camelot.Runtime.AgentSupervisor
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
@@ -44,6 +47,27 @@ defmodule CamelotWeb.TaskLive do
     end
   end
 
+  def handle_event("retry", _params, socket) do
+    task = socket.assigns.task
+
+    if Ash.Resource.loaded?(task, :agent) && task.agent do
+      ensure_agent_process(task.agent.id)
+
+      case AgentProcess.retry(task.agent.id) do
+        :ok ->
+          {:noreply, put_flash(socket, :info, "Retry started")}
+
+        {:error, :no_task} ->
+          redispatch(task, socket)
+
+        {:error, _reason} ->
+          {:noreply, put_flash(socket, :error, "Cannot retry right now")}
+      end
+    else
+      {:noreply, put_flash(socket, :error, "No agent assigned")}
+    end
+  end
+
   def handle_event("cancel", _params, socket) do
     task = socket.assigns.task
 
@@ -56,6 +80,61 @@ defmodule CamelotWeb.TaskLive do
       {:error, _} ->
         {:noreply, put_flash(socket, :error, "Cannot cancel task")}
     end
+  end
+
+  defp redispatch(task, socket) do
+    prompt = build_retry_prompt(task)
+    ensure_agent_process(task.agent.id)
+
+    case AgentProcess.dispatch(
+           task.agent.id,
+           task.id,
+           prompt
+         ) do
+      :ok ->
+        {:noreply, put_flash(socket, :info, "Retry started")}
+
+      {:error, :busy} ->
+        {:noreply, put_flash(socket, :error, "Agent is busy")}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Cannot retry right now")}
+    end
+  end
+
+  defp build_retry_prompt(task) do
+    parts = ["Task: #{task.title}"]
+
+    parts =
+      if task.description,
+        do: parts ++ ["\nDescription: #{task.description}"],
+        else: parts
+
+    parts =
+      if task.plan,
+        do: parts ++ ["\nPlan: #{task.plan}"],
+        else: parts
+
+    Enum.join(parts)
+  end
+
+  defp ensure_agent_process(agent_id) do
+    case AgentRegistry.lookup(agent_id) do
+      nil -> AgentSupervisor.start_agent(agent_id)
+      _pid -> :ok
+    end
+  end
+
+  defp retryable?(task) do
+    has_agent? =
+      Ash.Resource.loaded?(task, :agent) && task.agent != nil
+
+    has_failed_session? =
+      Ash.Resource.loaded?(task, :sessions) &&
+        Enum.any?(task.sessions, &(&1.status == :failed))
+
+    has_agent? && has_failed_session? &&
+      task.status not in [:done, :cancelled]
   end
 
   defp broadcast_update(task) do
@@ -120,6 +199,13 @@ defmodule CamelotWeb.TaskLive do
             {label}
           </button>
           <button
+            :if={retryable?(@task)}
+            phx-click="retry"
+            class="btn btn-sm btn-warning"
+          >
+            Retry
+          </button>
+          <button
             :if={@task.status not in [:done, :cancelled]}
             phx-click="cancel"
             data-confirm="Cancel this task?"
@@ -174,15 +260,29 @@ defmodule CamelotWeb.TaskLive do
               class="card bg-base-200 p-3"
             >
               <div class="flex items-center justify-between text-sm">
-                <span class={[
-                  "badge badge-sm",
-                  session_status_class(session.status)
-                ]}>
-                  {session.status}
-                </span>
+                <div class="flex items-center gap-1">
+                  <span class={[
+                    "badge badge-sm",
+                    session_status_class(session.status)
+                  ]}>
+                    {session.status}
+                  </span>
+                  <span
+                    :if={session.retry_number > 0}
+                    class="badge badge-sm badge-outline"
+                  >
+                    retry #{session.retry_number}
+                  </span>
+                </div>
                 <span :if={session.exit_code} class="text-xs">
                   exit: {session.exit_code}
                 </span>
+              </div>
+              <div
+                :if={session.error_message}
+                class="mt-2 text-xs text-error bg-error/10 p-2 rounded"
+              >
+                {session.error_message}
               </div>
               <pre
                 :if={session.output_log}
