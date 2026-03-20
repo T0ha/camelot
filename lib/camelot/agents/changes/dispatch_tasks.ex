@@ -8,6 +8,7 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
 
   alias Camelot.Agents.Agent
   alias Camelot.Board.Task
+  alias Camelot.Prompts.Renderer
   alias Camelot.Runtime.AgentProcess
   alias Camelot.Runtime.AgentRegistry
   alias Camelot.Runtime.AgentSupervisor
@@ -45,7 +46,7 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
   defp find_next_task(project_id) do
     tasks =
       Task
-      |> Ash.read!()
+      |> Ash.read!(load: [:messages])
       |> Enum.filter(&(&1.project_id == project_id))
 
     pr_fix =
@@ -56,19 +57,33 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
 
     case pr_fix do
       nil ->
-        tasks
-        |> Enum.filter(&(&1.status == :created))
-        |> Enum.sort_by(& &1.priority, :desc)
-        |> List.first()
+        resumed =
+          tasks
+          |> Enum.filter(&resumed_planning?/1)
+          |> Enum.sort_by(& &1.priority, :desc)
+          |> List.first()
+
+        resumed ||
+          tasks
+          |> Enum.filter(&(&1.status == :created))
+          |> Enum.sort_by(& &1.priority, :desc)
+          |> List.first()
 
       task ->
         task
     end
   end
 
+  defp resumed_planning?(%{status: status, messages: messages})
+       when status in [:planning, :executing] and is_list(messages) and messages != [] do
+    last = Enum.max_by(messages, & &1.inserted_at)
+    last.role == :user
+  end
+
+  defp resumed_planning?(_task), do: false
+
   defp dispatch_task(agent, task) do
-    with {:ok, task} <-
-           Ash.update(task, %{}, action: :start_planning),
+    with {:ok, task} <- maybe_start_planning(task),
          {:ok, task} <-
            Ash.update(task, %{agent_id: agent.id}, action: :assign_agent) do
       broadcast_task_update(task)
@@ -94,6 +109,22 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
     end
   end
 
+  defp maybe_start_planning(%{status: :planning} = task) do
+    {:ok, task}
+  end
+
+  defp maybe_start_planning(%{status: :executing} = task) do
+    {:ok, task}
+  end
+
+  defp maybe_start_planning(%{status: :pr_fix} = task) do
+    Ash.update(task, %{}, action: :start_pr_fix)
+  end
+
+  defp maybe_start_planning(task) do
+    Ash.update(task, %{}, action: :start_planning)
+  end
+
   defp ensure_agent_process(agent_id) do
     case AgentRegistry.lookup(agent_id) do
       nil -> AgentSupervisor.start_agent(agent_id)
@@ -116,21 +147,55 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
   end
 
   defp build_prompt(task) do
+    slug =
+      if task.plan,
+        do: "execution",
+        else: "planning"
+
+    variables = %{
+      "title" => task.title || "",
+      "description" => task.description || "",
+      "plan" => task.plan || ""
+    }
+
+    base =
+      case Renderer.render(slug, task.project_id, variables) do
+        {:ok, prompt} -> prompt
+        {:error, :template_not_found} -> fallback_prompt(task)
+      end
+
+    append_conversation(base, task.messages)
+  end
+
+  defp append_conversation(prompt, messages) when is_list(messages) and messages != [] do
+    sorted = Enum.sort_by(messages, & &1.inserted_at)
+
+    history =
+      Enum.map_join(sorted, "\n", fn msg ->
+        label = if msg.role == :assistant, do: "Assistant", else: "User"
+        "#{label}: #{msg.content}"
+      end)
+
+    prompt <>
+      "\n\n--- Conversation History ---\n" <>
+      history <>
+      "\n\nPlease continue based on the conversation above."
+  end
+
+  defp append_conversation(prompt, _messages), do: prompt
+
+  defp fallback_prompt(task) do
     parts = ["Task: #{task.title}"]
 
     parts =
-      if task.description do
-        parts ++ ["\nDescription: #{task.description}"]
-      else
-        parts
-      end
+      if task.description,
+        do: parts ++ ["\nDescription: #{task.description}"],
+        else: parts
 
     parts =
-      if task.plan do
-        parts ++ ["\nPlan: #{task.plan}"]
-      else
-        parts
-      end
+      if task.plan,
+        do: parts ++ ["\nPlan: #{task.plan}"],
+        else: parts
 
     Enum.join(parts)
   end

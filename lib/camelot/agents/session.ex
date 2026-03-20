@@ -55,6 +55,13 @@ defmodule Camelot.Agents.Session do
       default(0)
     end
 
+    attribute :permission_denials, {:array, :map} do
+      allow_nil?(true)
+      public?(true)
+      default([])
+      description("Tools denied by the permission system")
+    end
+
     timestamps()
   end
 
@@ -89,14 +96,24 @@ defmodule Camelot.Agents.Session do
     end
 
     update :complete do
-      accept([:output_log, :exit_code, :error_message])
+      accept([
+        :output_log,
+        :exit_code,
+        :error_message,
+        :permission_denials
+      ])
 
       change(set_attribute(:status, :completed))
       change(set_attribute(:finished_at, &DateTime.utc_now/0))
     end
 
     update :fail do
-      accept([:output_log, :exit_code, :error_message])
+      accept([
+        :output_log,
+        :exit_code,
+        :error_message,
+        :permission_denials
+      ])
 
       change(set_attribute(:status, :failed))
       change(set_attribute(:finished_at, &DateTime.utc_now/0))

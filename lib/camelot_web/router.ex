@@ -74,6 +74,10 @@ defmodule CamelotWeb.Router do
       live "/agents", AgentLive.Index, :index
       live "/agents/new", AgentLive.Index, :new
       live "/agents/:id", AgentLive.Show
+
+      live "/prompts", PromptTemplateLive, :index
+      live "/prompts/new", PromptTemplateLive, :new
+      live "/prompts/:id/edit", PromptTemplateLive, :edit
     end
   end
 

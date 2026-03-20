@@ -212,24 +212,24 @@ defmodule CamelotWeb.ProjectLive.Index do
     if has_github? do
       params
     else
-      case read_git_remote(path) do
-        {:ok, url} ->
-          case parse_github_url(url) do
-            {owner, repo} ->
-              params
-              |> Map.put("github_repo_url", "https://github.com/#{owner}/#{repo}")
-              |> Map.put("github_owner", owner)
-              |> Map.put("github_repo", repo)
-
-            nil ->
-              params
-          end
-
-        :error ->
-          params
-      end
+      apply_git_remote(params, read_git_remote(path))
     end
   end
+
+  defp apply_git_remote(params, {:ok, url}) do
+    case parse_github_url(url) do
+      {owner, repo} ->
+        params
+        |> Map.put("github_repo_url", "https://github.com/#{owner}/#{repo}")
+        |> Map.put("github_owner", owner)
+        |> Map.put("github_repo", repo)
+
+      nil ->
+        params
+    end
+  end
+
+  defp apply_git_remote(params, :error), do: params
 
   defp read_git_remote(path) do
     git_config = Path.join([path, ".git", "config"])

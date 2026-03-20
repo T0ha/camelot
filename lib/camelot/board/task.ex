@@ -17,6 +17,7 @@ defmodule Camelot.Board.Task do
   @statuses [
     :created,
     :planning,
+    :needs_input,
     :plan_review,
     :executing,
     :pr_created,
@@ -98,6 +99,12 @@ defmodule Camelot.Board.Task do
       constraints(one_of: @statuses)
     end
 
+    attribute :previous_status, :atom do
+      allow_nil?(true)
+      public?(true)
+      constraints(one_of: @statuses)
+    end
+
     timestamps()
   end
 
@@ -115,6 +122,7 @@ defmodule Camelot.Board.Task do
     end
 
     has_many(:sessions, Camelot.Agents.Session)
+    has_many(:messages, Camelot.Board.TaskMessage)
   end
 
   actions do
@@ -148,10 +156,50 @@ defmodule Camelot.Board.Task do
       change(set_attribute(:status, :planning))
     end
 
+    update :request_input do
+      accept([])
+      require_atomic?(false)
+
+      validate(fn changeset, _context ->
+        status = Ash.Changeset.get_attribute(changeset, :status)
+
+        if status in [:planning, :executing] do
+          :ok
+        else
+          {:error, field: :status, message: "must be planning or executing"}
+        end
+      end)
+
+      change(fn changeset, _context ->
+        prev = Ash.Changeset.get_attribute(changeset, :status)
+
+        changeset
+        |> Ash.Changeset.force_change_attribute(:status, :needs_input)
+        |> Ash.Changeset.change_attribute(:previous_status, prev)
+      end)
+    end
+
+    update :provide_input do
+      accept([])
+      require_atomic?(false)
+
+      validate(attribute_equals(:status, :needs_input))
+
+      change(fn changeset, _context ->
+        prev =
+          changeset
+          |> Ash.Changeset.get_attribute(:previous_status)
+          |> Kernel.||(:planning)
+
+        Ash.Changeset.force_change_attribute(changeset, :status, prev)
+      end)
+    end
+
     update :submit_plan do
       accept([:plan])
 
       validate(attribute_equals(:status, :planning))
+      validate(present(:plan))
       change(set_attribute(:status, :plan_review))
     end
 
@@ -243,6 +291,7 @@ defmodule Camelot.Board.Task do
     [
       :created,
       :planning,
+      :needs_input,
       :plan_review,
       :executing,
       :pr_created,

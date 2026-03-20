@@ -70,6 +70,7 @@ defmodule Camelot.MixProject do
       {:gettext, "~> 1.0"},
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.2.0"},
+      {:mdex, "~> 0.4"},
       {:bandit, "~> 1.5"},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},

@@ -7,5 +7,6 @@ defmodule Camelot.Board do
 
   resources do
     resource(Camelot.Board.Task)
+    resource(Camelot.Board.TaskMessage)
   end
 end

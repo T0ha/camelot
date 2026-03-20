@@ -218,7 +218,8 @@ defmodule Camelot.Board.TaskTest do
       assert :created in statuses
       assert :done in statuses
       assert :cancelled in statuses
-      assert length(statuses) == 9
+      assert :needs_input in statuses
+      assert length(statuses) == 10
     end
   end
 
