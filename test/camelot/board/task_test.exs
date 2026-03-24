@@ -2,6 +2,7 @@ defmodule Camelot.Board.TaskTest do
   use Camelot.DataCase, async: true
 
   alias Camelot.Accounts.User
+  alias Camelot.Agents.Agent
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
 
@@ -21,7 +22,14 @@ defmodule Camelot.Board.TaskTest do
         hashed_password: hashed
       })
 
-    %{project: project, user: user}
+    {:ok, agent} =
+      Ash.create(Agent, %{
+        name: "test-agent",
+        type: :claude_code,
+        project_id: project.id
+      })
+
+    %{project: project, user: user, agent: agent}
   end
 
   defp create_task(project, user, attrs \\ %{}) do
@@ -35,10 +43,11 @@ defmodule Camelot.Board.TaskTest do
   end
 
   describe "create" do
-    test "creates a task with valid attributes", ctx do
+    test "creates a task with default stage/state", ctx do
       assert {:ok, task} = create_task(ctx.project, ctx.user)
       assert task.title == "Test task"
-      assert task.status == :created
+      assert task.stage == :todo
+      assert task.state == :queued
       assert task.priority == 0
     end
 
@@ -59,30 +68,104 @@ defmodule Camelot.Board.TaskTest do
     end
   end
 
-  describe "state transitions" do
-    test "created → planning", ctx do
+  describe "begin_work" do
+    test "todo → planning/in_progress", ctx do
       {:ok, task} = create_task(ctx.project, ctx.user)
 
       assert {:ok, updated} =
-               Ash.update(task, %{}, action: :start_planning)
+               Ash.update(
+                 task,
+                 %{agent_id: ctx.agent.id},
+                 action: :begin_work
+               )
 
-      assert updated.status == :planning
+      assert updated.stage == :planning
+      assert updated.state == :in_progress
     end
 
-    test "planning → plan_review with plan", ctx do
+    test "planning/queued → planning/in_progress", ctx do
       {:ok, task} = create_task(ctx.project, ctx.user)
-      {:ok, task} = Ash.update(task, %{}, action: :start_planning)
+
+      {:ok, task} =
+        Ash.update(
+          task,
+          %{agent_id: ctx.agent.id},
+          action: :begin_work
+        )
+
+      # Simulate returning to queued after input
+      {:ok, task} =
+        Ash.update(task, %{}, action: :request_input)
+
+      {:ok, task} =
+        Ash.update(task, %{}, action: :provide_input)
+
+      assert task.state == :queued
 
       assert {:ok, updated} =
-               Ash.update(task, %{plan: "Do X then Y"}, action: :submit_plan)
+               Ash.update(
+                 task,
+                 %{agent_id: ctx.agent.id},
+                 action: :begin_work
+               )
 
-      assert updated.status == :plan_review
+      assert updated.stage == :planning
+      assert updated.state == :in_progress
+    end
+
+    test "fails when not queued", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      {:ok, task} =
+        Ash.update(
+          task,
+          %{agent_id: ctx.agent.id},
+          action: :begin_work
+        )
+
+      assert task.state == :in_progress
+
+      assert {:error, _} =
+               Ash.update(
+                 task,
+                 %{agent_id: ctx.agent.id},
+                 action: :begin_work
+               )
+    end
+  end
+
+  describe "planning flow" do
+    test "submit_plan → waiting_for_input", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      {:ok, task} =
+        Ash.update(
+          task,
+          %{agent_id: ctx.agent.id},
+          action: :begin_work
+        )
+
+      assert {:ok, updated} =
+               Ash.update(
+                 task,
+                 %{plan: "Do X then Y"},
+                 action: :submit_plan
+               )
+
+      assert updated.stage == :planning
+      assert updated.state == :waiting_for_input
       assert updated.plan == "Do X then Y"
     end
 
-    test "plan_review → executing (approve)", ctx do
+    test "approve_plan → executing/queued", ctx do
       {:ok, task} = create_task(ctx.project, ctx.user)
-      {:ok, task} = Ash.update(task, %{}, action: :start_planning)
+
+      {:ok, task} =
+        Ash.update(
+          task,
+          %{agent_id: ctx.agent.id},
+          action: :begin_work
+        )
 
       {:ok, task} =
         Ash.update(task, %{plan: "plan"}, action: :submit_plan)
@@ -90,34 +173,63 @@ defmodule Camelot.Board.TaskTest do
       assert {:ok, updated} =
                Ash.update(task, %{}, action: :approve_plan)
 
-      assert updated.status == :executing
+      assert updated.stage == :executing
+      assert updated.state == :queued
     end
 
-    test "plan_review → planning (reject)", ctx do
+    test "request_plan_changes → planning/queued", ctx do
       {:ok, task} = create_task(ctx.project, ctx.user)
-      {:ok, task} = Ash.update(task, %{}, action: :start_planning)
+
+      {:ok, task} =
+        Ash.update(
+          task,
+          %{agent_id: ctx.agent.id},
+          action: :begin_work
+        )
 
       {:ok, task} =
         Ash.update(task, %{plan: "plan"}, action: :submit_plan)
 
       assert {:ok, updated} =
-               Ash.update(task, %{}, action: :reject_plan)
+               Ash.update(task, %{}, action: :request_plan_changes)
 
-      assert updated.status == :planning
+      assert updated.stage == :planning
+      assert updated.state == :queued
     end
+  end
 
-    test "executing → pr_created", ctx do
+  describe "executing flow" do
+    setup ctx do
       {:ok, task} = create_task(ctx.project, ctx.user)
-      {:ok, task} = Ash.update(task, %{}, action: :start_planning)
+
+      {:ok, task} =
+        Ash.update(
+          task,
+          %{agent_id: ctx.agent.id},
+          action: :begin_work
+        )
 
       {:ok, task} =
         Ash.update(task, %{plan: "plan"}, action: :submit_plan)
 
-      {:ok, task} = Ash.update(task, %{}, action: :approve_plan)
+      {:ok, task} =
+        Ash.update(task, %{}, action: :approve_plan)
 
+      # begin_work for executing stage
+      {:ok, task} =
+        Ash.update(
+          task,
+          %{agent_id: ctx.agent.id},
+          action: :begin_work
+        )
+
+      %{task: task}
+    end
+
+    test "pr_created → pr/waiting_for_input", ctx do
       assert {:ok, updated} =
                Ash.update(
-                 task,
+                 ctx.task,
                  %{
                    pr_url: "https://github.com/o/r/pull/1",
                    pr_number: 1
@@ -125,107 +237,129 @@ defmodule Camelot.Board.TaskTest do
                  action: :pr_created
                )
 
-      assert updated.status == :pr_created
+      assert updated.stage == :pr
+      assert updated.state == :waiting_for_input
       assert updated.pr_number == 1
     end
 
-    test "pr_review → done (approve_pr)", ctx do
+    test "request_input → waiting_for_input", ctx do
+      assert {:ok, updated} =
+               Ash.update(ctx.task, %{}, action: :request_input)
+
+      assert updated.stage == :executing
+      assert updated.state == :waiting_for_input
+    end
+  end
+
+  describe "PR flow" do
+    setup ctx do
       {:ok, task} = create_task(ctx.project, ctx.user)
-      {:ok, task} = Ash.update(task, %{}, action: :start_planning)
+
+      {:ok, task} =
+        Ash.update(
+          task,
+          %{agent_id: ctx.agent.id},
+          action: :begin_work
+        )
 
       {:ok, task} =
         Ash.update(task, %{plan: "p"}, action: :submit_plan)
 
-      {:ok, task} = Ash.update(task, %{}, action: :approve_plan)
+      {:ok, task} =
+        Ash.update(task, %{}, action: :approve_plan)
 
       {:ok, task} =
-        Ash.update(task, %{pr_url: "u", pr_number: 1}, action: :pr_created)
+        Ash.update(
+          task,
+          %{agent_id: ctx.agent.id},
+          action: :begin_work
+        )
 
       {:ok, task} =
-        Ash.update(task, %{}, action: :submit_pr_review)
+        Ash.update(
+          task,
+          %{pr_url: "u", pr_number: 1},
+          action: :pr_created
+        )
 
-      assert {:ok, updated} =
-               Ash.update(task, %{}, action: :approve_pr)
-
-      assert updated.status == :done
+      %{task: task}
     end
 
-    test "pr_review → pr_fix (request changes)", ctx do
-      {:ok, task} = create_task(ctx.project, ctx.user)
-      {:ok, task} = Ash.update(task, %{}, action: :start_planning)
-
-      {:ok, task} =
-        Ash.update(task, %{plan: "p"}, action: :submit_plan)
-
-      {:ok, task} = Ash.update(task, %{}, action: :approve_plan)
-
-      {:ok, task} =
-        Ash.update(task, %{pr_url: "u", pr_number: 1}, action: :pr_created)
-
-      {:ok, task} =
-        Ash.update(task, %{}, action: :submit_pr_review)
-
+    test "complete → done/nil", ctx do
       assert {:ok, updated} =
-               Ash.update(task, %{}, action: :request_pr_changes)
+               Ash.update(ctx.task, %{}, action: :complete)
 
-      assert updated.status == :pr_fix
+      assert updated.stage == :done
+      assert updated.state == nil
     end
 
-    test "pr_fix → executing", ctx do
-      {:ok, task} = create_task(ctx.project, ctx.user)
-      {:ok, task} = Ash.update(task, %{}, action: :start_planning)
-
-      {:ok, task} =
-        Ash.update(task, %{plan: "p"}, action: :submit_plan)
-
-      {:ok, task} = Ash.update(task, %{}, action: :approve_plan)
-
-      {:ok, task} =
-        Ash.update(task, %{pr_url: "u", pr_number: 1}, action: :pr_created)
-
-      {:ok, task} =
-        Ash.update(task, %{}, action: :submit_pr_review)
-
-      {:ok, task} =
-        Ash.update(task, %{}, action: :request_pr_changes)
-
+    test "request_pr_changes → pr/queued", ctx do
       assert {:ok, updated} =
-               Ash.update(task, %{}, action: :start_pr_fix)
+               Ash.update(
+                 ctx.task,
+                 %{},
+                 action: :request_pr_changes
+               )
 
-      assert updated.status == :executing
+      assert updated.stage == :pr
+      assert updated.state == :queued
     end
+  end
 
-    test "invalid transition fails", ctx do
+  describe "error and retry" do
+    test "mark_error and retry", ctx do
       {:ok, task} = create_task(ctx.project, ctx.user)
 
-      assert {:error, _} =
-               Ash.update(task, %{}, action: :approve_plan)
-    end
+      {:ok, task} =
+        Ash.update(
+          task,
+          %{agent_id: ctx.agent.id},
+          action: :begin_work
+        )
 
-    test "cancel from any non-terminal state", ctx do
+      {:ok, task} =
+        Ash.update(task, %{}, action: :mark_error)
+
+      assert task.state == :error
+      assert task.stage == :planning
+
+      {:ok, task} =
+        Ash.update(task, %{}, action: :retry)
+
+      assert task.state == :queued
+      assert task.stage == :planning
+    end
+  end
+
+  describe "cancel" do
+    test "cancel from any state", ctx do
       {:ok, task} = create_task(ctx.project, ctx.user)
 
       assert {:ok, cancelled} =
                Ash.update(task, %{}, action: :cancel)
 
-      assert cancelled.status == :cancelled
+      assert cancelled.stage == :cancelled
+      assert cancelled.state == nil
     end
   end
 
-  describe "statuses/0" do
-    test "returns all statuses" do
-      statuses = Task.statuses()
-      assert :created in statuses
-      assert :done in statuses
-      assert :cancelled in statuses
-      assert length(statuses) == 9
+  describe "stages/0" do
+    test "returns all stages" do
+      stages = Task.stages()
+      assert :todo in stages
+      assert :planning in stages
+      assert :executing in stages
+      assert :pr in stages
+      assert :done in stages
+      assert :cancelled in stages
+      assert length(stages) == 7
     end
   end
 
-  describe "column_statuses/0" do
-    test "returns display statuses without cancelled" do
-      cols = Task.column_statuses()
-      assert :created in cols
+  describe "column_stages/0" do
+    test "returns display stages without cancelled" do
+      cols = Task.column_stages()
+      assert :todo in cols
       assert :done in cols
       refute :cancelled in cols
     end

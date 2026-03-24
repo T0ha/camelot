@@ -8,7 +8,7 @@ defmodule CamelotWeb.BoardComponents do
 
   alias Phoenix.LiveView.Rendered
 
-  attr :status, :atom, required: true
+  attr :stage, :atom, required: true
   attr :tasks, :list, required: true
 
   slot :inner_block
@@ -20,9 +20,9 @@ defmodule CamelotWeb.BoardComponents do
       <div class="flex items-center gap-2 mb-3 px-2">
         <span class={[
           "badge badge-sm",
-          status_badge_class(@status)
+          stage_badge_class(@stage)
         ]}>
-          {format_status(@status)}
+          {format_stage(@stage)}
         </span>
         <span class="text-xs text-base-content/50">
           {length(@tasks)}
@@ -43,7 +43,6 @@ defmodule CamelotWeb.BoardComponents do
 
   attr :task, :map, required: true
   attr :on_click, :any, default: nil
-  attr :error, :boolean, default: false
 
   @spec task_card(map()) :: Rendered.t()
   def task_card(assigns) do
@@ -52,7 +51,7 @@ defmodule CamelotWeb.BoardComponents do
       class={[
         "card bg-base-100 shadow-sm cursor-pointer",
         "hover:shadow-md transition-shadow",
-        @error && "border border-error/40"
+        @task.state == :error && "border border-error/40"
       ]}
       phx-click={@on_click}
     >
@@ -67,15 +66,7 @@ defmodule CamelotWeb.BoardComponents do
           {@task.description}
         </p>
         <div class="flex items-center gap-2 mt-1">
-          <span
-            :if={@error}
-            class={[
-              "badge badge-xs",
-              status_badge_class(@task.status)
-            ]}
-          >
-            {format_status(@task.status)}
-          </span>
+          <.state_badge :if={@task.state} state={@task.state} />
           <span
             :if={@task.pr_url}
             class="badge badge-xs badge-outline"
@@ -91,20 +82,42 @@ defmodule CamelotWeb.BoardComponents do
     """
   end
 
-  defp format_status(status) do
-    status
+  attr :state, :atom, required: true
+
+  @spec state_badge(map()) :: Rendered.t()
+  def state_badge(assigns) do
+    ~H"""
+    <span class={["badge badge-xs", state_badge_class(@state)]}>
+      {format_state(@state)}
+    </span>
+    """
+  end
+
+  defp format_stage(stage) do
+    stage
     |> Atom.to_string()
     |> String.replace("_", " ")
     |> String.capitalize()
   end
 
-  defp status_badge_class(:planning), do: "badge-info"
-  defp status_badge_class(:plan_review), do: "badge-warning"
-  defp status_badge_class(:executing), do: "badge-primary"
-  defp status_badge_class(:pr_created), do: "badge-secondary"
-  defp status_badge_class(:pr_review), do: "badge-warning"
-  defp status_badge_class(:pr_fix), do: "badge-error"
-  defp status_badge_class(:done), do: "badge-success"
-  defp status_badge_class(:error), do: "badge-error"
-  defp status_badge_class(_status), do: "badge-ghost"
+  defp format_state(state) do
+    state
+    |> Atom.to_string()
+    |> String.replace("_", " ")
+    |> String.capitalize()
+  end
+
+  defp stage_badge_class(:draft), do: "badge-ghost"
+  defp stage_badge_class(:todo), do: "badge-ghost"
+  defp stage_badge_class(:planning), do: "badge-info"
+  defp stage_badge_class(:executing), do: "badge-primary"
+  defp stage_badge_class(:pr), do: "badge-secondary"
+  defp stage_badge_class(:done), do: "badge-success"
+  defp stage_badge_class(_stage), do: "badge-ghost"
+
+  defp state_badge_class(:queued), do: "badge-ghost"
+  defp state_badge_class(:in_progress), do: "badge-primary"
+  defp state_badge_class(:waiting_for_input), do: "badge-warning"
+  defp state_badge_class(:error), do: "badge-error"
+  defp state_badge_class(_state), do: "badge-ghost"
 end

@@ -30,21 +30,7 @@ defmodule CamelotWeb.TaskLiveTest do
     test "renders task detail", %{conn: conn, task: task} do
       {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
       assert html =~ "Live task"
-      assert html =~ "created"
-    end
-  end
-
-  describe "transitions" do
-    test "start_planning transitions task",
-         %{conn: conn, task: task} do
-      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
-
-      assert view
-             |> element(
-               "button",
-               "Start Planning"
-             )
-             |> render_click() =~ "planning"
+      assert html =~ "todo"
     end
   end
 

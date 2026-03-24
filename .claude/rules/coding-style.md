@@ -18,6 +18,7 @@ Follow: [OTP design principles](https://www.erlang.org/doc/system/design_princip
 - Don't use type guards to check spec. Dialyzer should be used for that
 - Use existing phoenix components instead of creating new ones when possible
 - Reuse existig already defined functions instead of creating new ones when possible
+- Try to avoid `if`,  `cond` and `unless` statements, use pattern matching in functions and case statements instead
 
 
 # Docs

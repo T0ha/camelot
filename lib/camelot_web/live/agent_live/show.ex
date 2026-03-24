@@ -33,6 +33,20 @@ defmodule CamelotWeb.AgentLive.Show do
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   @impl true
+  def handle_event("reset_agent", _params, socket) do
+    agent = socket.assigns.agent
+
+    case Ash.update(agent, %{}, action: :mark_idle) do
+      {:ok, updated} ->
+        updated = Ash.load!(updated, [:project, :sessions])
+        {:noreply, assign(socket, agent: updated)}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Failed to reset agent")}
+    end
+  end
+
+  @impl true
   def render(assigns) do
     ~H"""
     <div class="space-y-6">
@@ -46,13 +60,22 @@ defmodule CamelotWeb.AgentLive.Show do
           </.link>
           <h1 class="text-2xl font-bold">{@agent.name}</h1>
         </div>
-        <span class={[
-          "badge",
-          @agent.status == :idle && "badge-success",
-          @agent.status == :busy && "badge-warning"
-        ]}>
-          {@agent.status}
-        </span>
+        <div class="flex items-center gap-2">
+          <span class={[
+            "badge",
+            @agent.status == :idle && "badge-success",
+            @agent.status == :busy && "badge-warning"
+          ]}>
+            {@agent.status}
+          </span>
+          <button
+            phx-click="reset_agent"
+            data-confirm="Reset agent to idle?"
+            class="btn btn-xs btn-ghost text-warning"
+          >
+            Reset
+          </button>
+        </div>
       </div>
 
       <.list>
