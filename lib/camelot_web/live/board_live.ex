@@ -1,7 +1,7 @@
 defmodule CamelotWeb.BoardLive do
   @moduledoc """
   Kanban board LiveView — main page of the application.
-  Displays tasks organized by status columns with
+  Displays tasks organized by stage columns with
   real-time PubSub updates.
   """
   use CamelotWeb, :live_view
@@ -29,7 +29,6 @@ defmodule CamelotWeb.BoardLive do
   end
 
   def handle_info({:task_created, _task}, socket) do
-    # load_board(socket)}
     {:noreply, socket}
   end
 
@@ -71,15 +70,13 @@ defmodule CamelotWeb.BoardLive do
     tasks = Ash.read!(Task, load: [:project, :sessions])
     projects = Ash.read!(Project)
 
-    {error_tasks, normal_tasks} =
-      Enum.split_with(tasks, &has_error?/1)
-
     columns =
-      Enum.map(Task.column_statuses(), fn status ->
-        {status, Enum.filter(normal_tasks, &(&1.status == status))}
+      Enum.map(Task.column_stages(), fn stage ->
+        {stage,
+         Enum.filter(tasks, fn task ->
+           task.stage == stage and task.stage != :cancelled
+         end)}
       end)
-
-    columns = columns ++ [{:error, error_tasks}]
 
     assign(socket,
       page_title: "Board",
@@ -93,13 +90,6 @@ defmodule CamelotWeb.BoardLive do
           "project_id" => ""
         })
     )
-  end
-
-  defp has_error?(task) do
-    task.status not in [:done, :cancelled] &&
-      task.sessions != [] &&
-      Enum.any?(task.sessions, &(&1.status == :failed)) &&
-      Enum.all?(task.sessions, &(&1.status != :running))
   end
 
   defp broadcast_task_event(event, task) do
@@ -126,14 +116,13 @@ defmodule CamelotWeb.BoardLive do
 
       <div class="flex gap-3 overflow-x-auto pb-4">
         <.column
-          :for={{status, tasks} <- @columns}
-          status={status}
+          :for={{stage, tasks} <- @columns}
+          stage={stage}
           tasks={tasks}
         >
           <.task_card
             :for={task <- tasks}
             task={task}
-            error={status == :error}
             on_click={JS.navigate(~p"/tasks/#{task.id}")}
           />
         </.column>

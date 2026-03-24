@@ -1,12 +1,14 @@
 defmodule Camelot.Board.Task do
   @moduledoc """
-  A kanban task card with state machine transitions.
+  A kanban task card with stage/state machine.
 
-  Status flow:
-    created → planning → plan_review → executing →
-    pr_created → pr_review → done
-                          ↘ pr_fix → executing
-    Any state → cancelled
+  Stage = board column (workflow phase):
+    draft → todo → planning → executing → pr → done
+    Any stage → cancelled
+
+  State = card condition within a stage:
+    queued, in_progress, waiting_for_input, error
+    (nil for terminal stages: done, cancelled)
   """
   use Ash.Resource,
     domain: Camelot.Board,
@@ -14,18 +16,17 @@ defmodule Camelot.Board.Task do
     extensions: [AshOban],
     authorizers: []
 
-  @statuses [
-    :created,
+  @stages [
+    :draft,
+    :todo,
     :planning,
-    :needs_input,
-    :plan_review,
     :executing,
-    :pr_created,
-    :pr_review,
-    :pr_fix,
+    :pr,
     :done,
     :cancelled
   ]
+
+  @states [:queued, :waiting_for_input, :in_progress, :error]
 
   oban do
     triggers do
@@ -42,11 +43,7 @@ defmodule Camelot.Board.Task do
         where(
           expr(
             not is_nil(pr_number) and
-              status in [
-                :pr_created,
-                :pr_review,
-                :pr_fix
-              ]
+              stage == :pr
           )
         )
       end
@@ -92,17 +89,29 @@ defmodule Camelot.Board.Task do
       default(0)
     end
 
-    attribute :status, :atom do
-      allow_nil?(false)
-      public?(true)
-      default(:created)
-      constraints(one_of: @statuses)
-    end
-
-    attribute :previous_status, :atom do
+    attribute :pr_comments_seen_at, :utc_datetime do
       allow_nil?(true)
       public?(true)
-      constraints(one_of: @statuses)
+    end
+
+    attribute :allowed_tools, {:array, :string} do
+      allow_nil?(false)
+      public?(true)
+      default([])
+    end
+
+    attribute :stage, :atom do
+      allow_nil?(false)
+      public?(true)
+      default(:todo)
+      constraints(one_of: @stages)
+    end
+
+    attribute :state, :atom do
+      allow_nil?(true)
+      public?(true)
+      default(:queued)
+      constraints(one_of: @states)
     end
 
     timestamps()
@@ -149,110 +158,15 @@ defmodule Camelot.Board.Task do
       accept([:title, :description, :priority])
     end
 
-    update :start_planning do
+    update :move_to_todo do
       accept([])
 
-      validate(attribute_equals(:status, :created))
-      change(set_attribute(:status, :planning))
+      validate(attribute_equals(:stage, :draft))
+      change(set_attribute(:stage, :todo))
+      change(set_attribute(:state, :queued))
     end
 
-    update :request_input do
-      accept([])
-      require_atomic?(false)
-
-      validate(fn changeset, _context ->
-        status = Ash.Changeset.get_attribute(changeset, :status)
-
-        if status in [:planning, :executing] do
-          :ok
-        else
-          {:error, field: :status, message: "must be planning or executing"}
-        end
-      end)
-
-      change(fn changeset, _context ->
-        prev = Ash.Changeset.get_attribute(changeset, :status)
-
-        changeset
-        |> Ash.Changeset.force_change_attribute(:status, :needs_input)
-        |> Ash.Changeset.change_attribute(:previous_status, prev)
-      end)
-    end
-
-    update :provide_input do
-      accept([])
-      require_atomic?(false)
-
-      validate(attribute_equals(:status, :needs_input))
-
-      change(fn changeset, _context ->
-        prev =
-          changeset
-          |> Ash.Changeset.get_attribute(:previous_status)
-          |> Kernel.||(:planning)
-
-        Ash.Changeset.force_change_attribute(changeset, :status, prev)
-      end)
-    end
-
-    update :submit_plan do
-      accept([:plan])
-
-      validate(attribute_equals(:status, :planning))
-      validate(present(:plan))
-      change(set_attribute(:status, :plan_review))
-    end
-
-    update :approve_plan do
-      accept([])
-
-      validate(attribute_equals(:status, :plan_review))
-      change(set_attribute(:status, :executing))
-    end
-
-    update :reject_plan do
-      accept([])
-
-      validate(attribute_equals(:status, :plan_review))
-      change(set_attribute(:status, :planning))
-    end
-
-    update :pr_created do
-      accept([:pr_url, :pr_number])
-
-      validate(attribute_equals(:status, :executing))
-      change(set_attribute(:status, :pr_created))
-    end
-
-    update :submit_pr_review do
-      accept([])
-
-      validate(attribute_equals(:status, :pr_created))
-      change(set_attribute(:status, :pr_review))
-    end
-
-    update :approve_pr do
-      accept([])
-
-      validate(attribute_equals(:status, :pr_review))
-      change(set_attribute(:status, :done))
-    end
-
-    update :request_pr_changes do
-      accept([])
-
-      validate(attribute_equals(:status, :pr_review))
-      change(set_attribute(:status, :pr_fix))
-    end
-
-    update :start_pr_fix do
-      accept([])
-
-      validate(attribute_equals(:status, :pr_fix))
-      change(set_attribute(:status, :executing))
-    end
-
-    update :assign_agent do
+    update :begin_work do
       accept([])
       require_atomic?(false)
 
@@ -260,13 +174,133 @@ defmodule Camelot.Board.Task do
         allow_nil?(false)
       end
 
+      validate(attribute_equals(:state, :queued))
+
+      validate(fn changeset, _context ->
+        stage = Ash.Changeset.get_attribute(changeset, :stage)
+
+        if stage in [:todo, :planning, :executing, :pr] do
+          :ok
+        else
+          {:error, field: :stage, message: "must be todo, planning, executing, or pr"}
+        end
+      end)
+
+      change(fn changeset, _context ->
+        stage = Ash.Changeset.get_attribute(changeset, :stage)
+
+        changeset =
+          if stage == :todo do
+            Ash.Changeset.force_change_attribute(
+              changeset,
+              :stage,
+              :planning
+            )
+          else
+            changeset
+          end
+
+        Ash.Changeset.force_change_attribute(
+          changeset,
+          :state,
+          :in_progress
+        )
+      end)
+
       change(manage_relationship(:agent_id, :agent, type: :append))
+    end
+
+    update :submit_plan do
+      accept([:plan])
+
+      validate(attribute_equals(:stage, :planning))
+      validate(attribute_equals(:state, :in_progress))
+      validate(present(:plan))
+      change(set_attribute(:state, :waiting_for_input))
+    end
+
+    update :approve_plan do
+      accept([])
+
+      validate(attribute_equals(:stage, :planning))
+      validate(attribute_equals(:state, :waiting_for_input))
+      validate(present(:plan))
+      change(set_attribute(:stage, :executing))
+      change(set_attribute(:state, :queued))
+    end
+
+    update :request_plan_changes do
+      accept([])
+
+      validate(attribute_equals(:stage, :planning))
+      validate(attribute_equals(:state, :waiting_for_input))
+      change(set_attribute(:state, :queued))
+    end
+
+    update :request_input do
+      accept([])
+
+      validate(attribute_equals(:state, :in_progress))
+      change(set_attribute(:state, :waiting_for_input))
+    end
+
+    update :provide_input do
+      accept([:allowed_tools])
+
+      validate(attribute_equals(:state, :waiting_for_input))
+      change(set_attribute(:state, :queued))
+    end
+
+    update :mark_error do
+      accept([])
+
+      change(set_attribute(:state, :error))
+    end
+
+    update :mark_in_progress do
+      accept([])
+
+      change(set_attribute(:state, :in_progress))
+    end
+
+    update :retry do
+      accept([])
+
+      validate(attribute_equals(:state, :error))
+      change(set_attribute(:state, :queued))
+    end
+
+    update :pr_created do
+      accept([:pr_url, :pr_number])
+
+      validate(attribute_equals(:stage, :executing))
+      validate(attribute_equals(:state, :in_progress))
+      change(set_attribute(:stage, :pr))
+      change(set_attribute(:state, :waiting_for_input))
+    end
+
+    update :request_pr_changes do
+      accept([:pr_comments_seen_at])
+
+      validate(attribute_equals(:stage, :pr))
+      validate(attribute_equals(:state, :waiting_for_input))
+      change(set_attribute(:state, :queued))
+    end
+
+    update :complete do
+      accept([])
+
+      validate(attribute_equals(:stage, :pr))
+      validate(attribute_equals(:state, :waiting_for_input))
+      change(set_attribute(:stage, :done))
+      change(set_attribute(:state, nil))
     end
 
     update :cancel do
       accept([])
 
-      change(set_attribute(:status, :cancelled))
+      change(set_attribute(:stage, :cancelled))
+      change(set_attribute(:state, nil))
     end
 
     update :check_pr_status do
@@ -278,26 +312,22 @@ defmodule Camelot.Board.Task do
   end
 
   @doc """
-  Returns all valid task statuses.
+  Returns all valid task stages.
   """
-  @spec statuses() :: [atom()]
-  def statuses, do: @statuses
+  @spec stages() :: [atom()]
+  def stages, do: @stages
 
   @doc """
-  Returns statuses displayed as kanban columns.
+  Returns all valid task states.
   """
-  @spec column_statuses() :: [atom()]
-  def column_statuses do
-    [
-      :created,
-      :planning,
-      :needs_input,
-      :plan_review,
-      :executing,
-      :pr_created,
-      :pr_review,
-      :pr_fix,
-      :done
-    ]
+  @spec states() :: [atom()]
+  def states, do: @states
+
+  @doc """
+  Returns stages displayed as kanban columns.
+  """
+  @spec column_stages() :: [atom()]
+  def column_stages do
+    @stages -- [:cancelled]
   end
 end

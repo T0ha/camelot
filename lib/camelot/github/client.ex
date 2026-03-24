@@ -25,6 +25,30 @@ defmodule Camelot.Github.Client do
     )
   end
 
+  @spec list_pull_request_comments(
+          String.t(),
+          String.t(),
+          integer()
+        ) :: {:ok, [map()]} | {:error, term()}
+  def list_pull_request_comments(owner, repo, pr_number) do
+    request(
+      :get,
+      "/repos/#{owner}/#{repo}/issues/#{pr_number}/comments"
+    )
+  end
+
+  @spec list_pull_request_commits(
+          String.t(),
+          String.t(),
+          integer()
+        ) :: {:ok, [map()]} | {:error, term()}
+  def list_pull_request_commits(owner, repo, pr_number) do
+    request(
+      :get,
+      "/repos/#{owner}/#{repo}/pulls/#{pr_number}/commits"
+    )
+  end
+
   @spec list_issues(String.t(), String.t(), keyword()) ::
           {:ok, [map()]} | {:error, term()}
   def list_issues(owner, repo, opts \\ []) do

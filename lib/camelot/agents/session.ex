@@ -62,6 +62,13 @@ defmodule Camelot.Agents.Session do
       description("Tools denied by the permission system")
     end
 
+    attribute :clarified, :boolean do
+      allow_nil?(false)
+      public?(true)
+      default(false)
+      description("Whether denials have been addressed by the user")
+    end
+
     timestamps()
   end
 
@@ -122,6 +129,11 @@ defmodule Camelot.Agents.Session do
     update :cancel do
       change(set_attribute(:status, :cancelled))
       change(set_attribute(:finished_at, &DateTime.utc_now/0))
+    end
+
+    update :mark_clarified do
+      accept([])
+      change(set_attribute(:clarified, true))
     end
   end
 end

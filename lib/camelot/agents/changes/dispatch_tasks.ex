@@ -2,18 +2,21 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
   @moduledoc """
   Ash generic action implementation that scans idle agents,
   finds matching pending tasks, and dispatches them.
-  PR fix tasks have higher priority than new tasks.
+  Only picks up queued tasks in dispatchable stages.
   """
   use Ash.Resource.Actions.Implementation
 
   alias Camelot.Agents.Agent
   alias Camelot.Board.Task
+  alias Camelot.Github.Client
   alias Camelot.Prompts.Renderer
   alias Camelot.Runtime.AgentProcess
   alias Camelot.Runtime.AgentRegistry
   alias Camelot.Runtime.AgentSupervisor
 
   require Logger
+
+  @dispatchable_stages [:todo, :planning, :executing, :pr]
 
   @impl true
   @spec run(
@@ -44,85 +47,50 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
   end
 
   defp find_next_task(project_id) do
-    tasks =
-      Task
-      |> Ash.read!(load: [:messages])
-      |> Enum.filter(&(&1.project_id == project_id))
-
-    pr_fix =
-      tasks
-      |> Enum.filter(&(&1.status == :pr_fix))
-      |> Enum.sort_by(& &1.priority, :desc)
-      |> List.first()
-
-    case pr_fix do
-      nil ->
-        resumed =
-          tasks
-          |> Enum.filter(&resumed_planning?/1)
-          |> Enum.sort_by(& &1.priority, :desc)
-          |> List.first()
-
-        resumed ||
-          tasks
-          |> Enum.filter(&(&1.status == :created))
-          |> Enum.sort_by(& &1.priority, :desc)
-          |> List.first()
-
-      task ->
-        task
-    end
+    Task
+    |> Ash.read!(load: [:messages, :project])
+    |> Enum.filter(fn task ->
+      task.project_id == project_id and
+        task.state == :queued and
+        task.stage in @dispatchable_stages
+    end)
+    |> Enum.sort_by(& &1.priority, :desc)
+    |> List.first()
   end
-
-  defp resumed_planning?(%{status: status, messages: messages})
-       when status in [:planning, :executing] and is_list(messages) and messages != [] do
-    last = Enum.max_by(messages, & &1.inserted_at)
-    last.role == :user
-  end
-
-  defp resumed_planning?(_task), do: false
 
   defp dispatch_task(agent, task) do
-    with {:ok, task} <- maybe_start_planning(task),
-         {:ok, task} <-
-           Ash.update(task, %{agent_id: agent.id}, action: :assign_agent) do
-      broadcast_task_update(task)
-      ensure_agent_process(agent.id)
-      prompt = build_prompt(task)
+    case Ash.update(
+           task,
+           %{agent_id: agent.id},
+           action: :begin_work
+         ) do
+      {:ok, task} ->
+        broadcast_task_update(task)
+        ensure_agent_process(agent.id)
+        prompt = build_prompt(task)
 
-      case AgentProcess.dispatch(agent.id, task.id, prompt) do
-        :ok ->
-          Logger.info("Dispatched task #{task.id} to agent #{agent.id}")
+        case AgentProcess.dispatch(
+               agent.id,
+               task.id,
+               prompt,
+               task.allowed_tools || []
+             ) do
+          :ok ->
+            Logger.info("Dispatched task #{task.id} to agent #{agent.id}")
 
-        {:error, reason} ->
-          Logger.warning(
-            "Failed to dispatch task #{task.id}: " <>
-              "#{inspect(reason)}"
-          )
-      end
-    else
+          {:error, reason} ->
+            Logger.warning(
+              "Failed to dispatch task #{task.id}: " <>
+                "#{inspect(reason)}"
+            )
+        end
+
       {:error, error} ->
         Logger.warning(
-          "Failed to update task #{task.id}: " <>
+          "Failed to begin work on task #{task.id}: " <>
             "#{inspect(error)}"
         )
     end
-  end
-
-  defp maybe_start_planning(%{status: :planning} = task) do
-    {:ok, task}
-  end
-
-  defp maybe_start_planning(%{status: :executing} = task) do
-    {:ok, task}
-  end
-
-  defp maybe_start_planning(%{status: :pr_fix} = task) do
-    Ash.update(task, %{}, action: :start_pr_fix)
-  end
-
-  defp maybe_start_planning(task) do
-    Ash.update(task, %{}, action: :start_planning)
   end
 
   defp ensure_agent_process(agent_id) do
@@ -147,16 +115,9 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
   end
 
   defp build_prompt(task) do
-    slug =
-      if task.plan,
-        do: "execution",
-        else: "planning"
+    slug = prompt_slug(task)
 
-    variables = %{
-      "title" => task.title || "",
-      "description" => task.description || "",
-      "plan" => task.plan || ""
-    }
+    variables = build_variables(task)
 
     base =
       case Renderer.render(slug, task.project_id, variables) do
@@ -165,6 +126,55 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
       end
 
     append_conversation(base, task.messages)
+  end
+
+  defp prompt_slug(%{stage: :pr}), do: "pr_review"
+
+  defp prompt_slug(%{plan: plan}) when not is_nil(plan),
+    do: "execution"
+
+  defp prompt_slug(_task), do: "planning"
+
+  defp build_variables(%{stage: :pr} = task) do
+    comments = fetch_pr_comments(task)
+
+    %{
+      "title" => task.title || "",
+      "description" => task.description || "",
+      "plan" => task.plan || "",
+      "pr_url" => task.pr_url || "",
+      "pr_number" => to_string(task.pr_number || ""),
+      "pr_comments" => comments
+    }
+  end
+
+  defp build_variables(task) do
+    %{
+      "title" => task.title || "",
+      "description" => task.description || "",
+      "plan" => task.plan || ""
+    }
+  end
+
+  defp fetch_pr_comments(task) do
+    project = task.project
+
+    case Client.list_pull_request_comments(
+           project.github_owner,
+           project.github_repo,
+           task.pr_number
+         ) do
+      {:ok, comments} ->
+        comments
+        |> Enum.map(fn c ->
+          "@#{get_in(c, ["user", "login"])}: " <>
+            (c["body"] || "")
+        end)
+        |> Enum.join("\n\n---\n\n")
+
+      {:error, _} ->
+        ""
+    end
   end
 
   defp append_conversation(prompt, messages) when is_list(messages) and messages != [] do

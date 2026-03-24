@@ -55,12 +55,18 @@ defmodule Camelot.Runtime.AgentProcess do
     )
   end
 
-  @spec dispatch(String.t(), String.t(), String.t()) ::
+  @spec dispatch(String.t(), String.t(), String.t(), [String.t()]) ::
           :ok | {:error, :busy | :not_found}
-  def dispatch(agent_id, task_id, prompt) do
+  def dispatch(agent_id, task_id, prompt, allowed_tools \\ []) do
     case AgentRegistry.lookup(agent_id) do
-      nil -> {:error, :not_found}
-      pid -> GenServer.call(pid, {:dispatch, task_id, prompt})
+      nil ->
+        {:error, :not_found}
+
+      pid ->
+        GenServer.call(
+          pid,
+          {:dispatch, task_id, prompt, allowed_tools}
+        )
     end
   end
 
@@ -72,24 +78,18 @@ defmodule Camelot.Runtime.AgentProcess do
     end
   end
 
-  @spec approve_and_retry(String.t(), [String.t()]) ::
+  @spec respond_and_retry(String.t(), [String.t()], String.t()) ::
           :ok | {:error, :not_found | :no_task | :busy}
-  def approve_and_retry(agent_id, tool_names) do
+  def respond_and_retry(agent_id, tool_names \\ [], answers_text \\ "") do
     case AgentRegistry.lookup(agent_id) do
       nil ->
         {:error, :not_found}
 
       pid ->
-        GenServer.call(pid, {:approve_and_retry, tool_names})
-    end
-  end
-
-  @spec answer_and_retry(String.t(), String.t()) ::
-          :ok | {:error, :not_found | :no_task | :busy}
-  def answer_and_retry(agent_id, answers_text) do
-    case AgentRegistry.lookup(agent_id) do
-      nil -> {:error, :not_found}
-      pid -> GenServer.call(pid, {:answer_and_retry, answers_text})
+        GenServer.call(
+          pid,
+          {:respond_and_retry, tool_names, answers_text}
+        )
     end
   end
 
@@ -111,13 +111,19 @@ defmodule Camelot.Runtime.AgentProcess do
   end
 
   @impl true
-  def handle_call({:dispatch, task_id, prompt}, _from, state) do
+  def handle_call({:dispatch, task_id, prompt, allowed_tools}, _from, state) do
     if state.port do
       {:reply, {:error, :busy}, state}
     else
       agent = Ash.get!(Agent, state.agent_id)
 
-      case start_cli(state.agent_id, task_id, prompt) do
+      case start_cli(
+             state.agent_id,
+             task_id,
+             prompt,
+             0,
+             allowed_tools
+           ) do
         {:ok, port, session_id, agent_type} ->
           new_state = %{
             state
@@ -128,7 +134,8 @@ defmodule Camelot.Runtime.AgentProcess do
               agent_type: agent_type,
               max_retries: agent.max_retries,
               retry_count: 0,
-              output_buffer: ""
+              output_buffer: "",
+              allowed_tools: allowed_tools
           }
 
           mark_agent_busy(state.agent_id)
@@ -154,7 +161,7 @@ defmodule Camelot.Runtime.AgentProcess do
     end
   end
 
-  def handle_call({:approve_and_retry, tool_names}, _from, state) do
+  def handle_call({:respond_and_retry, tool_names, answers_text}, _from, state) do
     cond do
       state.port ->
         {:reply, {:error, :busy}, state}
@@ -164,33 +171,10 @@ defmodule Camelot.Runtime.AgentProcess do
         {:reply, {:error, :no_task}, state}
 
       true ->
-        updated = %{
+        updated =
           state
-          | allowed_tools: Enum.uniq(state.allowed_tools ++ tool_names)
-        }
-
-        {:noreply, new_state} = redispatch(updated)
-        {:reply, :ok, new_state}
-    end
-  end
-
-  def handle_call({:answer_and_retry, answers_text}, _from, state) do
-    cond do
-      state.port ->
-        {:reply, {:error, :busy}, state}
-
-      is_nil(state.current_task_id) ||
-          is_nil(state.current_prompt) ->
-        {:reply, {:error, :no_task}, state}
-
-      true ->
-        updated = %{
-          state
-          | current_prompt:
-              state.current_prompt <>
-                "\n\nUser answers to your questions:\n" <>
-                answers_text
-        }
+          |> apply_tool_approvals(tool_names)
+          |> apply_answers(answers_text)
 
         {:noreply, new_state} = redispatch(updated)
         {:reply, :ok, new_state}
@@ -229,7 +213,7 @@ defmodule Camelot.Runtime.AgentProcess do
     if failed? && state.retry_count < state.max_retries do
       schedule_retry(state)
     else
-      submit_task_plan(state, exit_code, parsed)
+      handle_cli_exit(state, exit_code, parsed)
       mark_agent_idle(state.agent_id)
       broadcast_agent_update(state.agent_id)
 
@@ -294,6 +278,7 @@ defmodule Camelot.Runtime.AgentProcess do
          ) do
       {:ok, port, session_id, agent_type} ->
         mark_agent_busy(state.agent_id)
+        mark_task_in_progress(state.current_task_id)
 
         new_state = %{
           state
@@ -331,6 +316,7 @@ defmodule Camelot.Runtime.AgentProcess do
          ) do
       {:ok, port, session_id, agent_type} ->
         if retry_count == 0, do: mark_agent_busy(state.agent_id)
+        mark_task_in_progress(state.current_task_id)
 
         new_state = %{
           state
@@ -374,11 +360,32 @@ defmodule Camelot.Runtime.AgentProcess do
     }
   end
 
+  defp apply_tool_approvals(state, []), do: state
+
+  defp apply_tool_approvals(state, tool_names) do
+    %{
+      state
+      | allowed_tools: Enum.uniq(state.allowed_tools ++ tool_names)
+    }
+  end
+
+  defp apply_answers(state, ""), do: state
+
+  defp apply_answers(state, answers_text) do
+    %{
+      state
+      | current_prompt:
+          state.current_prompt <>
+            "\n\nUser answers to your questions:\n" <>
+            answers_text
+    }
+  end
+
   defp retry_delay(retry_count) do
     @base_retry_delay_ms * Integer.pow(2, retry_count)
   end
 
-  defp start_cli(agent_id, task_id, prompt, retry_number \\ 0, allowed_tools \\ []) do
+  defp start_cli(agent_id, task_id, prompt, retry_number, allowed_tools) do
     agent = Ash.get!(Agent, agent_id, load: [:project])
     task = Ash.get!(Task, task_id)
 
@@ -395,10 +402,19 @@ defmodule Camelot.Runtime.AgentProcess do
         retry_number: retry_number
       })
 
-    stage = if task.status == :planning, do: :plan, else: :execute
+    permission_stage =
+      case task.stage do
+        :planning -> :plan
+        _ -> :execute
+      end
 
     cli_args =
-      build_cli_args(agent.type, prompt, allowed_tools, stage)
+      build_cli_args(
+        agent.type,
+        prompt,
+        allowed_tools,
+        permission_stage
+      )
 
     Logger.info("CLI command: #{cli} #{Enum.join(cli_args, " ")}")
 
@@ -407,14 +423,16 @@ defmodule Camelot.Runtime.AgentProcess do
         {:ok, port, session.id, agent.type}
 
       {:error, reason} ->
-        fail_session(session, "CLI failed to start: #{inspect(reason)}")
+        fail_session(
+          session,
+          "CLI failed to start: #{inspect(reason)}"
+        )
+
         {:error, :cli_start_failed}
     end
   end
 
   defp open_port(cli, cli_args, project_path) do
-    # Use sh wrapper so stdin is /dev/null — prevents the CLI
-    # from blocking on stdin while still capturing stdout/stderr.
     port =
       Port.open(
         {:spawn_executable, System.find_executable("sh")},
@@ -455,9 +473,10 @@ defmodule Camelot.Runtime.AgentProcess do
     base = ["--output-format", "json"]
 
     permission_args =
-      if stage == :plan,
-        do: ["--permission-mode", "plan"],
-        else: []
+      case stage do
+        :plan -> ["--permission-mode", "plan"]
+        :execute -> ["--permission-mode", "acceptEdits"]
+      end
 
     filtered =
       Enum.reject(allowed_tools, fn tool ->
@@ -481,55 +500,113 @@ defmodule Camelot.Runtime.AgentProcess do
     ["--quiet", prompt]
   end
 
-  defp submit_task_plan(state, exit_code, parsed) do
-    if state.current_task_id && exit_code == 0 &&
-         state.output_buffer != "" do
-      task = Ash.get!(Task, state.current_task_id)
+  defp handle_cli_exit(state, exit_code, parsed) do
+    with task_id when not is_nil(task_id) <- state.current_task_id,
+         true <- exit_code == 0 and state.output_buffer != "",
+         task = Ash.get!(Task, task_id),
+         :in_progress <- task.state do
+      denials = extract_denials(parsed)
 
-      plan_text =
+      result_text =
         case parsed do
           {:ok, %{result_text: text}} -> text
           {:error, _} -> state.output_buffer
         end
 
-      maybe_update_plan(task, plan_text, state.current_task_id)
-    end
-  end
-
-  defp maybe_update_plan(%{status: :planning} = task, plan_text, task_id) do
-    trimmed = String.trim(plan_text || "")
-
-    if trimmed == "" do
-      Logger.warning("Empty plan for task #{task_id}, skipping submit")
+      handle_task_result(task, result_text, denials, task.id)
     else
-      if question?(trimmed) do
+      _ -> :ok
+    end
+  end
+
+  defp handle_task_result(%{stage: :planning} = task, text, denials, task_id) do
+    plan_from_exit = extract_exit_plan(denials)
+    real_denials = reject_internal_denials(denials)
+    trimmed = String.trim(text || "")
+
+    cond do
+      plan_from_exit != nil ->
+        submit_plan(task, plan_from_exit, task_id)
+
+      has_questions?(real_denials) or real_denials != [] ->
+        input = if trimmed == "", do: "Agent needs tool permissions", else: trimmed
+        request_user_input(task, input, task_id)
+
+      question?(trimmed) ->
         request_user_input(task, trimmed, task_id)
-      else
-        submit_plan(task, plan_text, task_id)
+
+      trimmed == "" ->
+        Logger.warning("Empty plan for task #{task_id}, marking error")
+        transition(task, :mark_error)
+
+      true ->
+        submit_plan(task, text, task_id)
+    end
+  end
+
+  defp handle_task_result(%{stage: :executing} = task, text, denials, task_id) do
+    real_denials = reject_internal_denials(denials)
+
+    if has_questions?(real_denials) or real_denials != [] do
+      request_user_input(task, text, task_id)
+    else
+      maybe_create_pr(task, text, task_id)
+    end
+  end
+
+  defp handle_task_result(%{stage: :pr} = task, text, denials, task_id) do
+    real_denials = reject_internal_denials(denials)
+
+    if has_questions?(real_denials) or real_denials != [] do
+      request_user_input(task, text, task_id)
+    else
+      transition(task, :request_input)
+    end
+  end
+
+  defp handle_task_result(_task, _text, _denials, _task_id), do: :ok
+
+  defp maybe_create_pr(task, text, task_id) do
+    {pr_url, pr_number} = extract_pr_info(text)
+
+    if pr_url do
+      case Ash.update(
+             task,
+             %{pr_url: pr_url, pr_number: pr_number},
+             action: :pr_created
+           ) do
+        {:ok, updated} ->
+          broadcast_task_update(updated)
+
+        {:error, error} ->
+          Logger.warning(
+            "Failed to mark PR created for task " <>
+              "#{task_id}: #{inspect(error)}"
+          )
       end
+    else
+      Logger.warning("Execution completed without PR for task #{task_id}")
+
+      transition(task, :mark_error)
     end
   end
 
-  defp maybe_update_plan(%{status: :executing} = task, result_text, task_id) do
-    {pr_url, pr_number} = extract_pr_info(result_text)
-
-    case Ash.update(
-           task,
-           %{pr_url: pr_url, pr_number: pr_number},
-           action: :pr_created
-         ) do
-      {:ok, updated} ->
-        broadcast_task_update(updated)
-
-      {:error, error} ->
-        Logger.warning(
-          "Failed to mark PR created for task " <>
-            "#{task_id}: #{inspect(error)}"
-        )
-    end
+  defp has_questions?(denials) do
+    Enum.any?(denials, &(&1["tool_name"] == "AskUserQuestion"))
   end
 
-  defp maybe_update_plan(_task, _plan_text, _task_id), do: :ok
+  defp reject_internal_denials(denials) do
+    Enum.reject(denials, &(&1["tool_name"] in @internal_tools))
+  end
+
+  defp extract_exit_plan(denials) do
+    denials
+    |> Enum.find(&(&1["tool_name"] == "ExitPlanMode"))
+    |> case do
+      %{"tool_input" => %{"plan" => plan}} when is_binary(plan) -> plan
+      _ -> nil
+    end
+  end
 
   @pr_url_pattern ~r{https://github\.com/[^\s]+/pull/(\d+)}
 
@@ -566,14 +643,18 @@ defmodule Camelot.Runtime.AgentProcess do
       task_id: task_id
     })
 
-    case Ash.update(task, %{}, action: :request_input) do
+    transition(task, :request_input)
+  end
+
+  defp transition(task, action) do
+    case Ash.update(task, %{}, action: action) do
       {:ok, updated} ->
         broadcast_task_update(updated)
 
       {:error, error} ->
         Logger.warning(
-          "Failed to request input for task " <>
-            "#{task_id}: #{inspect(error)}"
+          "Failed #{action} for task #{task.id}: " <>
+            "#{inspect(error)}"
         )
     end
   end
@@ -654,6 +735,15 @@ defmodule Camelot.Runtime.AgentProcess do
   defp mark_agent_idle(agent_id) do
     agent = Ash.get!(Agent, agent_id)
     Ash.update!(agent, %{}, action: :mark_idle)
+  end
+
+  defp mark_task_in_progress(task_id) do
+    task = Ash.get!(Task, task_id)
+
+    case Ash.update(task, %{}, action: :mark_in_progress) do
+      {:ok, updated} -> broadcast_task_update(updated)
+      {:error, _} -> :ok
+    end
   end
 
   defp broadcast_agent_update(agent_id) do

@@ -8,7 +8,7 @@ defmodule CamelotWeb.BoardLiveTest do
   test "renders board page", %{conn: conn} do
     {:ok, _view, html} = live(conn, ~p"/")
     assert html =~ "Board"
-    assert html =~ "Created"
+    assert html =~ "Todo"
     assert html =~ "Planning"
     assert html =~ "Executing"
     assert html =~ "Done"
