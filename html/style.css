@@ -286,7 +286,7 @@ body {
 
 .features h2,
 .how-it-works h2,
-.self-hosted h2,
+.deployment h2,
 .footer-cta h2 {
   font-size: clamp(1.75rem, 4vw, 2.25rem);
   font-weight: 700;
@@ -393,23 +393,57 @@ body {
   flex-shrink: 0;
 }
 
-/* === Self-Hosted === */
-.self-hosted {
+/* === Deployment === */
+.deployment {
   padding: 5rem 0;
   background: var(--bg-alt);
 }
 
-.self-hosted-content {
-  text-align: center;
-  max-width: 600px;
+.deployment-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.5rem;
+  max-width: 800px;
   margin: 0 auto;
 }
 
-.self-hosted-content p {
-  font-size: 1.05rem;
+.deployment-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 2rem;
+  text-align: center;
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+
+.deployment-card:hover {
+  box-shadow: var(--card-shadow-hover);
+  transform: translateY(-2px);
+}
+
+.deployment-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  background: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 1rem;
+  color: var(--primary);
+}
+
+.deployment-card h3 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.deployment-card p {
+  font-size: 0.9rem;
   color: var(--text-muted);
-  margin-bottom: 1.5rem;
-  line-height: 1.7;
+  line-height: 1.6;
+  margin-bottom: 1.25rem;
 }
 
 .tech-badges {
@@ -467,7 +501,8 @@ body {
 
 /* === Responsive === */
 @media (max-width: 768px) {
-  .features-grid {
+  .features-grid,
+  .deployment-grid {
     grid-template-columns: 1fr;
   }
 
