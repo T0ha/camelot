@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Camelot - AI Agent Management Platform</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=MedievalSharp&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav class="navbar">
+    <a href="/" class="logo">Camelot</a>
+    <div class="nav-actions">
+      <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme">
+        <svg class="icon-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+        </svg>
+        <svg class="icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+      </button>
+      <a href="#waitlist" class="btn btn-primary">Join waitlist</a>
+    </div>
+  </nav>
+
+  <main>
+    <!-- Hero -->
+    <section class="hero">
+      <div class="container">
+        <h1>Your AI agents,<br>your rules.</h1>
+        <p class="hero-subtitle">
+          A self-hosted platform for delegating coding tasks to AI agents.
+          Review plans, approve work, and ship code &mdash; with humans in the loop.
+        </p>
+        <div class="hero-actions">
+          <a href="#waitlist" class="btn btn-primary btn-lg">Join the waitlist</a>
+          <a href="#features" class="btn btn-outline btn-lg">Learn more</a>
+        </div>
+        <div class="hero-terminal">
+          <div class="terminal-bar">
+            <span class="terminal-dot red"></span>
+            <span class="terminal-dot yellow"></span>
+            <span class="terminal-dot green"></span>
+            <span class="terminal-title">Camelot Board</span>
+          </div>
+          <div class="terminal-body">
+            <div class="board-preview">
+              <div class="board-col">
+                <div class="board-col-title">Draft</div>
+                <div class="board-card">Refactor auth module</div>
+              </div>
+              <div class="board-col">
+                <div class="board-col-title">In Progress</div>
+                <div class="board-card active">Add API rate limiting</div>
+                <div class="board-card active">Fix webhook handler</div>
+              </div>
+              <div class="board-col">
+                <div class="board-col-title">Review</div>
+                <div class="board-card review">Update user settings UI</div>
+              </div>
+              <div class="board-col">
+                <div class="board-col-title">Done</div>
+                <div class="board-card done">Setup CI pipeline</div>
+                <div class="board-card done">Database migrations</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section class="features" id="features">
+      <div class="container">
+        <h2>Everything you need to manage AI agents</h2>
+        <div class="features-grid">
+          <div class="feature-card">
+            <div class="feature-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+            </div>
+            <h3>Kanban Board</h3>
+            <p>Organize tasks across stages &mdash; from draft to done. Drag, drop, and track progress at a glance.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            </div>
+            <h3>Human-in-the-Loop</h3>
+            <p>Agents propose plans before writing code. You review, approve, and stay in control of every change.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+            </div>
+            <h3>GitHub Integration</h3>
+            <p>Sync issues, track pull requests, and let agents open PRs directly from your board.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+            </div>
+            <h3>Custom Prompts</h3>
+            <p>Define prompt templates per project. Fine-tune agent behavior for your codebase and workflow.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            </div>
+            <h3>Real-time Monitoring</h3>
+            <p>Watch agent activity as it happens. Live-streaming logs and status updates via WebSocket.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            </div>
+            <h3>Multi-Agent</h3>
+            <p>Coordinate multiple AI agents working in parallel. Each with its own permissions and tool access.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- How it works -->
+    <section class="how-it-works">
+      <div class="container">
+        <h2>How it works</h2>
+        <div class="steps">
+          <div class="step">
+            <div class="step-number">1</div>
+            <h3>Create a task</h3>
+            <p>Describe what you need done, or sync from GitHub issues.</p>
+          </div>
+          <div class="step-connector"></div>
+          <div class="step">
+            <div class="step-number">2</div>
+            <h3>Agent plans</h3>
+            <p>The AI agent analyzes your codebase and proposes an implementation plan.</p>
+          </div>
+          <div class="step-connector"></div>
+          <div class="step">
+            <div class="step-number">3</div>
+            <h3>You approve</h3>
+            <p>Review the plan. Request changes or give the green light.</p>
+          </div>
+          <div class="step-connector"></div>
+          <div class="step">
+            <div class="step-number">4</div>
+            <h3>Agent executes</h3>
+            <p>Watch in real-time as the agent writes code and opens a pull request.</p>
+          </div>
+          <div class="step-connector"></div>
+          <div class="step">
+            <div class="step-number">5</div>
+            <h3>Review &amp; merge</h3>
+            <p>Review the PR, run tests, and merge with confidence.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Self-hosted -->
+    <section class="self-hosted">
+      <div class="container">
+        <div class="self-hosted-content">
+          <h2>Self-hosted. Your data stays yours.</h2>
+          <p>
+            Run Camelot on your own infrastructure. No data leaves your network.
+            Full control over agent permissions, API keys, and access.
+          </p>
+          <div class="tech-badges">
+            <span class="badge">Elixir</span>
+            <span class="badge">Phoenix</span>
+            <span class="badge">PostgreSQL</span>
+            <span class="badge">LiveView</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Waitlist -->
+    <section class="waitlist" id="waitlist">
+      <div class="container">
+        <h2>Ready to put AI agents to work?</h2>
+        <p class="waitlist-subtitle">Join the waitlist and be the first to know when Camelot launches.</p>
+        <button data-tally-open="QKxMeg" data-tally-layout="modal" data-tally-hide-title="1" class="btn btn-primary btn-lg">
+          Join the waitlist
+        </button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <span class="footer-brand">Camelot</span>
+      <span class="footer-copy">Built with Elixir &amp; Phoenix</span>
+    </div>
+  </footer>
+
+  <script async src="https://tally.so/widgets/embed.js"></script>
+  <script>
+    const toggle = document.getElementById('theme-toggle');
+    const html = document.documentElement;
+
+    function setTheme(theme) {
+      html.setAttribute('data-theme', theme);
+      localStorage.setItem('camelot-theme', theme);
+    }
+
+    toggle.addEventListener('click', () => {
+      const current = html.getAttribute('data-theme');
+      setTheme(current === 'dark' ? 'light' : 'dark');
+    });
+
+    const saved = localStorage.getItem('camelot-theme');
+    if (saved) {
+      setTheme(saved);
+    } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      setTheme('dark');
+    }
+  </script>
+</body>
+</html>
