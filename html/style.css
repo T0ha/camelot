@@ -164,6 +164,18 @@ body {
   font-size: 1rem;
 }
 
+.btn-github {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  gap: 0.4rem;
+}
+
+.btn-github:hover {
+  border-color: var(--text-muted);
+  background: var(--bg-alt);
+}
+
 /* === Hero === */
 .hero {
   padding: 5rem 0 3rem;
@@ -492,6 +504,26 @@ body {
   font-weight: 900;
   font-size: 1rem;
   letter-spacing: 0.05em;
+}
+
+.footer-links {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.footer-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.footer-link:hover {
+  color: var(--text);
 }
 
 .footer-copy {
