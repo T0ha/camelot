@@ -1,0 +1,58 @@
+# Compose stack for running Camelot against the production
+# release image. Use this for preproduction checks and any
+# docker-related verification (release boot, migrations,
+# runtime config).
+#
+# Env vars come from `.env` in the project root (gitignored;
+# see `.env.example`). Dev-only — never use these credentials
+# in real deployments.
+#
+# Profiles:
+#   db  - PostgreSQL only:
+#           docker compose --profile db up -d
+#
+#   app - Prod release + DB (the db service is in both
+#         profiles, so this brings up the full stack):
+#           docker compose --profile app up --build
+
+services:
+  db:
+    image: postgres:16-alpine
+    profiles: [db, app]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    #ports:
+    #  - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: [app]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+      PHX_HOST: ${PHX_HOST}
+      PORT: ${PORT}
+      POOL_SIZE: ${POOL_SIZE}
+    ports:
+      - "${PORT}:${PORT}"
+    command: >
+      sh -c "/app/bin/migrate && /app/bin/server"
+
+volumes:
+  pg_data:
