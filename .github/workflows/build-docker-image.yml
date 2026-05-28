@@ -17,6 +17,9 @@ jobs:
   build_docker_image:
     name: Build Image
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
     needs: [tests]
     steps:
       - name: Checkout repo
@@ -36,4 +39,4 @@ jobs:
           context: .
           tags: |
             ghcr.io/t0ha/camelotai:latest
-            ghcr.io/t0ha/climate:${{ github.sha }}
+            ghcr.io/t0ha/camelotai:${{ github.sha }}
