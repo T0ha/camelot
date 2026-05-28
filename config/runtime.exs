@@ -46,27 +46,6 @@ if config_env() == :prod do
 
   host = System.get_env("PHX_HOST") || "example.com"
 
-  config :camelot, Camelot.Repo,
-    # ssl: true,
-    url: database_url,
-    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
-    # For machines with several cores, consider starting multiple pools of `pool_size`
-    # pool_count: 4,
-    socket_options: maybe_ipv6
-
-  config :camelot, CamelotWeb.Endpoint,
-    url: [host: host, port: 443, scheme: "https"],
-    http: [
-      # Enable IPv6 and bind on all interfaces.
-      # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
-      # See the documentation on https://hexdocs.pm/bandit/Bandit.html#t:options/0
-      # for details about using IPv6 vs IPv4 and loopback vs public addresses.
-      ip: {0, 0, 0, 0, 0, 0, 0, 0}
-    ],
-    secret_key_base: secret_key_base
-
-  config :camelot, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
-
   # ## SSL Support
   #
   # To get SSL working, you will need to add the `https` key
@@ -99,21 +78,60 @@ if config_env() == :prod do
   #
   # Check `Plug.SSL` for all available options in `force_ssl`.
 
-  # ## Configuring the mailer
-  #
-  # In production you need to configure the mailer to use a different adapter.
-  # Here is an example configuration for Mailgun:
-  #
-  #     config :camelot, Camelot.Mailer,
-  #       adapter: Swoosh.Adapters.Mailgun,
-  #       api_key: System.get_env("MAILGUN_API_KEY"),
-  #       domain: System.get_env("MAILGUN_DOMAIN")
-  #
-  # Most non-SMTP adapters require an API client. Swoosh supports Req, Hackney,
-  # and Finch out-of-the-box. This configuration is typically done at
-  # compile-time in your config/prod.exs:
-  #
-  #     config :swoosh, :api_client, Swoosh.ApiClient.Req
-  #
-  # See https://hexdocs.pm/swoosh/Swoosh.html#module-installation for details.
+  # Mailer: OCI Email Delivery via SMTP relay.
+  smtp_relay =
+    System.get_env("SMTP_RELAY") ||
+      raise "environment variable SMTP_RELAY is missing (e.g. smtp.email.us-ashburn-1.oci.oraclecloud.com)"
+
+  smtp_username =
+    System.get_env("SMTP_USERNAME") ||
+      raise "environment variable SMTP_USERNAME is missing (OCI SMTP credential username)"
+
+  smtp_password =
+    System.get_env("SMTP_PASSWORD") ||
+      raise "environment variable SMTP_PASSWORD is missing (OCI SMTP credential password)"
+
+  config :camelot, Camelot.Mailer,
+    adapter: Swoosh.Adapters.SMTP,
+    relay: smtp_relay,
+    port: String.to_integer(System.get_env("SMTP_PORT") || "587"),
+    username: smtp_username,
+    password: smtp_password,
+    tls: :always,
+    tls_options: [
+      verify: :verify_peer,
+      cacerts: :public_key.cacerts_get(),
+      server_name_indication: String.to_charlist(smtp_relay),
+      depth: 99
+    ],
+    auth: :always,
+    retries: 1,
+    no_mx_lookups: false
+
+  config :camelot, Camelot.Repo,
+    # ssl: true,
+    url: database_url,
+    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
+    # For machines with several cores, consider starting multiple pools of `pool_size`
+    # pool_count: 4,
+    socket_options: maybe_ipv6
+
+  config :camelot, CamelotWeb.Endpoint,
+    url: [host: host, port: 443, scheme: "https"],
+    http: [
+      # Enable IPv6 and bind on all interfaces.
+      # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
+      # See the documentation on https://hexdocs.pm/bandit/Bandit.html#t:options/0
+      # for details about using IPv6 vs IPv4 and loopback vs public addresses.
+      ip: {0, 0, 0, 0, 0, 0, 0, 0}
+    ],
+    secret_key_base: secret_key_base
+
+  config :camelot, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
+
+  config :camelot, :mail,
+    from_name: System.get_env("MAIL_FROM_NAME") || "Camelot AI",
+    from_address:
+      System.get_env("MAIL_FROM") ||
+        raise("environment variable MAIL_FROM is missing (e.g. noreply@camelotai.tech)")
 end
