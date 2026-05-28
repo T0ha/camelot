@@ -11,6 +11,7 @@ defmodule Camelot.MixProject do
       aliases: aliases(),
       deps: deps(),
       usage_rules: usage_rules(),
+      dialyzer: dialyzer(),
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
       listeners: [Phoenix.CodeReloader]
     ]
@@ -105,6 +106,13 @@ defmodule Camelot.MixProject do
           ]
         ]
       ]
+    ]
+  end
+
+  defp dialyzer do
+    [
+      ignore_warnings: ".dialyzer_ignore.exs",
+      list_unused_filters: true
     ]
   end
 

@@ -62,16 +62,23 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
       pr["state"] == "closed" ->
         transition(task, :cancel)
 
-      has_review_state?(reviews, "CHANGES_REQUESTED") &&
-          task.state == :waiting_for_input ->
+      task.state == :waiting_for_input ->
+        apply_waiting_for_input(task, pr, reviews, comments, commits)
+
+      true ->
+        :ok
+    end
+  end
+
+  defp apply_waiting_for_input(task, pr, reviews, comments, commits) do
+    cond do
+      has_review_state?(reviews, "CHANGES_REQUESTED") ->
         transition_with_seen_at(task, comments)
 
-      has_review_state?(reviews, "APPROVED") &&
-          task.state == :waiting_for_input ->
+      has_review_state?(reviews, "APPROVED") ->
         transition(task, :complete)
 
-      has_new_comments?(task, pr, comments, commits) &&
-          task.state == :waiting_for_input ->
+      has_new_comments?(task, pr, comments, commits) ->
         transition_with_seen_at(task, comments)
 
       true ->
