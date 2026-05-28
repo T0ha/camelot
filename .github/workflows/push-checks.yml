@@ -1,0 +1,16 @@
+name: Run code checks and tests
+on:
+  push:
+    branches-ignore:
+      - main
+
+defaults:
+  run:
+    shell: bash
+    
+jobs:
+  tests:
+    name: Run code checks and tests
+    uses: ./.github/workflows/code-checks.yml
+    secrets: inherit
+
