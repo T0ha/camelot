@@ -106,7 +106,7 @@ jobs:
 
 
       - name: Docker deps
-        run: docker compose up postgres -d
+        run: docker compose up db -d
 
       - name: DB setup
         run: mix ecto.setup
