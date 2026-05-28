@@ -18,7 +18,7 @@ defmodule Camelot.Runtime.AgentProcessTest do
     {:ok, agent} =
       Ash.create(Agent, %{
         name: "ProcAgent",
-        type: :claude_code,
+        template_id: agent_template!("claude_code").id,
         project_id: project.id
       })
 

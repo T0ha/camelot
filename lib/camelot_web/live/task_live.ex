@@ -588,8 +588,7 @@ defmodule CamelotWeb.TaskLive do
   @internal_tools ~w(ExitPlanMode EnterPlanMode)
 
   defp real_denials(session) do
-    (session.permission_denials || [])
-    |> Enum.reject(&(&1["tool_name"] in @internal_tools))
+    Enum.reject(session.permission_denials || [], &(&1["tool_name"] in @internal_tools))
   end
 
   defp has_denials?(session) do

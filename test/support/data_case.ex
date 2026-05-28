@@ -29,6 +29,20 @@ defmodule Camelot.DataCase do
     end
   end
 
+  @doc """
+  Looks up a seeded `Camelot.Agents.AgentTemplate` by slug.
+
+  Seeded by the `add_agent_templates` migration; available
+  in every sandboxed test transaction.
+  """
+  def agent_template!(slug) do
+    require Ash.Query
+
+    Camelot.Agents.AgentTemplate
+    |> Ash.Query.filter(slug == ^slug)
+    |> Ash.read_one!()
+  end
+
   setup tags do
     Camelot.DataCase.setup_sandbox(tags)
     :ok

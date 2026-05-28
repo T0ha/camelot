@@ -5,6 +5,7 @@ defmodule CamelotWeb.AgentLive.Index do
   use CamelotWeb, :live_view
 
   alias Camelot.Agents.Agent
+  alias Camelot.Agents.AgentTemplate
   alias Camelot.Projects.Project
 
   @impl true
@@ -27,14 +28,17 @@ defmodule CamelotWeb.AgentLive.Index do
       case socket.assigns.live_action do
         :new ->
           projects = Ash.read!(Project)
+          templates = load_templates()
+          default_template_id = default_template_id(templates)
 
           assign(socket,
             page_title: "New Agent",
             projects: projects,
+            templates: templates,
             form:
               to_form(%{
                 "name" => "",
-                "type" => "claude_code",
+                "template_id" => default_template_id,
                 "project_id" => ""
               })
           )
@@ -53,9 +57,9 @@ defmodule CamelotWeb.AgentLive.Index do
 
   def handle_info(_msg, socket), do: {:noreply, socket}
 
-  @impl true
-  @agent_fields ~w(name type project_id)
+  @agent_fields ~w(name template_id project_id)
 
+  @impl true
   def handle_event("save", params, socket) do
     agent_params = Map.take(params, @agent_fields)
 
@@ -72,12 +76,19 @@ defmodule CamelotWeb.AgentLive.Index do
   end
 
   defp load_agents(socket) do
-    agents = Ash.read!(Agent, load: [:project])
+    agents = Ash.read!(Agent, load: [:project, :template])
 
-    assign(socket,
-      agents: agents
-    )
+    assign(socket, agents: agents)
   end
+
+  defp load_templates do
+    AgentTemplate
+    |> Ash.read!()
+    |> Enum.sort_by(& &1.slug)
+  end
+
+  defp default_template_id([]), do: ""
+  defp default_template_id([t | _]), do: t.id
 
   @impl true
   def render(assigns) do
@@ -112,13 +123,10 @@ defmodule CamelotWeb.AgentLive.Index do
               label="Name"
             />
             <.input
-              field={@form[:type]}
+              field={@form[:template_id]}
               type="select"
-              label="Type"
-              options={[
-                {"Claude Code", "claude_code"},
-                {"Codex", "codex"}
-              ]}
+              label="Template"
+              options={Enum.map(@templates, &{&1.name, &1.id})}
             />
             <.input
               field={@form[:project_id]}
@@ -165,8 +173,11 @@ defmodule CamelotWeb.AgentLive.Index do
                 {agent.status}
               </span>
             </div>
-            <p class="text-sm text-base-content/60">
-              {agent.type}
+            <p
+              :if={Ash.Resource.loaded?(agent, :template)}
+              class="text-sm text-base-content/60"
+            >
+              {agent.template.name}
             </p>
             <p
               :if={Ash.Resource.loaded?(agent, :project)}

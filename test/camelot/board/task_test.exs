@@ -25,7 +25,7 @@ defmodule Camelot.Board.TaskTest do
     {:ok, agent} =
       Ash.create(Agent, %{
         name: "test-agent",
-        type: :claude_code,
+        template_id: agent_template!("claude_code").id,
         project_id: project.id
       })
 

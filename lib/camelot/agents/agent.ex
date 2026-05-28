@@ -1,7 +1,11 @@
 defmodule Camelot.Agents.Agent do
   @moduledoc """
   An AI coding agent bound to a single project.
-  Runs a CLI tool (Claude Code or Codex) to execute tasks.
+
+  Behaviour comes from `Camelot.Agents.AgentTemplate`
+  (the `template` relationship). Each `*_override` column
+  lets a project deviate from the template default
+  without forking the template itself.
   """
   use Ash.Resource,
     domain: Camelot.Agents,
@@ -33,12 +37,6 @@ defmodule Camelot.Agents.Agent do
       public?(true)
     end
 
-    attribute :type, :atom do
-      allow_nil?(false)
-      public?(true)
-      constraints(one_of: [:claude_code, :codex])
-    end
-
     attribute :status, :atom do
       allow_nil?(false)
       public?(true)
@@ -52,12 +50,53 @@ defmodule Camelot.Agents.Agent do
       default(3)
     end
 
+    attribute :command_prefix_override, :string do
+      allow_nil?(true)
+      public?(true)
+    end
+
+    attribute :executable_override, :string do
+      allow_nil?(true)
+      public?(true)
+    end
+
+    attribute :base_args_override, {:array, :string} do
+      allow_nil?(true)
+      public?(true)
+    end
+
+    attribute :env_vars_override, :map do
+      allow_nil?(true)
+      public?(true)
+    end
+
+    attribute :permission_args_by_stage_override, :map do
+      allow_nil?(true)
+      public?(true)
+    end
+
+    attribute :internal_tools_override, {:array, :string} do
+      allow_nil?(true)
+      public?(true)
+    end
+
+    attribute :base_retry_delay_ms_override, :integer do
+      allow_nil?(true)
+      public?(true)
+    end
+
     timestamps()
   end
 
   relationships do
     belongs_to :project, Camelot.Projects.Project do
       allow_nil?(false)
+    end
+
+    belongs_to :template, Camelot.Agents.AgentTemplate do
+      allow_nil?(false)
+      attribute_writable?(true)
+      public?(true)
     end
 
     has_many(:sessions, Camelot.Agents.Session)
@@ -72,7 +111,19 @@ defmodule Camelot.Agents.Agent do
 
     create :create do
       primary?(true)
-      accept([:name, :type, :max_retries])
+
+      accept([
+        :name,
+        :template_id,
+        :max_retries,
+        :command_prefix_override,
+        :executable_override,
+        :base_args_override,
+        :env_vars_override,
+        :permission_args_by_stage_override,
+        :internal_tools_override,
+        :base_retry_delay_ms_override
+      ])
 
       argument :project_id, :uuid do
         allow_nil?(false)
@@ -83,7 +134,19 @@ defmodule Camelot.Agents.Agent do
 
     update :update do
       primary?(true)
-      accept([:name, :type, :max_retries])
+
+      accept([
+        :name,
+        :template_id,
+        :max_retries,
+        :command_prefix_override,
+        :executable_override,
+        :base_args_override,
+        :env_vars_override,
+        :permission_args_by_stage_override,
+        :internal_tools_override,
+        :base_retry_delay_ms_override
+      ])
     end
 
     update :mark_busy do

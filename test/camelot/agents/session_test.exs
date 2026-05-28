@@ -17,7 +17,7 @@ defmodule Camelot.Agents.SessionTest do
     {:ok, agent} =
       Ash.create(Agent, %{
         name: "Agent",
-        type: :claude_code,
+        template_id: agent_template!("claude_code").id,
         project_id: project.id
       })
 

@@ -3,7 +3,7 @@ defmodule Camelot.Runtime.OutputParserTest do
 
   alias Camelot.Runtime.OutputParser
 
-  describe "parse/2 with :claude_code" do
+  describe "parse/2 with :claude_code_json" do
     test "parses successful JSON response" do
       buffer =
         Jason.encode!(%{
@@ -12,7 +12,7 @@ defmodule Camelot.Runtime.OutputParserTest do
           "duration_ms" => 1234
         })
 
-      assert {:ok, parsed} = OutputParser.parse(:claude_code, buffer)
+      assert {:ok, parsed} = OutputParser.parse(:claude_code_json, buffer)
       assert parsed.result_text == "Here is the plan..."
       assert parsed.cost_usd == 0.05
       assert parsed.duration_ms == 1234
@@ -21,7 +21,7 @@ defmodule Camelot.Runtime.OutputParserTest do
     test "parses JSON response without optional fields" do
       buffer = Jason.encode!(%{"result" => "Done."})
 
-      assert {:ok, parsed} = OutputParser.parse(:claude_code, buffer)
+      assert {:ok, parsed} = OutputParser.parse(:claude_code_json, buffer)
       assert parsed.result_text == "Done."
       assert is_nil(parsed.cost_usd)
       assert is_nil(parsed.duration_ms)
@@ -35,32 +35,32 @@ defmodule Camelot.Runtime.OutputParserTest do
         })
 
       assert {:error, "Something went wrong"} =
-               OutputParser.parse(:claude_code, buffer)
+               OutputParser.parse(:claude_code_json, buffer)
     end
 
     test "returns error for empty buffer" do
       assert {:error, "empty output"} =
-               OutputParser.parse(:claude_code, "")
+               OutputParser.parse(:claude_code_json, "")
     end
 
     test "returns error for malformed JSON" do
       assert {:error, "malformed JSON output"} =
-               OutputParser.parse(:claude_code, "not json at all")
+               OutputParser.parse(:claude_code_json, "not json at all")
     end
 
     test "returns error for unexpected JSON structure" do
       buffer = Jason.encode!(%{"foo" => "bar"})
 
       assert {:error, "unexpected JSON structure"} =
-               OutputParser.parse(:claude_code, buffer)
+               OutputParser.parse(:claude_code_json, buffer)
     end
   end
 
-  describe "parse/2 with :codex" do
+  describe "parse/2 with :raw_text" do
     test "returns raw text as-is" do
       buffer = "some raw output\nwith newlines"
 
-      assert {:ok, parsed} = OutputParser.parse(:codex, buffer)
+      assert {:ok, parsed} = OutputParser.parse(:raw_text, buffer)
       assert parsed.result_text == buffer
       assert is_nil(parsed.cost_usd)
       assert is_nil(parsed.duration_ms)
