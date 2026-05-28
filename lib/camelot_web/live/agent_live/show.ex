@@ -8,7 +8,7 @@ defmodule CamelotWeb.AgentLive.Show do
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
-    agent = Ash.get!(Agent, id, load: [:project, :sessions])
+    agent = Ash.get!(Agent, id, load: [:project, :template, :sessions])
 
     if connected?(socket) do
       Phoenix.PubSub.subscribe(
@@ -26,7 +26,7 @@ defmodule CamelotWeb.AgentLive.Show do
 
   @impl true
   def handle_info({:agent_updated, agent}, socket) do
-    agent = Ash.load!(agent, [:project, :sessions])
+    agent = Ash.load!(agent, [:project, :template, :sessions])
     {:noreply, assign(socket, agent: agent)}
   end
 
@@ -38,12 +38,34 @@ defmodule CamelotWeb.AgentLive.Show do
 
     case Ash.update(agent, %{}, action: :mark_idle) do
       {:ok, updated} ->
-        updated = Ash.load!(updated, [:project, :sessions])
+        updated = Ash.load!(updated, [:project, :template, :sessions])
         {:noreply, assign(socket, agent: updated)}
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, "Failed to reset agent")}
     end
+  end
+
+  defp template_name(agent) do
+    case Ash.Resource.loaded?(agent, :template) && agent.template do
+      %{name: name} -> name
+      _ -> "—"
+    end
+  end
+
+  defp override_summary(agent) do
+    Enum.reject(
+      [
+        {"command prefix", agent.command_prefix_override},
+        {"executable", agent.executable_override},
+        {"base args", agent.base_args_override},
+        {"env vars", agent.env_vars_override},
+        {"permission args", agent.permission_args_by_stage_override},
+        {"internal tools", agent.internal_tools_override},
+        {"retry delay (ms)", agent.base_retry_delay_ms_override}
+      ],
+      fn {_label, value} -> is_nil(value) end
+    )
   end
 
   @impl true
@@ -79,12 +101,22 @@ defmodule CamelotWeb.AgentLive.Show do
       </div>
 
       <.list>
-        <:item title="Type">{@agent.type}</:item>
+        <:item title="Template">{template_name(@agent)}</:item>
         <:item title="Project">
           {if Ash.Resource.loaded?(@agent, :project), do: @agent.project.name, else: "—"}
         </:item>
         <:item title="Status">{@agent.status}</:item>
       </.list>
+
+      <div :if={override_summary(@agent) != []} class="space-y-2">
+        <h3 class="font-semibold">Project overrides</h3>
+        <ul class="text-sm space-y-1">
+          <li :for={{label, value} <- override_summary(@agent)}>
+            <span class="text-base-content/60">{label}:</span>
+            <code class="text-xs">{inspect(value)}</code>
+          </li>
+        </ul>
+      </div>
 
       <div class="space-y-4">
         <h3 class="font-semibold">Recent Sessions</h3>

@@ -130,8 +130,7 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
 
   defp prompt_slug(%{stage: :pr}), do: "pr_review"
 
-  defp prompt_slug(%{plan: plan}) when not is_nil(plan),
-    do: "execution"
+  defp prompt_slug(%{plan: plan}) when not is_nil(plan), do: "execution"
 
   defp prompt_slug(_task), do: "planning"
 
@@ -165,12 +164,10 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
            task.pr_number
          ) do
       {:ok, comments} ->
-        comments
-        |> Enum.map(fn c ->
+        Enum.map_join(comments, "\n\n---\n\n", fn c ->
           "@#{get_in(c, ["user", "login"])}: " <>
             (c["body"] || "")
         end)
-        |> Enum.join("\n\n---\n\n")
 
       {:error, _} ->
         ""

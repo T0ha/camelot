@@ -11,7 +11,10 @@ defmodule Camelot.Agents.AgentTest do
         path: "/tmp/agent-proj"
       })
 
-    %{project: project}
+    claude = agent_template!("claude_code")
+    codex = agent_template!("codex")
+
+    %{project: project, claude: claude, codex: codex}
   end
 
   describe "create" do
@@ -19,19 +22,19 @@ defmodule Camelot.Agents.AgentTest do
       assert {:ok, agent} =
                Ash.create(Agent, %{
                  name: "Claude",
-                 type: :claude_code,
+                 template_id: ctx.claude.id,
                  project_id: ctx.project.id
                })
 
       assert agent.name == "Claude"
-      assert agent.type == :claude_code
+      assert agent.template_id == ctx.claude.id
       assert agent.status == :idle
     end
 
     test "fails without name", ctx do
       assert {:error, _} =
                Ash.create(Agent, %{
-                 type: :claude_code,
+                 template_id: ctx.claude.id,
                  project_id: ctx.project.id
                })
     end
@@ -40,14 +43,14 @@ defmodule Camelot.Agents.AgentTest do
       assert {:ok, _} =
                Ash.create(Agent, %{
                  name: "A1",
-                 type: :claude_code,
+                 template_id: ctx.claude.id,
                  project_id: ctx.project.id
                })
 
       assert {:error, _} =
                Ash.create(Agent, %{
                  name: "A2",
-                 type: :codex,
+                 template_id: ctx.codex.id,
                  project_id: ctx.project.id
                })
     end
@@ -58,7 +61,7 @@ defmodule Camelot.Agents.AgentTest do
       {:ok, agent} =
         Ash.create(Agent, %{
           name: "Toggler",
-          type: :claude_code,
+          template_id: ctx.claude.id,
           project_id: ctx.project.id
         })
 

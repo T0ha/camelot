@@ -1,9 +1,14 @@
 defmodule Camelot.Runtime.AgentProcess do
   @moduledoc """
   GenServer managing a single AI agent's CLI process.
-  Opens a Port to the CLI tool (claude/codex), streams
-  output via PubSub, and creates Session records on exit.
-  Supports automatic retries with exponential backoff.
+  Opens a Port to the CLI tool, streams output via PubSub,
+  and creates Session records on exit. Supports automatic
+  retries with exponential backoff.
+
+  All CLI/parser/runtime knobs come from the agent's
+  `AgentTemplate` (with optional per-agent overrides) via
+  `Camelot.Runtime.AgentConfig`. Nothing about the CLI
+  shape is hardcoded in this module.
   """
   use GenServer, restart: :transient
 
@@ -11,16 +16,15 @@ defmodule Camelot.Runtime.AgentProcess do
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
   alias Camelot.Board.TaskMessage
+  alias Camelot.Runtime.AgentConfig
   alias Camelot.Runtime.AgentRegistry
   alias Camelot.Runtime.OutputParser
 
   require Logger
 
-  @base_retry_delay_ms 5_000
-
   defstruct [
     :agent_id,
-    :agent_type,
+    :config,
     :current_task_id,
     :current_session_id,
     :current_prompt,
@@ -33,7 +37,7 @@ defmodule Camelot.Runtime.AgentProcess do
 
   @type t :: %__MODULE__{
           agent_id: String.t(),
-          agent_type: :claude_code | :codex | nil,
+          config: AgentConfig.t() | nil,
           current_task_id: String.t() | nil,
           current_session_id: String.t() | nil,
           current_prompt: String.t() | nil,
@@ -124,14 +128,14 @@ defmodule Camelot.Runtime.AgentProcess do
              0,
              allowed_tools
            ) do
-        {:ok, port, session_id, agent_type} ->
+        {:ok, port, session_id, config} ->
           new_state = %{
             state
             | port: port,
               current_task_id: task_id,
               current_session_id: session_id,
               current_prompt: prompt,
-              agent_type: agent_type,
+              config: config,
               max_retries: agent.max_retries,
               retry_count: 0,
               output_buffer: "",
@@ -203,7 +207,7 @@ defmodule Camelot.Runtime.AgentProcess do
     Logger.info("Agent #{state.agent_id} CLI exited with code #{exit_code}")
 
     parsed =
-      OutputParser.parse(state.agent_type, state.output_buffer)
+      OutputParser.parse(parser_for(state), state.output_buffer)
 
     denials = extract_denials(parsed)
     finish_session(state, exit_code, parsed, denials)
@@ -226,11 +230,7 @@ defmodule Camelot.Runtime.AgentProcess do
   end
 
   def handle_info({:EXIT, port, _reason}, %{port: port} = state) do
-    parsed =
-      OutputParser.parse(
-        state.agent_type || :codex,
-        state.output_buffer
-      )
+    parsed = OutputParser.parse(parser_for(state), state.output_buffer)
 
     finish_session(state, 1, parsed, extract_denials(parsed))
 
@@ -255,8 +255,17 @@ defmodule Camelot.Runtime.AgentProcess do
 
   # --- Private ---
 
+  defp parser_for(%__MODULE__{config: %AgentConfig{parser: p}}), do: p
+  defp parser_for(_), do: :raw_text
+
+  defp retry_delay_for(%__MODULE__{config: %AgentConfig{base_retry_delay_ms: ms}}, n) do
+    ms * Integer.pow(2, n)
+  end
+
+  defp retry_delay_for(_, n), do: 5_000 * Integer.pow(2, n)
+
   defp schedule_retry(state) do
-    delay = retry_delay(state.retry_count)
+    delay = retry_delay_for(state, state.retry_count)
 
     Logger.info(
       "Agent #{state.agent_id} scheduling retry " <>
@@ -276,7 +285,7 @@ defmodule Camelot.Runtime.AgentProcess do
            0,
            state.allowed_tools
          ) do
-      {:ok, port, session_id, agent_type} ->
+      {:ok, port, session_id, config} ->
         mark_agent_busy(state.agent_id)
         mark_task_in_progress(state.current_task_id)
 
@@ -284,7 +293,7 @@ defmodule Camelot.Runtime.AgentProcess do
           state
           | port: port,
             current_session_id: session_id,
-            agent_type: agent_type,
+            config: config,
             retry_count: 0,
             output_buffer: ""
         }
@@ -314,7 +323,7 @@ defmodule Camelot.Runtime.AgentProcess do
            next_retry,
            state.allowed_tools
          ) do
-      {:ok, port, session_id, agent_type} ->
+      {:ok, port, session_id, config} ->
         if retry_count == 0, do: mark_agent_busy(state.agent_id)
         mark_task_in_progress(state.current_task_id)
 
@@ -322,7 +331,7 @@ defmodule Camelot.Runtime.AgentProcess do
           state
           | port: port,
             current_session_id: session_id,
-            agent_type: agent_type,
+            config: config,
             retry_count: next_retry,
             output_buffer: ""
         }
@@ -353,7 +362,7 @@ defmodule Camelot.Runtime.AgentProcess do
         current_task_id: nil,
         current_session_id: nil,
         current_prompt: nil,
-        agent_type: nil,
+        config: nil,
         retry_count: 0,
         output_buffer: "",
         allowed_tools: []
@@ -381,19 +390,10 @@ defmodule Camelot.Runtime.AgentProcess do
     }
   end
 
-  defp retry_delay(retry_count) do
-    @base_retry_delay_ms * Integer.pow(2, retry_count)
-  end
-
   defp start_cli(agent_id, task_id, prompt, retry_number, allowed_tools) do
-    agent = Ash.get!(Agent, agent_id, load: [:project])
+    agent = Ash.get!(Agent, agent_id, load: [:project, :template])
     task = Ash.get!(Task, task_id)
-
-    cli =
-      case agent.type do
-        :claude_code -> System.find_executable("claude")
-        :codex -> System.find_executable("codex")
-      end
+    config = AgentConfig.resolve(agent)
 
     {:ok, session} =
       Ash.create(Session, %{
@@ -402,37 +402,50 @@ defmodule Camelot.Runtime.AgentProcess do
         retry_number: retry_number
       })
 
-    permission_stage =
-      case task.stage do
-        :planning -> :plan
-        _ -> :execute
-      end
-
     cli_args =
-      build_cli_args(
-        agent.type,
-        prompt,
-        allowed_tools,
-        permission_stage
-      )
+      AgentConfig.build_cli_args(config, prompt, allowed_tools, task.stage)
 
-    Logger.info("CLI command: #{cli} #{Enum.join(cli_args, " ")}")
+    prefix_tokens =
+      AgentConfig.prefix_tokens(config, agent.project.path)
 
-    case open_port(cli, cli_args, agent.project.path) do
-      {:ok, port} ->
-        {:ok, port, session.id, agent.type}
+    {cli, full_args} = resolve_command(prefix_tokens, config.executable, cli_args)
 
-      {:error, reason} ->
-        fail_session(
-          session,
-          "CLI failed to start: #{inspect(reason)}"
-        )
+    if is_nil(cli) do
+      fail_session(session, "Executable not found on PATH")
+      {:error, :cli_not_found}
+    else
+      Logger.info("CLI command: #{cli} #{Enum.join(full_args, " ")}")
 
-        {:error, :cli_start_failed}
+      case open_port(cli, full_args, agent.project.path, config) do
+        {:ok, port} ->
+          {:ok, port, session.id, config}
+
+        {:error, reason} ->
+          fail_session(
+            session,
+            "CLI failed to start: #{inspect(reason)}"
+          )
+
+          {:error, :cli_start_failed}
+      end
     end
   end
 
-  defp open_port(cli, cli_args, project_path) do
+  defp resolve_command([], executable, cli_args) do
+    case {System.find_executable(executable), [executable | cli_args]} do
+      {nil, _} -> {nil, []}
+      {cli, _} -> {cli, cli_args}
+    end
+  end
+
+  defp resolve_command([head | rest], executable, cli_args) do
+    case {System.find_executable(head), rest ++ [executable] ++ cli_args} do
+      {nil, _} -> {nil, []}
+      {cli, args} -> {cli, args}
+    end
+  end
+
+  defp open_port(cli, cli_args, project_path, config) do
     port =
       Port.open(
         {:spawn_executable, System.find_executable("sh")},
@@ -442,7 +455,7 @@ defmodule Camelot.Runtime.AgentProcess do
           :use_stdio,
           :stderr_to_stdout,
           cd: to_charlist(project_path),
-          env: [{~c"CLAUDECODE", false}],
+          env: AgentConfig.env_for_port(config),
           args: [
             "-c",
             ~s(exec "$@" </dev/null),
@@ -467,39 +480,6 @@ defmodule Camelot.Runtime.AgentProcess do
     )
   end
 
-  @internal_tools ~w(ExitPlanMode EnterPlanMode)
-
-  defp build_cli_args(:claude_code, prompt, allowed_tools, stage) do
-    base = ["--output-format", "json"]
-
-    permission_args =
-      case stage do
-        :plan -> ["--permission-mode", "plan"]
-        :execute -> ["--permission-mode", "acceptEdits"]
-      end
-
-    filtered =
-      Enum.reject(allowed_tools, fn tool ->
-        base_name =
-          tool |> String.split("(", parts: 2) |> List.first()
-
-        base_name in @internal_tools
-      end)
-
-    tools_args =
-      if filtered == [] do
-        []
-      else
-        ["--allowedTools", Enum.join(filtered, ",")]
-      end
-
-    base ++ permission_args ++ tools_args ++ ["-p", prompt]
-  end
-
-  defp build_cli_args(:codex, prompt, _allowed_tools, _stage) do
-    ["--quiet", prompt]
-  end
-
   defp handle_cli_exit(state, exit_code, parsed) do
     with task_id when not is_nil(task_id) <- state.current_task_id,
          true <- exit_code == 0 and state.output_buffer != "",
@@ -513,15 +493,15 @@ defmodule Camelot.Runtime.AgentProcess do
           {:error, _} -> state.output_buffer
         end
 
-      handle_task_result(task, result_text, denials, task.id)
+      handle_task_result(state, task, result_text, denials, task.id)
     else
       _ -> :ok
     end
   end
 
-  defp handle_task_result(%{stage: :planning} = task, text, denials, task_id) do
+  defp handle_task_result(state, %{stage: :planning} = task, text, denials, task_id) do
     plan_from_exit = extract_exit_plan(denials)
-    real_denials = reject_internal_denials(denials)
+    real_denials = reject_internal_denials(state, denials)
     trimmed = String.trim(text || "")
 
     cond do
@@ -532,7 +512,7 @@ defmodule Camelot.Runtime.AgentProcess do
         input = if trimmed == "", do: "Agent needs tool permissions", else: trimmed
         request_user_input(task, input, task_id)
 
-      question?(trimmed) ->
+      question?(state, trimmed) ->
         request_user_input(task, trimmed, task_id)
 
       trimmed == "" ->
@@ -544,18 +524,18 @@ defmodule Camelot.Runtime.AgentProcess do
     end
   end
 
-  defp handle_task_result(%{stage: :executing} = task, text, denials, task_id) do
-    real_denials = reject_internal_denials(denials)
+  defp handle_task_result(state, %{stage: :executing} = task, text, denials, task_id) do
+    real_denials = reject_internal_denials(state, denials)
 
     if has_questions?(real_denials) or real_denials != [] do
       request_user_input(task, text, task_id)
     else
-      maybe_create_pr(task, text, task_id)
+      maybe_create_pr(state, task, text, task_id)
     end
   end
 
-  defp handle_task_result(%{stage: :pr} = task, text, denials, task_id) do
-    real_denials = reject_internal_denials(denials)
+  defp handle_task_result(state, %{stage: :pr} = task, text, denials, task_id) do
+    real_denials = reject_internal_denials(state, denials)
 
     if has_questions?(real_denials) or real_denials != [] do
       request_user_input(task, text, task_id)
@@ -564,10 +544,10 @@ defmodule Camelot.Runtime.AgentProcess do
     end
   end
 
-  defp handle_task_result(_task, _text, _denials, _task_id), do: :ok
+  defp handle_task_result(_state, _task, _text, _denials, _task_id), do: :ok
 
-  defp maybe_create_pr(task, text, task_id) do
-    {pr_url, pr_number} = extract_pr_info(text)
+  defp maybe_create_pr(state, task, text, task_id) do
+    {pr_url, pr_number} = extract_pr_info(state, text)
 
     if pr_url do
       case Ash.update(
@@ -595,9 +575,14 @@ defmodule Camelot.Runtime.AgentProcess do
     Enum.any?(denials, &(&1["tool_name"] == "AskUserQuestion"))
   end
 
-  defp reject_internal_denials(denials) do
-    Enum.reject(denials, &(&1["tool_name"] in @internal_tools))
+  defp reject_internal_denials(state, denials) do
+    internal = internal_tools(state)
+    Enum.reject(denials, &(&1["tool_name"] in internal))
   end
+
+  defp internal_tools(%__MODULE__{config: %AgentConfig{internal_tools: tools}}), do: tools
+
+  defp internal_tools(_), do: []
 
   defp extract_exit_plan(denials) do
     denials
@@ -608,16 +593,20 @@ defmodule Camelot.Runtime.AgentProcess do
     end
   end
 
-  @pr_url_pattern ~r{https://github\.com/[^\s]+/pull/(\d+)}
+  defp extract_pr_info(state, text) when is_binary(text) do
+    case AgentConfig.compile_pr_url_pattern(state.config) do
+      nil ->
+        {nil, nil}
 
-  defp extract_pr_info(text) when is_binary(text) do
-    case Regex.run(@pr_url_pattern, text) do
-      [url, number] -> {url, String.to_integer(number)}
-      _ -> {nil, nil}
+      pattern ->
+        case Regex.run(pattern, text) do
+          [url, number] -> {url, String.to_integer(number)}
+          _ -> {nil, nil}
+        end
     end
   end
 
-  defp extract_pr_info(_), do: {nil, nil}
+  defp extract_pr_info(_state, _), do: {nil, nil}
 
   defp submit_plan(task, plan_text, task_id) do
     case Ash.update(
@@ -659,32 +648,22 @@ defmodule Camelot.Runtime.AgentProcess do
     end
   end
 
-  @question_phrases [
-    "could you",
-    "can you",
-    "please provide",
-    "please clarify",
-    "please specify",
-    "what would",
-    "which approach",
-    "do you want",
-    "would you like",
-    "waiting for",
-    "need more information",
-    "let me know"
-  ]
-
-  @spec question?(String.t()) :: boolean()
-  defp question?(text) do
+  @spec question?(t(), String.t()) :: boolean()
+  defp question?(state, text) do
     short? = String.length(text) < 500
     ends_with_question? = String.ends_with?(text, "?")
     lowered = String.downcase(text)
+    phrases = question_phrases(state)
 
     has_question_phrase? =
-      Enum.any?(@question_phrases, &String.contains?(lowered, &1))
+      Enum.any?(phrases, &String.contains?(lowered, &1))
 
     short? and (ends_with_question? or has_question_phrase?)
   end
+
+  defp question_phrases(%__MODULE__{config: %AgentConfig{question_phrases: p}}), do: p
+
+  defp question_phrases(_), do: []
 
   defp broadcast_task_update(task) do
     Phoenix.PubSub.broadcast(

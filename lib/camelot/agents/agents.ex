@@ -6,6 +6,7 @@ defmodule Camelot.Agents do
 
   resources do
     resource(Camelot.Agents.Agent)
+    resource(Camelot.Agents.AgentTemplate)
     resource(Camelot.Agents.Session)
   end
 end

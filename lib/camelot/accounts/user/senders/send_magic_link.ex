@@ -33,7 +33,7 @@ defmodule Camelot.Accounts.User.Senders.SendMagicLink do
 
   defp build_email(to, url) do
     new()
-    |> from({"Camelot", "noreply@camelot.dev"})
+    |> from(Camelot.Mailer.from())
     |> to(to)
     |> subject("Your sign-in link for Camelot")
     |> html_body("""

@@ -11,6 +11,7 @@ defmodule Camelot.MixProject do
       aliases: aliases(),
       deps: deps(),
       usage_rules: usage_rules(),
+      dialyzer: dialyzer(),
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
       listeners: [Phoenix.CodeReloader]
     ]
@@ -64,6 +65,7 @@ defmodule Camelot.MixProject do
       {:heroicons,
        github: "tailwindlabs/heroicons", tag: "v2.2.0", sparse: "optimized", app: false, compile: false, depth: 1},
       {:swoosh, "~> 1.16"},
+      {:gen_smtp, "~> 1.2"},
       {:req, "~> 0.5"},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
@@ -104,6 +106,13 @@ defmodule Camelot.MixProject do
           ]
         ]
       ]
+    ]
+  end
+
+  defp dialyzer do
+    [
+      ignore_warnings: ".dialyzer_ignore.exs",
+      list_unused_filters: true
     ]
   end
 

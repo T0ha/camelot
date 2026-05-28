@@ -15,14 +15,16 @@ defmodule CamelotWeb.AgentLiveTest do
         path: "/tmp/agent-live-proj"
       })
 
+    template = agent_template!("claude_code")
+
     {:ok, agent} =
       Ash.create(Agent, %{
         name: "LiveAgent",
-        type: :claude_code,
+        template_id: template.id,
         project_id: project.id
       })
 
-    %{agent: agent, project: project}
+    %{agent: agent, project: project, template: template}
   end
 
   describe "Index" do
@@ -35,12 +37,12 @@ defmodule CamelotWeb.AgentLiveTest do
 
   describe "Show" do
     test "shows agent detail",
-         %{conn: conn, agent: agent} do
+         %{conn: conn, agent: agent, template: template} do
       {:ok, _view, html} =
         live(conn, ~p"/agents/#{agent.id}")
 
       assert html =~ agent.name
-      assert html =~ "claude_code"
+      assert html =~ template.name
       assert html =~ "idle"
     end
   end

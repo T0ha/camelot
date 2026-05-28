@@ -1,0 +1,119 @@
+name: Compile and check
+on: 
+  workflow_call:
+
+defaults:
+  run:
+    shell: bash
+    
+jobs:
+  run_checks:
+    name: Run checks
+    runs-on: ubuntu-22.04
+    env:
+      MIX_ENV: test
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Elixir
+        id: beam
+        uses: erlef/setup-beam@v1
+        with:
+          version-file: .tool-versions
+          version-type: strict
+            
+      - name: Get deps
+        run: |
+          mix deps.get
+          echo "$HOME/.mix/escripts" >> $GITHUB_PATH
+
+     # - name: Compile and chack warnings
+     #   run: mix compile --warnings-as-errors
+
+      - name: Format
+        run: mix format --check-formatted
+
+      - name: Credo
+        run: mix credo
+
+  dialyzer:
+    name: Run dialyzer
+    runs-on: ubuntu-22.04
+    env:
+      MIX_ENV: dev
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Elixir
+        id: beam
+        uses: erlef/setup-beam@v1
+        with:
+          version-file: .tool-versions
+          version-type: strict
+            
+      - name: Get deps
+        run: |
+          mix deps.get
+          echo "$HOME/.mix/escripts" >> $GITHUB_PATH
+
+      # Don't cache PLTs based on mix.lock hash, as Dialyzer can incrementally update even old ones
+      # Cache key based on Elixir & Erlang version (also useful when running in matrix)
+      - name: Restore PLT cache
+        uses: actions/cache@v3
+        id: plt_cache
+        with:
+          key: |
+            ${{ runner.os }}-${{ steps.beam.outputs.elixir-version }}-${{ steps.beam.outputs.otp-version }}-plt
+          restore-keys: |
+            ${{ runner.os }}-${{ steps.beam.outputs.elixir-version }}-${{ steps.beam.outputs.otp-version }}-plt
+          path: |
+            priv/plts
+
+      # Create PLTs if no cache was found
+      - name: Create PLTs
+        if: steps.plt_cache.outputs.cache-hit != 'true'
+        run: mix dialyzer --plt
+
+      - name: Run dialyzer
+        run: mix dialyzer --format github
+
+
+  tests:
+    name: Run tests
+    runs-on: ubuntu-22.04
+    env:
+      MIX_ENV: test
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Elixir
+        id: beam
+        uses: erlef/setup-beam@v1
+        with:
+          version-file: .tool-versions
+          version-type: strict
+            
+      - name: Get deps
+        run: |
+          mix deps.get
+          echo "$HOME/.mix/escripts" >> $GITHUB_PATH
+
+
+      - name: Docker deps
+        run: docker compose up db -d
+
+      - name: DB setup
+        run: mix ecto.setup
+
+      - name: Tests
+        run: mix test
+
+        #  - name: Coverage
+        #    run: mix coveralls
+

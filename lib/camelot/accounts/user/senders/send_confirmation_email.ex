@@ -32,7 +32,7 @@ defmodule Camelot.Accounts.User.Senders.SendConfirmationEmail do
 
   defp build_email(to, url) do
     new()
-    |> from({"Camelot", "noreply@camelot.dev"})
+    |> from(Camelot.Mailer.from())
     |> to(to)
     |> subject("Confirm your email for Camelot")
     |> html_body("""

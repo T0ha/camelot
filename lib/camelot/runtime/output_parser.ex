@@ -1,11 +1,15 @@
 defmodule Camelot.Runtime.OutputParser do
   @moduledoc """
-  Parses CLI output based on agent type.
+  Parses CLI output based on the parser strategy
+  recorded on the agent's template.
 
-  Claude Code JSON output contains a `result` field with the
-  response text, plus optional `is_error`, `cost_usd`, and
-  `duration_ms` metadata. Codex returns raw text.
+  - `:claude_code_json` expects a single JSON object with a
+    `result` field plus optional `is_error`, `cost_usd`,
+    `duration_ms`, and `permission_denials`.
+  - `:raw_text` passes the buffer through unchanged.
   """
+
+  @type parser :: :claude_code_json | :raw_text
 
   @type permission_denial :: %{
           tool_name: String.t(),
@@ -20,9 +24,9 @@ defmodule Camelot.Runtime.OutputParser do
           permission_denials: [permission_denial()]
         }
 
-  @spec parse(:claude_code | :codex, String.t()) ::
+  @spec parse(parser(), String.t()) ::
           {:ok, parsed()} | {:error, String.t()}
-  def parse(:codex, buffer) do
+  def parse(:raw_text, buffer) do
     {:ok,
      %{
        result_text: buffer,
@@ -32,11 +36,11 @@ defmodule Camelot.Runtime.OutputParser do
      }}
   end
 
-  def parse(:claude_code, "") do
+  def parse(:claude_code_json, "") do
     {:error, "empty output"}
   end
 
-  def parse(:claude_code, buffer) do
+  def parse(:claude_code_json, buffer) do
     case Jason.decode(buffer) do
       {:ok, %{"is_error" => true, "result" => message}} ->
         {:error, message}

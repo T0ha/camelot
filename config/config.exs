@@ -38,6 +38,11 @@ config :camelot, Oban,
   plugins: [{Oban.Plugins.Cron, crontab: []}]
 
 config :camelot, :default_projects_dir, "~/projects"
+
+config :camelot, :mail,
+  from_name: "Camelot",
+  from_address: "noreply@camelot.local"
+
 config :camelot, :token_signing_secret, "dev-only-signing-secret-change-in-prod"
 
 config :camelot,
