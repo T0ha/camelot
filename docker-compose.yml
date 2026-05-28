@@ -49,6 +49,12 @@ services:
       PHX_HOST: ${PHX_HOST}
       PORT: ${PORT}
       POOL_SIZE: ${POOL_SIZE}
+      SMTP_RELAY: ${SMTP_RELAY}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USERNAME: ${SMTP_USERNAME}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      MAIL_FROM: ${MAIL_FROM}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME}
     ports:
       - "${PORT}:${PORT}"
     command: >
