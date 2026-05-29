@@ -2,4 +2,5 @@
 set -eu
 
 cd -P -- "$(dirname -- "$0")"
+./camelot eval Camelot.Release.migrate
 PHX_SERVER=true exec ./camelot start
