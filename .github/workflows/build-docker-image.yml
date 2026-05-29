@@ -40,3 +40,11 @@ jobs:
           tags: |
             ghcr.io/t0ha/camelotai:latest
             ghcr.io/t0ha/camelotai:${{ github.sha }}
+
+      - name: Deploy Image to CapRrover
+        uses: caprover/deploy-from-github@v1.1.2
+        with:
+          server: "${{ vars.CAPROVER_SERVER }}"
+          app: "${{ vars.APP_NAME }}"
+          token: "${{ secrets.APP_TOKEN }}"
+          image: "ghcr.io/t0ha/camelotai:${{ github.sha }}"
