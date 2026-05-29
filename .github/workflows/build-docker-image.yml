@@ -17,6 +17,7 @@ jobs:
   build_docker_image:
     name: Build Image
     runs-on: ubuntu-24.04
+    environment: test
     permissions:
       contents: read
       packages: write
