@@ -16,11 +16,31 @@ import Config
 #
 # Alternatively, you can use `mix phx.gen.release` to generate a `bin/server`
 # script that automatically sets the env var above.
+alias Camelot.Runtime.Runner.Swarm
+
 if System.get_env("PHX_SERVER") do
   config :camelot, CamelotWeb.Endpoint, server: true
 end
 
 config :camelot, CamelotWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
+
+# Runner backend is overridable in every env via the RUNNER_BACKEND env
+# var. Default differs by env: prod = swarm, dev/test = local.
+if backend_env = System.get_env("RUNNER_BACKEND") do
+  runner_backend =
+    case backend_env do
+      "swarm" -> Swarm
+      "docker" -> Camelot.Runtime.Runner.DockerEngine
+      "local" -> Camelot.Runtime.Runner.LocalPort
+      other -> raise "unknown RUNNER_BACKEND: #{other}"
+    end
+
+  config :camelot, :runner,
+    backend: runner_backend,
+    docker_host: System.get_env("DOCKER_HOST", "unix:///var/run/docker.sock"),
+    global_max: String.to_integer(System.get_env("RUNNER_GLOBAL_MAX", "20")),
+    per_user_max: String.to_integer(System.get_env("RUNNER_PER_USER_MAX", "2"))
+end
 
 if config_env() == :prod do
   database_url =
@@ -29,6 +49,22 @@ if config_env() == :prod do
       environment variable DATABASE_URL is missing.
       For example: ecto://USER:PASS@HOST/DATABASE
       """
+
+  encryption_key =
+    System.get_env("ENCRYPTION_KEY") ||
+      raise """
+      environment variable ENCRYPTION_KEY is missing.
+      Generate one with: mix run -e 'IO.puts 32 |> :crypto.strong_rand_bytes() |> Base.encode64()'
+      """
+
+  # In prod, default to swarm if RUNNER_BACKEND wasn't set above.
+  if !System.get_env("RUNNER_BACKEND") do
+    config :camelot, :runner,
+      backend: Swarm,
+      docker_host: System.get_env("DOCKER_HOST", "unix:///var/run/docker.sock"),
+      global_max: String.to_integer(System.get_env("RUNNER_GLOBAL_MAX", "20")),
+      per_user_max: String.to_integer(System.get_env("RUNNER_PER_USER_MAX", "2"))
+  end
 
   maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
 
@@ -115,6 +151,11 @@ if config_env() == :prod do
     # For machines with several cores, consider starting multiple pools of `pool_size`
     # pool_count: 4,
     socket_options: maybe_ipv6
+
+  config :camelot, Camelot.Vault,
+    ciphers: [
+      default: {Cloak.Ciphers.AES.GCM, tag: "AES.GCM.V1", key: Base.decode64!(encryption_key), iv_length: 12}
+    ]
 
   config :camelot, CamelotWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],

@@ -10,6 +10,15 @@ config :camelot, Camelot.Repo,
   show_sensitive_data_on_connection_error: true,
   pool_size: 10
 
+# Stable dev-only key for the Cloak vault. Override via env in any
+# environment that holds real credentials.
+config :camelot, Camelot.Vault,
+  ciphers: [
+    default:
+      {Cloak.Ciphers.AES.GCM,
+       tag: "AES.GCM.V1", key: Base.decode64!("J7yu5Cc7+9pBfgM5cBl4emV7DLAhsmO9Hzfo0r/qmTw="), iv_length: 12}
+  ]
+
 # For development, we disable any cache and enable
 # debugging and code reloading.
 #
@@ -53,6 +62,11 @@ config :camelot, CamelotWeb.Endpoint,
 # different ports.
 
 # Reload browser tabs when matching files change.
+# Phoenix.LiveReloader also triggers Phoenix.CodeReloader on these
+# paths, so files under lib/camelot/ need to be listed too — otherwise
+# changes to GenServers like Reconciler/AgentProcess won't be picked
+# up by the running VM until the next HTTP request that happens to
+# trigger compilation. (Found out the hard way.)
 config :camelot, CamelotWeb.Endpoint,
   live_reload: [
     web_console_logger: true,
@@ -63,7 +77,10 @@ config :camelot, CamelotWeb.Endpoint,
       ~r"priv/gettext/.*\.po$"E,
       # Router, Controllers, LiveViews and LiveComponents
       ~r"lib/camelot_web/router\.ex$"E,
-      ~r"lib/camelot_web/(controllers|live|components)/.*\.(ex|heex)$"E
+      ~r"lib/camelot_web/(controllers|live|components)/.*\.(ex|heex)$"E,
+      # Application code (resources, runtime, domains, helpers).
+      ~r"lib/camelot/.*\.ex$"E,
+      ~r"lib/camelot\.ex$"E
     ]
   ]
 

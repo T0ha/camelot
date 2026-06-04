@@ -17,10 +17,15 @@ defmodule CamelotWeb.AgentTemplateLive.Index do
   ]
 
   @text_fields ~w(slug name command_prefix executable prompt_flag
-                  tools_flag tools_separator parser pr_url_pattern)
-  @array_fields ~w(base_args internal_tools question_phrases)
-  @map_fields ~w(permission_args_by_stage env_vars)
+                  tools_flag tools_separator parser pr_url_pattern
+                  runner_image)
+  @array_fields ~w(base_args internal_tools question_phrases
+                   required_credential_kinds)
+  @map_fields ~w(permission_args_by_stage env_vars runner_resources)
   @integer_fields ~w(base_retry_delay_ms)
+
+  @credential_kinds ~w(claude_api_key openai_api_key codex_api_key
+                       github_pat github_oauth ssh_private_key generic)
 
   @impl true
   def mount(_params, _session, socket) do
@@ -41,7 +46,8 @@ defmodule CamelotWeb.AgentTemplateLive.Index do
       page_title: "New Agent Template",
       template: nil,
       form: to_form(blank_form()),
-      parser_options: @parser_options
+      parser_options: @parser_options,
+      credential_kinds: @credential_kinds
     )
   end
 
@@ -52,7 +58,8 @@ defmodule CamelotWeb.AgentTemplateLive.Index do
       page_title: "Edit Agent Template",
       template: template,
       form: to_form(template_to_form(template)),
-      parser_options: @parser_options
+      parser_options: @parser_options,
+      credential_kinds: @credential_kinds
     )
   end
 
@@ -94,10 +101,10 @@ defmodule CamelotWeb.AgentTemplateLive.Index do
          |> put_flash(:info, "Template created")
          |> push_navigate(to: ~p"/agent-templates")}
 
-      {:error, _changeset} ->
+      {:error, error} ->
         {:noreply,
          socket
-         |> put_flash(:error, "Failed to create template")
+         |> put_flash(:error, "Failed to create template: #{format_error(error)}")
          |> assign(form: to_form(form_p))}
     end
   end
@@ -112,13 +119,24 @@ defmodule CamelotWeb.AgentTemplateLive.Index do
          |> put_flash(:info, "Template updated")
          |> push_navigate(to: ~p"/agent-templates")}
 
-      {:error, _changeset} ->
+      {:error, error} ->
         {:noreply,
          socket
-         |> put_flash(:error, "Failed to update template")
+         |> put_flash(:error, "Failed to update template: #{format_error(error)}")
          |> assign(form: to_form(form_p))}
     end
   end
+
+  defp format_error(%Ash.Error.Invalid{errors: errors}) when is_list(errors) do
+    Enum.map_join(errors, "; ", &format_one_error/1)
+  end
+
+  defp format_error(other), do: inspect(other, limit: :infinity, printable_limit: 4_000)
+
+  defp format_one_error(%{field: field, message: msg}) when not is_nil(field), do: "#{field}: #{msg}"
+
+  defp format_one_error(%{message: msg}) when is_binary(msg), do: msg
+  defp format_one_error(other), do: inspect(other)
 
   defp load_templates(socket) do
     templates = Ash.read!(AgentTemplate)
@@ -141,7 +159,10 @@ defmodule CamelotWeb.AgentTemplateLive.Index do
       "parser" => "raw_text",
       "pr_url_pattern" => "https://github\\.com/[^\\s]+/pull/(\\d+)",
       "question_phrases" => "",
-      "base_retry_delay_ms" => "5000"
+      "base_retry_delay_ms" => "5000",
+      "runner_image" => "",
+      "runner_resources" => "{}",
+      "required_credential_kinds" => ""
     }
   end
 
@@ -161,7 +182,10 @@ defmodule CamelotWeb.AgentTemplateLive.Index do
       "parser" => to_string(template.parser),
       "pr_url_pattern" => template.pr_url_pattern,
       "question_phrases" => lines(template.question_phrases),
-      "base_retry_delay_ms" => to_string(template.base_retry_delay_ms)
+      "base_retry_delay_ms" => to_string(template.base_retry_delay_ms),
+      "runner_image" => template.runner_image || "",
+      "runner_resources" => Jason.encode!(template.runner_resources, pretty: true),
+      "required_credential_kinds" => Enum.map_join(template.required_credential_kinds, "\n", &Atom.to_string/1)
     }
   end
 
@@ -173,7 +197,9 @@ defmodule CamelotWeb.AgentTemplateLive.Index do
   defp build_attrs(form_p) do
     with {:ok, perm} <- parse_json_map(form_p, "permission_args_by_stage"),
          {:ok, env} <- parse_json_map(form_p, "env_vars"),
-         {:ok, retry_ms} <- parse_int(form_p, "base_retry_delay_ms") do
+         {:ok, resources} <- parse_json_map(form_p, "runner_resources"),
+         {:ok, retry_ms} <- parse_int(form_p, "base_retry_delay_ms"),
+         {:ok, kinds} <- parse_credential_kinds(form_p["required_credential_kinds"]) do
       {:ok,
        %{
          slug: form_p["slug"],
@@ -190,8 +216,21 @@ defmodule CamelotWeb.AgentTemplateLive.Index do
          parser: parse_atom(form_p["parser"]),
          pr_url_pattern: form_p["pr_url_pattern"],
          question_phrases: split_lines(form_p["question_phrases"]),
-         base_retry_delay_ms: retry_ms
+         base_retry_delay_ms: retry_ms,
+         runner_image: nilify(form_p["runner_image"]),
+         runner_resources: resources,
+         required_credential_kinds: kinds
        }}
+    end
+  end
+
+  defp parse_credential_kinds(text) do
+    items = split_lines(text)
+    invalid = Enum.reject(items, &(&1 in @credential_kinds))
+
+    case invalid do
+      [] -> {:ok, Enum.map(items, &String.to_existing_atom/1)}
+      bad -> {:error, "unknown credential kinds: #{Enum.join(bad, ", ")}"}
     end
   end
 
@@ -347,6 +386,41 @@ defmodule CamelotWeb.AgentTemplateLive.Index do
               type="number"
               label="Base retry delay (ms)"
             />
+
+            <hr class="my-2 border-base-content/20" />
+            <p class="text-sm font-semibold">
+              Container runner (Swarm / DockerEngine)
+            </p>
+            <p class="text-xs text-base-content/50 -mt-2">
+              Leave blank when using the LocalPort backend.
+            </p>
+
+            <.input
+              field={@form[:runner_image]}
+              type="text"
+              label="Runner image"
+              placeholder="ghcr.io/t0ha/camelot-runner-claude:latest"
+            />
+            <.input
+              field={@form[:runner_resources]}
+              type="textarea"
+              label="Runner resource reservations (JSON)"
+              rows="3"
+            />
+            <p class="text-xs text-base-content/50 -mt-2">
+              Example: <code>{~s({"cpu": "1.0", "memory": "2G"})}</code>. Empty <code>{"{}"}</code>
+              means no reservation.
+            </p>
+            <.input
+              field={@form[:required_credential_kinds]}
+              type="textarea"
+              label="Required credential kinds (one per line)"
+              rows="3"
+            />
+            <p class="text-xs text-base-content/50 -mt-2">
+              Drives <code>SecretSync</code>. Valid kinds: {Enum.join(@credential_kinds, ", ")}.
+            </p>
+
             <:actions>
               <.button
                 phx-disable-with="Saving..."

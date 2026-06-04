@@ -10,6 +10,7 @@ defmodule Camelot.Application do
     children = [
       CamelotWeb.Telemetry,
       Camelot.Repo,
+      Camelot.Vault,
       {DNSCluster, query: Application.get_env(:camelot, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Camelot.PubSub},
       {Oban,
@@ -19,7 +20,11 @@ defmodule Camelot.Application do
        )},
       {AshAuthentication.Supervisor, otp_app: :camelot},
       Camelot.Runtime.AgentRegistry,
+      Camelot.Runtime.SessionRegistry,
+      Camelot.Runtime.RunnerPool,
+      Camelot.Runtime.SecretSync,
       Camelot.Runtime.AgentSupervisor,
+      Camelot.Runtime.Reconciler,
       CamelotWeb.Endpoint
     ]
 

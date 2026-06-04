@@ -1,0 +1,118 @@
+name: Build runner images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'runner-images/**'
+      - '.github/workflows/runner-images.yml'
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  base:
+    name: Build base
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Build & push base
+        uses: docker/build-push-action@v6
+        with:
+          context: runner-images/base
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/t0ha/camelot-runner-base:latest
+            ghcr.io/t0ha/camelot-runner-base:${{ github.sha }}
+
+  agent_cli_variants:
+    name: Build ${{ matrix.variant }}
+    runs-on: ubuntu-24.04
+    needs: base
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [claude, codex, polyglot]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Build & push ${{ matrix.variant }}
+        uses: docker/build-push-action@v6
+        with:
+          context: runner-images/${{ matrix.variant }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            BASE_IMAGE=ghcr.io/t0ha/camelot-runner-base:${{ github.sha }}
+          tags: |
+            ghcr.io/t0ha/camelot-runner-${{ matrix.variant }}:latest
+            ghcr.io/t0ha/camelot-runner-${{ matrix.variant }}:${{ github.sha }}
+
+  language_variants:
+    name: Build ${{ matrix.variant }}
+    runs-on: ubuntu-24.04
+    needs: agent_cli_variants
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [elixir, node, python]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Build & push ${{ matrix.variant }}
+        uses: docker/build-push-action@v6
+        with:
+          context: runner-images/${{ matrix.variant }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            CLAUDE_IMAGE=ghcr.io/t0ha/camelot-runner-claude:${{ github.sha }}
+          tags: |
+            ghcr.io/t0ha/camelot-runner-${{ matrix.variant }}:latest
+            ghcr.io/t0ha/camelot-runner-${{ matrix.variant }}:${{ github.sha }}

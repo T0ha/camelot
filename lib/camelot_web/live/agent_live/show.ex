@@ -46,6 +46,29 @@ defmodule CamelotWeb.AgentLive.Show do
     end
   end
 
+  def handle_event("save_max_retries", %{"max_retries" => raw}, socket) do
+    case Integer.parse(raw) do
+      {n, ""} when n >= 0 ->
+        agent = socket.assigns.agent
+
+        case Ash.update(agent, %{max_retries: n}, action: :update) do
+          {:ok, updated} ->
+            updated = Ash.load!(updated, [:project, :template, :sessions])
+
+            {:noreply,
+             socket
+             |> put_flash(:info, "Max retries set to #{n}")
+             |> assign(agent: updated)}
+
+          {:error, error} ->
+            {:noreply, put_flash(socket, :error, "Failed to save: #{inspect(error)}")}
+        end
+
+      _ ->
+        {:noreply, put_flash(socket, :error, "Max retries must be ≥ 0")}
+    end
+  end
+
   defp template_name(agent) do
     case Ash.Resource.loaded?(agent, :template) && agent.template do
       %{name: name} -> name
@@ -107,6 +130,26 @@ defmodule CamelotWeb.AgentLive.Show do
         </:item>
         <:item title="Status">{@agent.status}</:item>
       </.list>
+
+      <form
+        phx-submit="save_max_retries"
+        class="flex items-end gap-3 rounded border p-3"
+      >
+        <label class="flex flex-col gap-1">
+          <span class="text-sm text-base-content/60">Max retries</span>
+          <input
+            type="number"
+            name="max_retries"
+            min="0"
+            value={@agent.max_retries}
+            class="input input-sm w-24"
+          />
+        </label>
+        <button type="submit" class="btn btn-sm btn-primary">Save</button>
+        <p class="text-xs text-base-content/50 flex-1">
+          0 = no retries. Applies to the next session this agent dispatches.
+        </p>
+      </form>
 
       <div :if={override_summary(@agent) != []} class="space-y-2">
         <h3 class="font-semibold">Project overrides</h3>

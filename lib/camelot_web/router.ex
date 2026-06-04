@@ -90,6 +90,8 @@ defmodule CamelotWeb.Router do
       live "/prompts", PromptTemplateLive, :index
       live "/prompts/new", PromptTemplateLive, :new
       live "/prompts/:id/edit", PromptTemplateLive, :edit
+
+      live "/profile", UserProfileLive
     end
   end
 

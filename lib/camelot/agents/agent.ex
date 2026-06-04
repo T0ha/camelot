@@ -93,6 +93,17 @@ defmodule Camelot.Agents.Agent do
       allow_nil?(false)
     end
 
+    belongs_to :user, Camelot.Accounts.User do
+      allow_nil?(true)
+
+      description(
+        "Owner of the agent. Drives which profile volume " <>
+          "mounts, which Swarm node hosts the runner, and " <>
+          "which RunnerPool bucket counts the slot. " <>
+          "Nullable for legacy rows; required for new agents."
+      )
+    end
+
     belongs_to :template, Camelot.Agents.AgentTemplate do
       allow_nil?(false)
       attribute_writable?(true)
@@ -103,7 +114,7 @@ defmodule Camelot.Agents.Agent do
   end
 
   identities do
-    identity(:unique_project, [:project_id])
+    identity(:unique_project_user_template, [:project_id, :user_id, :template_id])
   end
 
   actions do
@@ -129,7 +140,12 @@ defmodule Camelot.Agents.Agent do
         allow_nil?(false)
       end
 
+      argument :user_id, :uuid do
+        allow_nil?(true)
+      end
+
       change(manage_relationship(:project_id, :project, type: :append))
+      change(manage_relationship(:user_id, :user, type: :append))
     end
 
     update :update do

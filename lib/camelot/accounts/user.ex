@@ -59,7 +59,34 @@ defmodule Camelot.Accounts.User do
       public?(true)
     end
 
+    attribute :swarm_node_label, :string do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Swarm node label pinning this user's runners. " <>
+          "Containers run only on nodes matching " <>
+          "`node.labels.camelot-home == <value>`."
+      )
+    end
+
     timestamps()
+  end
+
+  relationships do
+    has_many :credentials, Camelot.Accounts.Credential do
+      destination_attribute(:user_id)
+    end
+
+    many_to_many :projects, Camelot.Projects.Project do
+      through(Camelot.Projects.Membership)
+      source_attribute_on_join_resource(:user_id)
+      destination_attribute_on_join_resource(:project_id)
+    end
+
+    has_many :agents, Camelot.Agents.Agent do
+      destination_attribute(:user_id)
+    end
   end
 
   identities do
@@ -68,5 +95,9 @@ defmodule Camelot.Accounts.User do
 
   actions do
     defaults([:read])
+
+    update :set_swarm_node_label do
+      accept([:swarm_node_label])
+    end
   end
 end

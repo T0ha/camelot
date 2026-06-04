@@ -49,6 +49,8 @@ defmodule Camelot.MixProject do
       {:ash_authentication_phoenix, "~> 2.0"},
       {:ash_oban, "~> 0.2"},
       {:ash_phoenix, "~> 2.0"},
+      {:ash_cloak, "~> 0.1"},
+      {:cloak, "~> 1.1"},
       {:oban, "~> 2.18"},
       {:igniter, "~> 0.6", only: [:dev, :test]},
       {:phoenix, "~> 1.8.3"},

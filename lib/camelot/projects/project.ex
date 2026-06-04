@@ -9,6 +9,8 @@ defmodule Camelot.Projects.Project do
     extensions: [AshOban],
     authorizers: []
 
+  alias Camelot.Projects.Membership
+
   oban do
     scheduled_actions do
       schedule :sync_github_issues, "*/5 * * * *" do
@@ -34,9 +36,15 @@ defmodule Camelot.Projects.Project do
     end
 
     attribute :path, :string do
-      allow_nil?(false)
+      allow_nil?(true)
       public?(true)
-      description("Filesystem path to the git repository")
+
+      description(
+        "Filesystem path to the git repository on the Camelot " <>
+          "host. Used by LocalPort and DockerEngine (bind-mounted " <>
+          "into /workspace). Optional in hosted/Swarm mode — there " <>
+          "the runner clones from `github_repo_url` instead."
+      )
     end
 
     attribute :description, :string do
@@ -47,6 +55,11 @@ defmodule Camelot.Projects.Project do
     attribute :github_repo_url, :string do
       allow_nil?(true)
       public?(true)
+
+      description(
+        "Canonical git remote URL — also used as the clone source " <>
+          "for hosted runners when no local `path` is set."
+      )
     end
 
     attribute :github_owner, :string do
@@ -69,9 +82,24 @@ defmodule Camelot.Projects.Project do
     timestamps()
   end
 
+  relationships do
+    many_to_many :users, Camelot.Accounts.User do
+      through(Membership)
+      source_attribute_on_join_resource(:project_id)
+      destination_attribute_on_join_resource(:user_id)
+    end
+
+    has_many :memberships, Membership do
+      destination_attribute(:project_id)
+    end
+
+    has_many :mcps, Camelot.Projects.Mcp do
+      destination_attribute(:project_id)
+    end
+  end
+
   identities do
     identity(:unique_name, [:name])
-    identity(:unique_path, [:path])
   end
 
   actions do
@@ -95,6 +123,7 @@ defmodule Camelot.Projects.Project do
 
       accept([
         :name,
+        :path,
         :description,
         :github_repo_url,
         :github_owner,

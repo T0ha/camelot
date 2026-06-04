@@ -12,12 +12,21 @@ config :camelot, Camelot.Mailer, adapter: Swoosh.Adapters.Test
 # to provide built-in test partitioning in CI environment.
 # Run `mix help test` for more information.
 config :camelot, Camelot.Repo,
-  username: "postgres",
-  password: "postgres",
-  hostname: "localhost",
+  username: System.get_env("DATABASE_USER", "postgres"),
+  password: System.get_env("DATABASE_PASSWORD", "postgres"),
+  hostname: System.get_env("DATABASE_HOST", "localhost"),
+  port: String.to_integer(System.get_env("DATABASE_PORT", "5432")),
   database: "camelot_test#{System.get_env("MIX_TEST_PARTITION")}",
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2
+
+# Stable test-only key for the Cloak vault.
+config :camelot, Camelot.Vault,
+  ciphers: [
+    default:
+      {Cloak.Ciphers.AES.GCM,
+       tag: "AES.GCM.V1", key: Base.decode64!("J7yu5Cc7+9pBfgM5cBl4emV7DLAhsmO9Hzfo0r/qmTw="), iv_length: 12}
+  ]
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
@@ -28,6 +37,10 @@ config :camelot, CamelotWeb.Endpoint,
 
 # Disable Oban job execution in tests
 config :camelot, Oban, testing: :manual
+
+# Reconciler queries the DB; disable its auto-tick in tests so the
+# sandbox doesn't see an unowned querier.
+config :camelot, :reconciler, autostart: false
 
 # Print only warnings and errors during test
 config :logger, level: :warning

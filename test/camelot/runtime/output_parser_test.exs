@@ -34,7 +34,7 @@ defmodule Camelot.Runtime.OutputParserTest do
           "is_error" => true
         })
 
-      assert {:error, "Something went wrong"} =
+      assert {:error, "claude error: Something went wrong"} =
                OutputParser.parse(:claude_code_json, buffer)
     end
 
@@ -43,9 +43,21 @@ defmodule Camelot.Runtime.OutputParserTest do
                OutputParser.parse(:claude_code_json, "")
     end
 
-    test "returns error for malformed JSON" do
-      assert {:error, "malformed JSON output"} =
+    test "returns error when no JSON object is in the output" do
+      assert {:error, "no JSON object found in output"} =
                OutputParser.parse(:claude_code_json, "not json at all")
+    end
+
+    test "extracts JSON from a noisy buffer (entrypoint logs + escape codes)" do
+      buffer = """
+      [entrypoint] no REPO_URL set; skipping clone
+      [entrypoint] exec: claude --output-format json -p hello
+      {"result": "Done.", "is_error": false}
+      \e[?1006l\e[?1003l
+      """
+
+      assert {:ok, %{result_text: "Done.", permission_denials: []}} =
+               OutputParser.parse(:claude_code_json, buffer)
     end
 
     test "returns error for unexpected JSON structure" do

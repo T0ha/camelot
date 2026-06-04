@@ -26,7 +26,10 @@ defmodule Camelot.Runtime.AgentConfig do
             parser: :raw_text,
             pr_url_pattern: nil,
             question_phrases: [],
-            base_retry_delay_ms: 5_000
+            base_retry_delay_ms: 5_000,
+            runner_image: nil,
+            runner_resources: %{},
+            required_credential_kinds: []
 
   @type t :: %__MODULE__{
           command_prefix: String.t() | nil,
@@ -41,7 +44,10 @@ defmodule Camelot.Runtime.AgentConfig do
           parser: :claude_code_json | :raw_text,
           pr_url_pattern: String.t() | nil,
           question_phrases: [String.t()],
-          base_retry_delay_ms: pos_integer()
+          base_retry_delay_ms: pos_integer(),
+          runner_image: String.t() | nil,
+          runner_resources: %{optional(String.t()) => String.t()},
+          required_credential_kinds: [atom()]
         }
 
   @spec resolve(Agent.t()) :: t()
@@ -67,7 +73,10 @@ defmodule Camelot.Runtime.AgentConfig do
         override(
           agent.base_retry_delay_ms_override,
           template.base_retry_delay_ms
-        )
+        ),
+      runner_image: template.runner_image,
+      runner_resources: template.runner_resources,
+      required_credential_kinds: template.required_credential_kinds
     }
   end
 
