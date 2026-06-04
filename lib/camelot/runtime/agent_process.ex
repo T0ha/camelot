@@ -1,17 +1,30 @@
 defmodule Camelot.Runtime.AgentProcess do
   @moduledoc """
-  GenServer managing a single AI agent's CLI process.
-  Opens a Port to the CLI tool, streams output via PubSub,
-  and creates Session records on exit. Supports automatic
-  retries with exponential backoff.
+  GenServer managing a single AI agent's run lifecycle.
 
-  All CLI/parser/runtime knobs come from the agent's
-  `AgentTemplate` (with optional per-agent overrides) via
-  `Camelot.Runtime.AgentConfig`. Nothing about the CLI
-  shape is hardcoded in this module.
+  Each session goes through three states inside this
+  process:
+
+    1. **queued** — `:dispatch` creates a Session row
+       with status `:queued` and asks `RunnerPool` for a
+       slot. We return `:ok` to the caller immediately.
+    2. **running** — when the pool grants the slot via
+       `{:runner_slot, session_id}`, we build a
+       `Runner.Spec`, call `Runner.start/1`, and start
+       streaming output via PubSub.
+    3. **completed/failed** — on `{:runner_exit, _, code}`
+       we parse the buffer, finalise the session, release
+       the pool slot, and (if the run failed) optionally
+       schedule a retry.
+
+  All CLI/parser knobs come from the agent's
+  `AgentTemplate` via `AgentConfig`. Backend choice
+  (LocalPort / DockerEngine / Swarm) is determined by
+  `Camelot.Runtime.Runner`.
   """
   use GenServer, restart: :transient
 
+  alias Camelot.Accounts.Credential
   alias Camelot.Agents.Agent
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
@@ -19,7 +32,13 @@ defmodule Camelot.Runtime.AgentProcess do
   alias Camelot.Runtime.AgentConfig
   alias Camelot.Runtime.AgentRegistry
   alias Camelot.Runtime.OutputParser
+  alias Camelot.Runtime.Runner
+  alias Camelot.Runtime.Runner.Spec
+  alias Camelot.Runtime.RunnerPool
+  alias Camelot.Runtime.SecretSync
+  alias Camelot.Runtime.SessionRegistry
 
+  require Ash.Query
   require Logger
 
   defstruct [
@@ -28,7 +47,8 @@ defmodule Camelot.Runtime.AgentProcess do
     :current_task_id,
     :current_session_id,
     :current_prompt,
-    :port,
+    :runner,
+    :user_id,
     max_retries: 0,
     retry_count: 0,
     output_buffer: "",
@@ -41,12 +61,15 @@ defmodule Camelot.Runtime.AgentProcess do
           current_task_id: String.t() | nil,
           current_session_id: String.t() | nil,
           current_prompt: String.t() | nil,
-          port: port() | nil,
+          runner: pid() | nil,
+          user_id: String.t() | nil,
           max_retries: non_neg_integer(),
           retry_count: non_neg_integer(),
           output_buffer: String.t(),
           allowed_tools: [String.t()]
         }
+
+  @unscoped_user "_unscoped"
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
@@ -63,14 +86,8 @@ defmodule Camelot.Runtime.AgentProcess do
           :ok | {:error, :busy | :not_found}
   def dispatch(agent_id, task_id, prompt, allowed_tools \\ []) do
     case AgentRegistry.lookup(agent_id) do
-      nil ->
-        {:error, :not_found}
-
-      pid ->
-        GenServer.call(
-          pid,
-          {:dispatch, task_id, prompt, allowed_tools}
-        )
+      nil -> {:error, :not_found}
+      pid -> GenServer.call(pid, {:dispatch, task_id, prompt, allowed_tools})
     end
   end
 
@@ -86,19 +103,12 @@ defmodule Camelot.Runtime.AgentProcess do
           :ok | {:error, :not_found | :no_task | :busy}
   def respond_and_retry(agent_id, tool_names \\ [], answers_text \\ "") do
     case AgentRegistry.lookup(agent_id) do
-      nil ->
-        {:error, :not_found}
-
-      pid ->
-        GenServer.call(
-          pid,
-          {:respond_and_retry, tool_names, answers_text}
-        )
+      nil -> {:error, :not_found}
+      pid -> GenServer.call(pid, {:respond_and_retry, tool_names, answers_text})
     end
   end
 
-  @spec status(String.t()) ::
-          {:ok, :idle | :busy} | {:error, :not_found}
+  @spec status(String.t()) :: {:ok, :idle | :busy} | {:error, :not_found}
   def status(agent_id) do
     case AgentRegistry.lookup(agent_id) do
       nil -> {:error, :not_found}
@@ -116,62 +126,47 @@ defmodule Camelot.Runtime.AgentProcess do
 
   @impl true
   def handle_call({:dispatch, task_id, prompt, allowed_tools}, _from, state) do
-    if state.port do
-      {:reply, {:error, :busy}, state}
-    else
-      agent = Ash.get!(Agent, state.agent_id)
+    cond do
+      state.runner ->
+        {:reply, {:error, :busy}, state}
 
-      case start_cli(
-             state.agent_id,
-             task_id,
-             prompt,
-             0,
-             allowed_tools
-           ) do
-        {:ok, port, session_id, config} ->
-          new_state = %{
-            state
-            | port: port,
-              current_task_id: task_id,
-              current_session_id: session_id,
-              current_prompt: prompt,
-              config: config,
-              max_retries: agent.max_retries,
-              retry_count: 0,
-              output_buffer: "",
-              allowed_tools: allowed_tools
-          }
+      state.current_session_id ->
+        {:reply, {:error, :busy}, state}
 
-          mark_agent_busy(state.agent_id)
-          {:reply, :ok, new_state}
+      true ->
+        case enqueue_session(state, task_id, prompt, allowed_tools, 0) do
+          {:ok, new_state} ->
+            mark_agent_busy(state.agent_id)
+            {:reply, :ok, new_state}
 
-        {:error, reason} ->
-          {:reply, {:error, reason}, state}
-      end
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+        end
     end
   end
 
   def handle_call(:retry, _from, state) do
     cond do
-      state.port ->
+      state.runner || state.current_session_id ->
         {:reply, {:error, :busy}, state}
 
       is_nil(state.current_task_id) || is_nil(state.current_prompt) ->
         {:reply, {:error, :no_task}, state}
 
       true ->
-        {:noreply, new_state} = do_retry(state, 0)
-        {:reply, :ok, new_state}
+        case enqueue_session(state, state.current_task_id, state.current_prompt, state.allowed_tools, 0) do
+          {:ok, new_state} -> {:reply, :ok, new_state}
+          {:error, reason} -> {:reply, {:error, reason}, state}
+        end
     end
   end
 
   def handle_call({:respond_and_retry, tool_names, answers_text}, _from, state) do
     cond do
-      state.port ->
+      state.runner || state.current_session_id ->
         {:reply, {:error, :busy}, state}
 
-      is_nil(state.current_task_id) ||
-          is_nil(state.current_prompt) ->
+      is_nil(state.current_task_id) || is_nil(state.current_prompt) ->
         {:reply, {:error, :no_task}, state}
 
       true ->
@@ -180,18 +175,52 @@ defmodule Camelot.Runtime.AgentProcess do
           |> apply_tool_approvals(tool_names)
           |> apply_answers(answers_text)
 
-        {:noreply, new_state} = redispatch(updated)
-        {:reply, :ok, new_state}
+        case enqueue_session(updated, updated.current_task_id, updated.current_prompt, updated.allowed_tools, 0) do
+          {:ok, new_state} -> {:reply, :ok, new_state}
+          {:error, reason} -> {:reply, {:error, reason}, state}
+        end
     end
   end
 
   def handle_call(:status, _from, state) do
-    status = if state.port, do: :busy, else: :idle
+    status = if state.runner || state.current_session_id, do: :busy, else: :idle
     {:reply, {:ok, status}, state}
   end
 
   @impl true
-  def handle_info({port, {:data, data}}, %{port: port} = state) do
+  def handle_info({:runner_slot, session_id}, state) do
+    if state.current_session_id == session_id do
+      case start_runner(state) do
+        {:ok, runner_pid, config} ->
+          mark_session_running(session_id, runner_pid)
+          SessionRegistry.register(session_id)
+          Process.monitor(runner_pid)
+          broadcast_agent_update(state.agent_id)
+
+          {:noreply,
+           %{
+             state
+             | runner: runner_pid,
+               config: config,
+               output_buffer: ""
+           }}
+
+        {:error, reason} ->
+          fail_session_for(state, "Runner failed to start: #{inspect(reason)}")
+          release_and_idle(state)
+          {:noreply, reset_runner(state)}
+      end
+    else
+      Logger.warning(
+        "AgentProcess #{state.agent_id} got slot for #{session_id} " <>
+          "but current is #{inspect(state.current_session_id)}"
+      )
+
+      {:noreply, state}
+    end
+  end
+
+  def handle_info({:runner_data, handle, data}, %{runner: handle} = state) do
     output = to_string(data)
 
     Phoenix.PubSub.broadcast(
@@ -203,57 +232,62 @@ defmodule Camelot.Runtime.AgentProcess do
     {:noreply, %{state | output_buffer: state.output_buffer <> output}}
   end
 
-  def handle_info({port, {:exit_status, exit_code}}, %{port: port} = state) do
-    Logger.info("Agent #{state.agent_id} CLI exited with code #{exit_code}")
+  def handle_info({:runner_exit, handle, exit_code}, %{runner: handle} = state) do
+    Logger.info("Agent #{state.agent_id} runner exited with code #{exit_code}")
 
-    parsed =
-      OutputParser.parse(parser_for(state), state.output_buffer)
-
+    parsed = OutputParser.parse(parser_for(state), state.output_buffer)
     denials = extract_denials(parsed)
     finish_session(state, exit_code, parsed, denials)
+    if state.current_session_id, do: SessionRegistry.unregister(state.current_session_id)
 
     failed? = exit_code != 0 or match?({:error, _}, parsed)
 
-    if failed? && state.retry_count < state.max_retries do
+    if failed? and state.retry_count < state.max_retries do
+      release_pool_slot(state)
       schedule_retry(state)
     else
       handle_cli_exit(state, exit_code, parsed)
-      mark_agent_idle(state.agent_id)
-      broadcast_agent_update(state.agent_id)
+      if failed?, do: mark_task_error(state.current_task_id)
+      release_and_idle(state)
 
       if denials == [] do
-        {:noreply, reset_port(state)}
+        {:noreply, reset_runner(state)}
       else
-        {:noreply, clear_port(state)}
+        {:noreply, clear_runner(state)}
       end
     end
   end
 
-  def handle_info({:EXIT, port, _reason}, %{port: port} = state) do
-    parsed = OutputParser.parse(parser_for(state), state.output_buffer)
+  # Runner GenServer died without sending us :runner_exit (e.g. a
+  # linked Task inside the runner crashed). Treat it as an exit-1
+  # so we finalise the session and clean up state — otherwise the
+  # AgentProcess sits forever pinned to a dead runner pid.
+  def handle_info({:DOWN, _ref, :process, pid, reason}, %{runner: pid} = state) do
+    Logger.warning(
+      "Agent #{state.agent_id} runner #{inspect(pid)} died without " <>
+        "sending exit: #{inspect(reason)}"
+    )
 
-    finish_session(state, 1, parsed, extract_denials(parsed))
-
-    if state.retry_count < state.max_retries do
-      schedule_retry(state)
-    else
-      mark_agent_idle(state.agent_id)
-      broadcast_agent_update(state.agent_id)
-      {:noreply, reset_port(state)}
-    end
+    send(self(), {:runner_exit, pid, 1})
+    {:noreply, state}
   end
 
+  def handle_info({:DOWN, _, _, _, _}, state), do: {:noreply, state}
+
   def handle_info(:retry, state) do
-    if state.port do
+    if state.runner || state.current_session_id do
       {:noreply, state}
     else
-      do_retry(state, state.retry_count)
+      case enqueue_session(state, state.current_task_id, state.current_prompt, state.allowed_tools, state.retry_count + 1) do
+        {:ok, new_state} -> {:noreply, new_state}
+        {:error, _} -> {:noreply, reset_runner(state)}
+      end
     end
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
 
-  # --- Private ---
+  # --- Internals ---
 
   defp parser_for(%__MODULE__{config: %AgentConfig{parser: p}}), do: p
   defp parser_for(_), do: :raw_text
@@ -269,113 +303,36 @@ defmodule Camelot.Runtime.AgentProcess do
 
     Logger.info(
       "Agent #{state.agent_id} scheduling retry " <>
-        "#{state.retry_count + 1}/#{state.max_retries} " <>
-        "in #{delay}ms"
+        "#{state.retry_count + 1}/#{state.max_retries} in #{delay}ms"
     )
 
     Process.send_after(self(), :retry, delay)
-    {:noreply, %{state | port: nil, output_buffer: ""}}
+    {:noreply, %{state | runner: nil, output_buffer: "", current_session_id: nil}}
   end
 
-  defp redispatch(state) do
-    case start_cli(
-           state.agent_id,
-           state.current_task_id,
-           state.current_prompt,
-           0,
-           state.allowed_tools
-         ) do
-      {:ok, port, session_id, config} ->
-        mark_agent_busy(state.agent_id)
-        mark_task_in_progress(state.current_task_id)
-
-        new_state = %{
-          state
-          | port: port,
-            current_session_id: session_id,
-            config: config,
-            retry_count: 0,
-            output_buffer: ""
-        }
-
-        broadcast_agent_update(state.agent_id)
-        {:noreply, new_state}
-
-      {:error, reason} ->
-        Logger.error(
-          "Agent #{state.agent_id} redispatch failed: " <>
-            "#{inspect(reason)}"
-        )
-
-        mark_agent_idle(state.agent_id)
-        broadcast_agent_update(state.agent_id)
-        {:noreply, reset_port(state)}
-    end
+  defp clear_runner(state) do
+    %{state | runner: nil, output_buffer: "", retry_count: 0, current_session_id: nil}
   end
 
-  defp do_retry(state, retry_count) do
-    next_retry = retry_count + 1
-
-    case start_cli(
-           state.agent_id,
-           state.current_task_id,
-           state.current_prompt,
-           next_retry,
-           state.allowed_tools
-         ) do
-      {:ok, port, session_id, config} ->
-        if retry_count == 0, do: mark_agent_busy(state.agent_id)
-        mark_task_in_progress(state.current_task_id)
-
-        new_state = %{
-          state
-          | port: port,
-            current_session_id: session_id,
-            config: config,
-            retry_count: next_retry,
-            output_buffer: ""
-        }
-
-        broadcast_agent_update(state.agent_id)
-        {:noreply, new_state}
-
-      {:error, reason} ->
-        Logger.error(
-          "Agent #{state.agent_id} retry failed to start: " <>
-            "#{inspect(reason)}"
-        )
-
-        mark_agent_idle(state.agent_id)
-        broadcast_agent_update(state.agent_id)
-        {:noreply, reset_port(state)}
-    end
-  end
-
-  defp clear_port(state) do
-    %{state | port: nil, output_buffer: "", retry_count: 0}
-  end
-
-  defp reset_port(state) do
+  defp reset_runner(state) do
     %{
       state
-      | port: nil,
+      | runner: nil,
         current_task_id: nil,
         current_session_id: nil,
         current_prompt: nil,
         config: nil,
         retry_count: 0,
         output_buffer: "",
-        allowed_tools: []
+        allowed_tools: [],
+        user_id: nil
     }
   end
 
   defp apply_tool_approvals(state, []), do: state
 
   defp apply_tool_approvals(state, tool_names) do
-    %{
-      state
-      | allowed_tools: Enum.uniq(state.allowed_tools ++ tool_names)
-    }
+    %{state | allowed_tools: Enum.uniq(state.allowed_tools ++ tool_names)}
   end
 
   defp apply_answers(state, ""), do: state
@@ -390,93 +347,199 @@ defmodule Camelot.Runtime.AgentProcess do
     }
   end
 
-  defp start_cli(agent_id, task_id, prompt, retry_number, allowed_tools) do
-    agent = Ash.get!(Agent, agent_id, load: [:project, :template])
-    task = Ash.get!(Task, task_id)
+  # Creates a queued Session row, enqueues it in the pool,
+  # and updates AgentProcess state. The actual runner starts
+  # later, when the pool sends {:runner_slot, session_id}.
+  defp enqueue_session(state, task_id, prompt, allowed_tools, retry_number) do
+    agent = Ash.get!(Agent, state.agent_id, load: [:project, :template, :user])
     config = AgentConfig.resolve(agent)
+    user_id = agent_user_id(agent)
 
     {:ok, session} =
       Ash.create(Session, %{
-        agent_id: agent_id,
+        agent_id: state.agent_id,
         task_id: task_id,
+        user_id: agent.user_id,
         retry_number: retry_number
       })
 
-    cli_args =
-      AgentConfig.build_cli_args(config, prompt, allowed_tools, task.stage)
+    {:ok, _} = RunnerPool.enqueue(user_id, session.id, self())
 
-    prefix_tokens =
-      AgentConfig.prefix_tokens(config, agent.project.path)
-
-    {cli, full_args} = resolve_command(prefix_tokens, config.executable, cli_args)
-
-    if is_nil(cli) do
-      fail_session(session, "Executable not found on PATH")
-      {:error, :cli_not_found}
-    else
-      Logger.info("CLI command: #{cli} #{Enum.join(full_args, " ")}")
-
-      case open_port(cli, full_args, agent.project.path, config) do
-        {:ok, port} ->
-          {:ok, port, session.id, config}
-
-        {:error, reason} ->
-          fail_session(
-            session,
-            "CLI failed to start: #{inspect(reason)}"
-          )
-
-          {:error, :cli_start_failed}
-      end
-    end
-  end
-
-  defp resolve_command([], executable, cli_args) do
-    case {System.find_executable(executable), [executable | cli_args]} do
-      {nil, _} -> {nil, []}
-      {cli, _} -> {cli, cli_args}
-    end
-  end
-
-  defp resolve_command([head | rest], executable, cli_args) do
-    case {System.find_executable(head), rest ++ [executable] ++ cli_args} do
-      {nil, _} -> {nil, []}
-      {cli, args} -> {cli, args}
-    end
-  end
-
-  defp open_port(cli, cli_args, project_path, config) do
-    port =
-      Port.open(
-        {:spawn_executable, System.find_executable("sh")},
-        [
-          :binary,
-          :exit_status,
-          :use_stdio,
-          :stderr_to_stdout,
-          cd: to_charlist(project_path),
-          env: AgentConfig.env_for_port(config),
-          args: [
-            "-c",
-            ~s(exec "$@" </dev/null),
-            "--",
-            cli | cli_args
-          ]
-        ]
-      )
-
-    {:ok, port}
+    {:ok,
+     %{
+       state
+       | current_task_id: task_id,
+         current_session_id: session.id,
+         current_prompt: prompt,
+         allowed_tools: allowed_tools,
+         config: config,
+         user_id: user_id,
+         max_retries: agent.max_retries,
+         retry_count: retry_number,
+         output_buffer: ""
+     }}
   rescue
     e ->
-      Logger.error("Failed to open port: #{inspect(e)}")
+      Logger.error("AgentProcess enqueue failed: #{inspect(e)}")
       {:error, e}
   end
 
-  defp fail_session(session, error_message) do
+  defp agent_user_id(%Agent{user_id: nil}), do: @unscoped_user
+  defp agent_user_id(%Agent{user_id: id}), do: id
+
+  defp start_runner(state) do
+    agent = Ash.get!(Agent, state.agent_id, load: [:project, :template, :user])
+    task = state.current_task_id && Ash.get!(Task, state.current_task_id)
+    config = AgentConfig.resolve(agent)
+
+    cli_args =
+      AgentConfig.build_cli_args(
+        config,
+        state.current_prompt,
+        state.allowed_tools,
+        task && task.stage
+      )
+
+    spec = build_spec(state, agent, task, config, cli_args)
+
+    case Runner.start(spec) do
+      {:ok, pid} -> {:ok, pid, config}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp build_spec(state, agent, task, config, cli_args) do
+    prefix_tokens = AgentConfig.prefix_tokens(config, project_path(agent))
+    argv = build_argv(prefix_tokens, config.executable, cli_args)
+    backend = Runner.backend()
+
+    %Spec{
+      session_id: state.current_session_id,
+      service_name: Spec.service_name(state.current_session_id),
+      owner_pid: self(),
+      argv: argv,
+      env: config |> AgentConfig.env_for_port() |> normalise_env(),
+      image: config.runner_image,
+      cwd: cwd_for(backend, agent),
+      profile_volume: if(agent.user_id, do: "camelot_user_#{agent.user_id}_profile"),
+      resources: config.runner_resources,
+      node_label: node_label_for(agent),
+      secrets: build_secrets(agent, config),
+      repo_url: repo_url_for(backend, agent),
+      repo_branch: nil,
+      mcp_config_json: build_mcp_config_json(agent),
+      bootstrap?: task == nil
+    }
+  end
+
+  defp build_argv([], executable, cli_args), do: [executable | cli_args]
+
+  defp build_argv(prefix, executable, cli_args) do
+    prefix ++ [executable] ++ cli_args
+  end
+
+  defp project_path(%Agent{project: %{path: p}}) when is_binary(p), do: p
+  defp project_path(_), do: nil
+
+  defp project_repo_url(%Agent{project: %{github_repo_url: u}}) when is_binary(u), do: u
+  defp project_repo_url(_), do: nil
+
+  # LocalPort: BEAM cd's into the host path; the CLI runs there
+  # directly. Container backends (DockerEngine, Swarm): /workspace,
+  # populated by cloning github_repo_url at session start.
+  defp cwd_for(Camelot.Runtime.Runner.LocalPort, agent), do: project_path(agent)
+  defp cwd_for(_backend, _agent), do: "/workspace"
+
+  # DockerEngine and Swarm both clone github_repo_url into the
+  # ephemeral /workspace. LocalPort doesn't clone — it runs in-place.
+  defp repo_url_for(Camelot.Runtime.Runner.LocalPort, _agent), do: nil
+  defp repo_url_for(_backend, agent), do: project_repo_url(agent)
+
+  defp node_label_for(%Agent{user: %{swarm_node_label: l}}) when is_binary(l), do: l
+  defp node_label_for(_), do: nil
+
+  defp build_secrets(%Agent{user_id: nil}, _config), do: []
+
+  defp build_secrets(%Agent{user_id: uid}, %AgentConfig{required_credential_kinds: kinds}) do
+    Enum.flat_map(kinds, fn kind_atom ->
+      case fetch_credential(uid, kind_atom) do
+        nil ->
+          Logger.warning("AgentProcess: missing credential #{kind_atom} for user #{uid}")
+          []
+
+        %Credential{value: value} ->
+          [
+            %{
+              kind: kind_atom,
+              name: SecretSync.secret_name(uid, kind_atom),
+              value: value
+            }
+          ]
+      end
+    end)
+  end
+
+  defp fetch_credential(user_id, kind_atom) do
+    case Credential
+         |> Ash.Query.filter(user_id == ^user_id and kind == ^kind_atom)
+         |> Ash.Query.limit(1)
+         |> Ash.Query.load(:value)
+         |> Ash.read() do
+      {:ok, [cred | _]} -> cred
+      _ -> nil
+    end
+  end
+
+  defp normalise_env(env) when is_list(env) do
+    Map.new(env, fn {k, v} -> {to_string(k), to_string(v)} end)
+  end
+
+  defp build_mcp_config_json(%Agent{project: %{mcps: mcps}}) when is_list(mcps) do
+    case mcps do
+      [] -> nil
+      list -> Jason.encode!(Enum.map(list, &mcp_to_map/1))
+    end
+  end
+
+  defp build_mcp_config_json(_), do: nil
+
+  defp mcp_to_map(mcp) do
+    %{name: mcp.name, command: mcp.command, args: mcp.args, env: mcp.env}
+  end
+
+  defp release_pool_slot(state) do
+    if state.user_id && state.current_session_id do
+      RunnerPool.release(state.user_id, state.current_session_id)
+    end
+  end
+
+  defp release_and_idle(state) do
+    release_pool_slot(state)
+    mark_agent_idle(state.agent_id)
+    broadcast_agent_update(state.agent_id)
+  end
+
+  defp fail_session_for(state, message) do
+    if state.current_session_id do
+      session = Ash.get!(Session, state.current_session_id)
+      Ash.update(session, %{error_message: message}, action: :fail)
+    end
+  end
+
+  defp mark_task_error(nil), do: :ok
+
+  defp mark_task_error(task_id) do
+    task = Ash.get!(Task, task_id)
+    transition(task, :mark_error)
+  end
+
+  defp mark_session_running(session_id, runner_pid) do
+    session = Ash.get!(Session, session_id)
+
     Ash.update(
       session,
-      %{error_message: error_message},
-      action: :fail
+      %{service_id: inspect(runner_pid)},
+      action: :mark_running
     )
   end
 
@@ -550,23 +613,15 @@ defmodule Camelot.Runtime.AgentProcess do
     {pr_url, pr_number} = extract_pr_info(state, text)
 
     if pr_url do
-      case Ash.update(
-             task,
-             %{pr_url: pr_url, pr_number: pr_number},
-             action: :pr_created
-           ) do
+      case Ash.update(task, %{pr_url: pr_url, pr_number: pr_number}, action: :pr_created) do
         {:ok, updated} ->
           broadcast_task_update(updated)
 
         {:error, error} ->
-          Logger.warning(
-            "Failed to mark PR created for task " <>
-              "#{task_id}: #{inspect(error)}"
-          )
+          Logger.warning("Failed to mark PR created for task #{task_id}: #{inspect(error)}")
       end
     else
       Logger.warning("Execution completed without PR for task #{task_id}")
-
       transition(task, :mark_error)
     end
   end
@@ -581,7 +636,6 @@ defmodule Camelot.Runtime.AgentProcess do
   end
 
   defp internal_tools(%__MODULE__{config: %AgentConfig{internal_tools: tools}}), do: tools
-
   defp internal_tools(_), do: []
 
   defp extract_exit_plan(denials) do
@@ -609,19 +663,12 @@ defmodule Camelot.Runtime.AgentProcess do
   defp extract_pr_info(_state, _), do: {nil, nil}
 
   defp submit_plan(task, plan_text, task_id) do
-    case Ash.update(
-           task,
-           %{plan: plan_text},
-           action: :submit_plan
-         ) do
+    case Ash.update(task, %{plan: plan_text}, action: :submit_plan) do
       {:ok, updated} ->
         broadcast_task_update(updated)
 
       {:error, error} ->
-        Logger.warning(
-          "Failed to submit plan for task " <>
-            "#{task_id}: #{inspect(error)}"
-        )
+        Logger.warning("Failed to submit plan for task #{task_id}: #{inspect(error)}")
     end
   end
 
@@ -641,10 +688,7 @@ defmodule Camelot.Runtime.AgentProcess do
         broadcast_task_update(updated)
 
       {:error, error} ->
-        Logger.warning(
-          "Failed #{action} for task #{task.id}: " <>
-            "#{inspect(error)}"
-        )
+        Logger.warning("Failed #{action} for task #{task.id}: #{inspect(error)}")
     end
   end
 
@@ -655,28 +699,17 @@ defmodule Camelot.Runtime.AgentProcess do
     lowered = String.downcase(text)
     phrases = question_phrases(state)
 
-    has_question_phrase? =
-      Enum.any?(phrases, &String.contains?(lowered, &1))
+    has_question_phrase? = Enum.any?(phrases, &String.contains?(lowered, &1))
 
     short? and (ends_with_question? or has_question_phrase?)
   end
 
   defp question_phrases(%__MODULE__{config: %AgentConfig{question_phrases: p}}), do: p
-
   defp question_phrases(_), do: []
 
   defp broadcast_task_update(task) do
-    Phoenix.PubSub.broadcast(
-      Camelot.PubSub,
-      "task:#{task.id}",
-      {:task_updated, task}
-    )
-
-    Phoenix.PubSub.broadcast(
-      Camelot.PubSub,
-      "board",
-      {:task_updated, task}
-    )
+    Phoenix.PubSub.broadcast(Camelot.PubSub, "task:#{task.id}", {:task_updated, task})
+    Phoenix.PubSub.broadcast(Camelot.PubSub, "board", {:task_updated, task})
   end
 
   defp finish_session(state, exit_code, parsed, denials) do
@@ -714,15 +747,6 @@ defmodule Camelot.Runtime.AgentProcess do
   defp mark_agent_idle(agent_id) do
     agent = Ash.get!(Agent, agent_id)
     Ash.update!(agent, %{}, action: :mark_idle)
-  end
-
-  defp mark_task_in_progress(task_id) do
-    task = Ash.get!(Task, task_id)
-
-    case Ash.update(task, %{}, action: :mark_in_progress) do
-      {:ok, updated} -> broadcast_task_update(updated)
-      {:error, _} -> :ok
-    end
   end
 
   defp broadcast_agent_update(agent_id) do

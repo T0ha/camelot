@@ -41,15 +41,32 @@ defmodule Camelot.Agents.SessionTest do
   end
 
   describe "create" do
-    test "creates a running session", ctx do
+    test "creates a queued session", ctx do
       assert {:ok, session} =
                Ash.create(Session, %{
                  agent_id: ctx.agent.id,
                  task_id: ctx.task.id
                })
 
-      assert session.status == :running
-      assert session.started_at
+      assert session.status == :queued
+      assert session.queued_at
+    end
+  end
+
+  describe "mark_running" do
+    test "transitions a queued session to running", ctx do
+      {:ok, session} =
+        Ash.create(Session, %{
+          agent_id: ctx.agent.id,
+          task_id: ctx.task.id
+        })
+
+      assert {:ok, running} =
+               Ash.update(session, %{service_id: "svc-1"}, action: :mark_running)
+
+      assert running.status == :running
+      assert running.started_at
+      assert running.service_id == "svc-1"
     end
   end
 

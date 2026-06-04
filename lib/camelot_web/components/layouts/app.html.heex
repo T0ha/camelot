@@ -31,6 +31,13 @@
           Prompts
         </a>
       </li>
+      <%= if assigns[:current_user] do %>
+        <li>
+          <a href="/profile" class="btn btn-ghost btn-sm">
+            Profile
+          </a>
+        </li>
+      <% end %>
       <li>
         <.theme_toggle />
       </li>

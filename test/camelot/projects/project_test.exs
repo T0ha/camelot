@@ -37,9 +37,15 @@ defmodule Camelot.Projects.ProjectTest do
                Ash.create(Project, %{path: "/tmp/test"})
     end
 
-    test "fails without required path" do
-      assert {:error, _} =
-               Ash.create(Project, %{name: "test"})
+    test "allows a project without a host path (hosted mode)" do
+      assert {:ok, project} =
+               Ash.create(Project, %{
+                 name: "hosted-only",
+                 github_repo_url: "https://github.com/owner/repo"
+               })
+
+      assert project.path == nil
+      assert project.github_repo_url == "https://github.com/owner/repo"
     end
 
     test "enforces unique name" do
@@ -49,16 +55,6 @@ defmodule Camelot.Projects.ProjectTest do
                Ash.create(Project, %{
                  name: "my-project",
                  path: "/tmp/other"
-               })
-    end
-
-    test "enforces unique path" do
-      assert {:ok, _} = Ash.create(Project, @valid_attrs)
-
-      assert {:error, _} =
-               Ash.create(Project, %{
-                 name: "other",
-                 path: "/tmp/my-project"
                })
     end
   end

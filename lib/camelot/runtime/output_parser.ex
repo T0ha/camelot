@@ -41,15 +41,13 @@ defmodule Camelot.Runtime.OutputParser do
   end
 
   def parse(:claude_code_json, buffer) do
-    case Jason.decode(buffer) do
-      {:ok, %{"is_error" => true, "result" => message}} ->
-        {:error, message}
+    case extract_json(buffer) do
+      {:ok, %{"is_error" => true, "result" => message}} when is_binary(message) ->
+        {:error, "claude error: " <> message}
 
       {:ok, %{"result" => result} = data} ->
         denials = parse_denials(data["permission_denials"])
-
-        {result_text, denials} =
-          maybe_extract_plan(result, denials)
+        {result_text, denials} = maybe_extract_plan(result, denials)
 
         {:ok,
          %{
@@ -62,9 +60,46 @@ defmodule Camelot.Runtime.OutputParser do
       {:ok, _} ->
         {:error, "unexpected JSON structure"}
 
-      {:error, _} ->
-        {:error, "malformed JSON output"}
+      :error ->
+        {:error, "no JSON object found in output"}
     end
+  end
+
+  # Tries the whole buffer first (fast path for clean output), then
+  # falls back to scanning lines from the end. Container runners emit
+  # entrypoint log lines before the CLI output and terminal escape
+  # codes after, so a whole-buffer decode often fails even though a
+  # valid JSON line is in there.
+  defp extract_json(buffer) do
+    case Jason.decode(String.trim(buffer)) do
+      {:ok, data} ->
+        {:ok, data}
+
+      {:error, _} ->
+        buffer
+        |> String.split(~r/\r?\n/)
+        |> Enum.reverse()
+        |> Enum.find_value(:error, &decode_line/1)
+    end
+  end
+
+  defp decode_line(line) do
+    cleaned = line |> strip_terminal_codes() |> String.trim()
+
+    cond do
+      String.starts_with?(cleaned, "{") and String.ends_with?(cleaned, "}") ->
+        case Jason.decode(cleaned) do
+          {:ok, data} -> {:ok, data}
+          _ -> nil
+        end
+
+      true ->
+        nil
+    end
+  end
+
+  defp strip_terminal_codes(line) do
+    Regex.replace(~r/\e\[[0-9;?]*[a-zA-Z]/, line, "")
   end
 
   defp maybe_extract_plan(result, denials) when result in [nil, ""] do

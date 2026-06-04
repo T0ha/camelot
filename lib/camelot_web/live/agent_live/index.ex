@@ -39,7 +39,8 @@ defmodule CamelotWeb.AgentLive.Index do
               to_form(%{
                 "name" => "",
                 "template_id" => default_template_id,
-                "project_id" => ""
+                "project_id" => "",
+                "max_retries" => "3"
               })
           )
 
@@ -57,11 +58,14 @@ defmodule CamelotWeb.AgentLive.Index do
 
   def handle_info(_msg, socket), do: {:noreply, socket}
 
-  @agent_fields ~w(name template_id project_id)
+  @agent_fields ~w(name template_id project_id max_retries)
 
   @impl true
   def handle_event("save", params, socket) do
-    agent_params = Map.take(params, @agent_fields)
+    agent_params =
+      params
+      |> Map.take(@agent_fields)
+      |> normalise_max_retries()
 
     case Ash.create(Agent, agent_params) do
       {:ok, _agent} ->
@@ -70,10 +74,34 @@ defmodule CamelotWeb.AgentLive.Index do
          |> put_flash(:info, "Agent created")
          |> push_navigate(to: ~p"/agents")}
 
-      {:error, _changeset} ->
-        {:noreply, put_flash(socket, :error, "Failed to create agent")}
+      {:error, error} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           "Failed to create agent: #{format_error(error)}"
+         )}
     end
   end
+
+  defp normalise_max_retries(%{"max_retries" => v} = p) when is_binary(v) do
+    case Integer.parse(v) do
+      {n, ""} when n >= 0 -> %{p | "max_retries" => n}
+      _ -> Map.delete(p, "max_retries")
+    end
+  end
+
+  defp normalise_max_retries(p), do: p
+
+  defp format_error(%Ash.Error.Invalid{errors: errors}) when is_list(errors) do
+    Enum.map_join(errors, "; ", fn
+      %{field: f, message: m} when not is_nil(f) -> "#{f}: #{m}"
+      %{message: m} when is_binary(m) -> m
+      other -> inspect(other)
+    end)
+  end
+
+  defp format_error(other), do: inspect(other)
 
   defp load_agents(socket) do
     agents = Ash.read!(Agent, load: [:project, :template])
@@ -135,6 +163,16 @@ defmodule CamelotWeb.AgentLive.Index do
               prompt="Select project"
               options={Enum.map(@projects, &{&1.name, &1.id})}
             />
+            <.input
+              field={@form[:max_retries]}
+              type="number"
+              min="0"
+              label="Max retries"
+            />
+            <p class="text-xs text-base-content/50 -mt-2">
+              How many times to re-dispatch after a failed run.
+              0 disables retries.
+            </p>
             <:actions>
               <.button
                 phx-disable-with="Creating..."

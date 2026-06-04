@@ -39,7 +39,7 @@ defmodule Camelot.Agents.AgentTest do
                })
     end
 
-    test "enforces one agent per project", ctx do
+    test "allows different templates for the same (project, user)", ctx do
       assert {:ok, _} =
                Ash.create(Agent, %{
                  name: "A1",
@@ -47,7 +47,7 @@ defmodule Camelot.Agents.AgentTest do
                  project_id: ctx.project.id
                })
 
-      assert {:error, _} =
+      assert {:ok, _} =
                Ash.create(Agent, %{
                  name: "A2",
                  template_id: ctx.codex.id,

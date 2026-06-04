@@ -135,6 +135,41 @@ defmodule Camelot.Agents.AgentTemplate do
       description("Initial retry delay; doubled per attempt")
     end
 
+    attribute :runner_image, :string do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "OCI image reference used by the Swarm/DockerEngine " <>
+          "runner, e.g. `ghcr.io/t0ha/camelot-runner-elixir:1.19`. " <>
+          "Nil falls back to a generic base image."
+      )
+    end
+
+    attribute :runner_resources, :map do
+      allow_nil?(false)
+      public?(true)
+      default(%{})
+
+      description(
+        "Resource reservations passed to `docker service " <>
+          "create`. Example: " <>
+          ~s(`%{"cpu" => "1.0", "memory" => "2G"}`)
+      )
+    end
+
+    attribute :required_credential_kinds, {:array, :atom} do
+      allow_nil?(false)
+      public?(true)
+      default([])
+
+      description(
+        "Credential kinds the runner needs at /run/secrets/. " <>
+          "Drives `SecretSync` reconciliation. Example: " <>
+          "`[:claude_api_key, :github_pat]`."
+      )
+    end
+
     timestamps()
   end
 
@@ -169,7 +204,10 @@ defmodule Camelot.Agents.AgentTemplate do
         :parser,
         :pr_url_pattern,
         :question_phrases,
-        :base_retry_delay_ms
+        :base_retry_delay_ms,
+        :runner_image,
+        :runner_resources,
+        :required_credential_kinds
       ])
     end
 
@@ -190,7 +228,10 @@ defmodule Camelot.Agents.AgentTemplate do
         :parser,
         :pr_url_pattern,
         :question_phrases,
-        :base_retry_delay_ms
+        :base_retry_delay_ms,
+        :runner_image,
+        :runner_resources,
+        :required_credential_kinds
       ])
     end
   end

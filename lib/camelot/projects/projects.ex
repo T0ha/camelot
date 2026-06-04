@@ -6,5 +6,7 @@ defmodule Camelot.Projects do
 
   resources do
     resource(Camelot.Projects.Project)
+    resource(Camelot.Projects.Membership)
+    resource(Camelot.Projects.Mcp)
   end
 end

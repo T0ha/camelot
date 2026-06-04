@@ -43,6 +43,15 @@ config :camelot, :mail,
   from_name: "Camelot",
   from_address: "noreply@camelot.local"
 
+# Runner backend for agent CLI execution. Overridden in
+# config/runtime.exs for prod. Dev/test default to LocalPort
+# which preserves the legacy Port.open behaviour.
+config :camelot, :runner,
+  backend: Camelot.Runtime.Runner.LocalPort,
+  docker_host: "unix:///var/run/docker.sock",
+  global_max: 20,
+  per_user_max: 2
+
 config :camelot, :token_signing_secret, "dev-only-signing-secret-change-in-prod"
 
 config :camelot,

@@ -7,5 +7,6 @@ defmodule Camelot.Accounts do
   resources do
     resource(Camelot.Accounts.User)
     resource(Camelot.Accounts.Token)
+    resource(Camelot.Accounts.Credential)
   end
 end
