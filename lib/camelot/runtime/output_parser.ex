@@ -86,15 +86,11 @@ defmodule Camelot.Runtime.OutputParser do
   defp decode_line(line) do
     cleaned = line |> strip_terminal_codes() |> String.trim()
 
-    cond do
-      String.starts_with?(cleaned, "{") and String.ends_with?(cleaned, "}") ->
-        case Jason.decode(cleaned) do
-          {:ok, data} -> {:ok, data}
-          _ -> nil
-        end
-
-      true ->
-        nil
+    if String.starts_with?(cleaned, "{") and String.ends_with?(cleaned, "}") do
+      case Jason.decode(cleaned) do
+        {:ok, data} -> {:ok, data}
+        _ -> nil
+      end
     end
   end
 

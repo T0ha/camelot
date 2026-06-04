@@ -16,6 +16,8 @@ import Config
 #
 # Alternatively, you can use `mix phx.gen.release` to generate a `bin/server`
 # script that automatically sets the env var above.
+alias Camelot.Runtime.Runner.Swarm
+
 if System.get_env("PHX_SERVER") do
   config :camelot, CamelotWeb.Endpoint, server: true
 end
@@ -27,7 +29,7 @@ config :camelot, CamelotWeb.Endpoint, http: [port: String.to_integer(System.get_
 if backend_env = System.get_env("RUNNER_BACKEND") do
   runner_backend =
     case backend_env do
-      "swarm" -> Camelot.Runtime.Runner.Swarm
+      "swarm" -> Swarm
       "docker" -> Camelot.Runtime.Runner.DockerEngine
       "local" -> Camelot.Runtime.Runner.LocalPort
       other -> raise "unknown RUNNER_BACKEND: #{other}"
@@ -56,9 +58,9 @@ if config_env() == :prod do
       """
 
   # In prod, default to swarm if RUNNER_BACKEND wasn't set above.
-  unless System.get_env("RUNNER_BACKEND") do
+  if !System.get_env("RUNNER_BACKEND") do
     config :camelot, :runner,
-      backend: Camelot.Runtime.Runner.Swarm,
+      backend: Swarm,
       docker_host: System.get_env("DOCKER_HOST", "unix:///var/run/docker.sock"),
       global_max: String.to_integer(System.get_env("RUNNER_GLOBAL_MAX", "20")),
       per_user_max: String.to_integer(System.get_env("RUNNER_PER_USER_MAX", "2"))

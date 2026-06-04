@@ -15,7 +15,9 @@ defmodule Camelot.Runtime.SecretSync do
   use GenServer
 
   alias Camelot.Accounts.Credential
+  alias Camelot.Runtime.Runner
   alias Camelot.Runtime.Runner.DockerApi
+  alias Camelot.Runtime.Runner.Swarm
 
   require Ash.Query
   require Logger
@@ -84,9 +86,7 @@ defmodule Camelot.Runtime.SecretSync do
 
   # --- Internals ---
 
-  defp swarm_backend? do
-    Camelot.Runtime.Runner.backend() == Camelot.Runtime.Runner.Swarm
-  end
+  defp swarm_backend?, do: Runner.backend() == Swarm
 
   defp do_reconcile(user_id, kind) do
     cred =

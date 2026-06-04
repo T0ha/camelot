@@ -294,24 +294,24 @@ defmodule Camelot.Runtime.RunnerPool do
 
   defp pop_queue(state, user_id) do
     case Map.get(state.queue, user_id) do
-      nil ->
-        {nil, state}
+      nil -> {nil, state}
+      q -> pop_from(state, user_id, :queue.out(q))
+    end
+  end
 
-      q ->
-        case :queue.out(q) do
-          {:empty, _} ->
-            {nil, %{state | queue: Map.delete(state.queue, user_id)}}
+  defp pop_from(state, user_id, {:empty, _}) do
+    {nil, %{state | queue: Map.delete(state.queue, user_id)}}
+  end
 
-          {{:value, session_id}, new_q} ->
-            queue =
-              if :queue.is_empty(new_q) do
-                Map.delete(state.queue, user_id)
-              else
-                Map.put(state.queue, user_id, new_q)
-              end
+  defp pop_from(state, user_id, {{:value, session_id}, new_q}) do
+    {session_id, %{state | queue: replace_queue(state.queue, user_id, new_q)}}
+  end
 
-            {session_id, %{state | queue: queue}}
-        end
+  defp replace_queue(queues, user_id, new_q) do
+    if :queue.is_empty(new_q) do
+      Map.delete(queues, user_id)
+    else
+      Map.put(queues, user_id, new_q)
     end
   end
 

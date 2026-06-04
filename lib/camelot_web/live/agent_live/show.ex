@@ -61,8 +61,7 @@ defmodule CamelotWeb.AgentLive.Show do
              |> assign(agent: updated)}
 
           {:error, error} ->
-            {:noreply,
-             put_flash(socket, :error, "Failed to save: #{inspect(error)}")}
+            {:noreply, put_flash(socket, :error, "Failed to save: #{inspect(error)}")}
         end
 
       _ ->

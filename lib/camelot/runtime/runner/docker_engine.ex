@@ -240,11 +240,7 @@ defmodule Camelot.Runtime.Runner.DockerEngine do
 
   # Recursively peel off full frames; return any trailing partial
   # bytes so the next chunk can complete them.
-  defp demux_frames(
-         <<stream::8, _::24, size::32-big, rest::binary>>,
-         parent
-       )
-       when byte_size(rest) >= size do
+  defp demux_frames(<<stream::8, _::24, size::32-big, rest::binary>>, parent) when byte_size(rest) >= size do
     <<payload::binary-size(size), tail::binary>> = rest
     if stream in [1, 2], do: send(parent, {:log_chunk, payload})
     demux_frames(tail, parent)

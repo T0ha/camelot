@@ -33,6 +33,7 @@ defmodule Camelot.Runtime.AgentProcess do
   alias Camelot.Runtime.AgentRegistry
   alias Camelot.Runtime.OutputParser
   alias Camelot.Runtime.Runner
+  alias Camelot.Runtime.Runner.LocalPort
   alias Camelot.Runtime.Runner.Spec
   alias Camelot.Runtime.RunnerPool
   alias Camelot.Runtime.SecretSync
@@ -278,7 +279,13 @@ defmodule Camelot.Runtime.AgentProcess do
     if state.runner || state.current_session_id do
       {:noreply, state}
     else
-      case enqueue_session(state, state.current_task_id, state.current_prompt, state.allowed_tools, state.retry_count + 1) do
+      case enqueue_session(
+             state,
+             state.current_task_id,
+             state.current_prompt,
+             state.allowed_tools,
+             state.retry_count + 1
+           ) do
         {:ok, new_state} -> {:noreply, new_state}
         {:error, _} -> {:noreply, reset_runner(state)}
       end
@@ -447,12 +454,12 @@ defmodule Camelot.Runtime.AgentProcess do
   # LocalPort: BEAM cd's into the host path; the CLI runs there
   # directly. Container backends (DockerEngine, Swarm): /workspace,
   # populated by cloning github_repo_url at session start.
-  defp cwd_for(Camelot.Runtime.Runner.LocalPort, agent), do: project_path(agent)
+  defp cwd_for(LocalPort, agent), do: project_path(agent)
   defp cwd_for(_backend, _agent), do: "/workspace"
 
   # DockerEngine and Swarm both clone github_repo_url into the
   # ephemeral /workspace. LocalPort doesn't clone — it runs in-place.
-  defp repo_url_for(Camelot.Runtime.Runner.LocalPort, _agent), do: nil
+  defp repo_url_for(LocalPort, _agent), do: nil
   defp repo_url_for(_backend, agent), do: project_repo_url(agent)
 
   defp node_label_for(%Agent{user: %{swarm_node_label: l}}) when is_binary(l), do: l

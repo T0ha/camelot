@@ -14,8 +14,7 @@ defmodule Camelot.Runtime.SessionRegistry do
   @name __MODULE__
 
   @spec child_spec(any()) :: Supervisor.child_spec()
-  def child_spec(_),
-    do: Registry.child_spec(keys: :unique, name: @name)
+  def child_spec(_), do: Registry.child_spec(keys: :unique, name: @name)
 
   @doc """
   Registers the calling process as owner of `session_id`.

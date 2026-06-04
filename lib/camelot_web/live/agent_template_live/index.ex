@@ -128,14 +128,12 @@ defmodule CamelotWeb.AgentTemplateLive.Index do
   end
 
   defp format_error(%Ash.Error.Invalid{errors: errors}) when is_list(errors) do
-    errors
-    |> Enum.map_join("; ", &format_one_error/1)
+    Enum.map_join(errors, "; ", &format_one_error/1)
   end
 
   defp format_error(other), do: inspect(other, limit: :infinity, printable_limit: 4_000)
 
-  defp format_one_error(%{field: field, message: msg}) when not is_nil(field),
-    do: "#{field}: #{msg}"
+  defp format_one_error(%{field: field, message: msg}) when not is_nil(field), do: "#{field}: #{msg}"
 
   defp format_one_error(%{message: msg}) when is_binary(msg), do: msg
   defp format_one_error(other), do: inspect(other)
@@ -187,8 +185,7 @@ defmodule CamelotWeb.AgentTemplateLive.Index do
       "base_retry_delay_ms" => to_string(template.base_retry_delay_ms),
       "runner_image" => template.runner_image || "",
       "runner_resources" => Jason.encode!(template.runner_resources, pretty: true),
-      "required_credential_kinds" =>
-        Enum.map_join(template.required_credential_kinds, "\n", &Atom.to_string/1)
+      "required_credential_kinds" => Enum.map_join(template.required_credential_kinds, "\n", &Atom.to_string/1)
     }
   end
 
@@ -411,7 +408,8 @@ defmodule CamelotWeb.AgentTemplateLive.Index do
               rows="3"
             />
             <p class="text-xs text-base-content/50 -mt-2">
-              Example: <code>{~s({"cpu": "1.0", "memory": "2G"})}</code>. Empty <code>{"{}"}</code> means no reservation.
+              Example: <code>{~s({"cpu": "1.0", "memory": "2G"})}</code>. Empty <code>{"{}"}</code>
+              means no reservation.
             </p>
             <.input
               field={@form[:required_credential_kinds]}
