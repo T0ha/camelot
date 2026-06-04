@@ -92,12 +92,24 @@ defmodule Camelot.Runtime.SecretSync do
     cred =
       Credential
       |> Ash.Query.filter(user_id == ^user_id and kind == ^kind)
+      |> Ash.Query.load(:value)
       |> Ash.read_first()
 
     case cred do
-      {:ok, nil} -> delete_secret(secret_name(user_id, kind))
-      {:ok, %Credential{value: value}} -> upsert_secret(secret_name(user_id, kind), value)
-      _ -> :ok
+      {:ok, nil} ->
+        delete_secret(secret_name(user_id, kind))
+
+      {:ok, %Credential{value: value}} when is_binary(value) ->
+        upsert_secret(secret_name(user_id, kind), value)
+
+      {:ok, %Credential{value: nil}} ->
+        Logger.warning(
+          "SecretSync: credential #{kind} for user #{user_id} has nil value; " <>
+            "skipping. Check AshCloak decryption."
+        )
+
+      _ ->
+        :ok
     end
   rescue
     e ->
