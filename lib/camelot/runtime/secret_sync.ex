@@ -23,6 +23,7 @@ defmodule Camelot.Runtime.SecretSync do
   require Logger
 
   @name __MODULE__
+  @bootstrap_retry_ms 5_000
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -57,7 +58,24 @@ defmodule Camelot.Runtime.SecretSync do
 
   @impl GenServer
   def init(_opts) do
-    {:ok, %{}}
+    if swarm_backend?() do
+      {:ok, %{}, 0}
+    else
+      {:ok, %{}}
+    end
+  end
+
+  @impl GenServer
+  def handle_info(:timeout, state) do
+    case DockerApi.ping() do
+      :ok ->
+        reconcile_all_credentials()
+        {:noreply, state}
+
+      _ ->
+        Logger.debug("SecretSync: proxy not reachable yet, retrying")
+        {:noreply, state, @bootstrap_retry_ms}
+    end
   end
 
   @impl GenServer
@@ -87,6 +105,16 @@ defmodule Camelot.Runtime.SecretSync do
   # --- Internals ---
 
   defp swarm_backend?, do: Runner.backend() == Swarm
+
+  defp reconcile_all_credentials do
+    Credential
+    |> Ash.read!()
+    |> Enum.each(&do_reconcile(&1.user_id, &1.kind))
+  rescue
+    e ->
+      Logger.warning("SecretSync: bulk reconcile failed: #{Exception.message(e)}")
+      :ok
+  end
 
   defp do_reconcile(user_id, kind) do
     cred =
