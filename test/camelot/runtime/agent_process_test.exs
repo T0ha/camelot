@@ -15,13 +15,6 @@ defmodule Camelot.Runtime.AgentProcessTest do
         path: "/tmp/proc-proj-#{System.unique_integer()}"
       })
 
-    {:ok, agent} =
-      Ash.create(Agent, %{
-        name: "ProcAgent",
-        template_id: agent_template!("claude_code").id,
-        project_id: project.id
-      })
-
     {:ok, hashed} =
       AshAuthentication.BcryptProvider.hash("Hello world!123")
 
@@ -29,6 +22,14 @@ defmodule Camelot.Runtime.AgentProcessTest do
       Ash.Seed.seed!(User, %{
         email: "proc-#{System.unique_integer()}@example.com",
         hashed_password: hashed
+      })
+
+    {:ok, agent} =
+      Ash.create(Agent, %{
+        name: "ProcAgent",
+        template_id: agent_template!("claude_code").id,
+        project_id: project.id,
+        user_id: user.id
       })
 
     {:ok, task} =
