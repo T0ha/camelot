@@ -66,6 +66,7 @@ defmodule CamelotWeb.AgentLive.Index do
       params
       |> Map.take(@agent_fields)
       |> normalise_max_retries()
+      |> Map.put("user_id", socket.assigns.current_user.id)
 
     case Ash.create(Agent, agent_params) do
       {:ok, _agent} ->

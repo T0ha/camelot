@@ -14,13 +14,6 @@ defmodule Camelot.Agents.SessionTest do
         path: "/tmp/session-proj"
       })
 
-    {:ok, agent} =
-      Ash.create(Agent, %{
-        name: "Agent",
-        template_id: agent_template!("claude_code").id,
-        project_id: project.id
-      })
-
     {:ok, hashed} =
       AshAuthentication.BcryptProvider.hash("Hello world!123")
 
@@ -28,6 +21,14 @@ defmodule Camelot.Agents.SessionTest do
       Ash.Seed.seed!(User, %{
         email: "session-test@example.com",
         hashed_password: hashed
+      })
+
+    {:ok, agent} =
+      Ash.create(Agent, %{
+        name: "Agent",
+        template_id: agent_template!("claude_code").id,
+        project_id: project.id,
+        user_id: user.id
       })
 
     {:ok, task} =

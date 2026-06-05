@@ -141,7 +141,7 @@ defmodule Camelot.Agents.Agent do
       end
 
       argument :user_id, :uuid do
-        allow_nil?(true)
+        allow_nil?(false)
       end
 
       change(manage_relationship(:project_id, :project, type: :append))

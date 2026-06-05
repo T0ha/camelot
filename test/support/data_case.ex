@@ -43,6 +43,15 @@ defmodule Camelot.DataCase do
     |> Ash.read_one!()
   end
 
+  @doc """
+  Seeds a `Camelot.Accounts.User` with a unique email. Used
+  by tests that need an owning user for an `Agent` row.
+  """
+  def user!(attrs \\ %{}) do
+    defaults = %{email: "test-#{System.unique_integer([:positive])}@example.com"}
+    Ash.Seed.seed!(Camelot.Accounts.User, Map.merge(defaults, attrs))
+  end
+
   setup tags do
     Camelot.DataCase.setup_sandbox(tags)
     :ok

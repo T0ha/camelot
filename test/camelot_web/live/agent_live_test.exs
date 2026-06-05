@@ -8,7 +8,7 @@ defmodule CamelotWeb.AgentLiveTest do
 
   setup :register_and_log_in_user
 
-  setup do
+  setup %{user: user} do
     {:ok, project} =
       Ash.create(Project, %{
         name: "agent-live-proj",
@@ -21,7 +21,8 @@ defmodule CamelotWeb.AgentLiveTest do
       Ash.create(Agent, %{
         name: "LiveAgent",
         template_id: template.id,
-        project_id: project.id
+        project_id: project.id,
+        user_id: user.id
       })
 
     %{agent: agent, project: project, template: template}

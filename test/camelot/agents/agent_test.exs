@@ -11,10 +11,11 @@ defmodule Camelot.Agents.AgentTest do
         path: "/tmp/agent-proj"
       })
 
+    user = user!()
     claude = agent_template!("claude_code")
     codex = agent_template!("codex")
 
-    %{project: project, claude: claude, codex: codex}
+    %{project: project, user: user, claude: claude, codex: codex}
   end
 
   describe "create" do
@@ -23,7 +24,8 @@ defmodule Camelot.Agents.AgentTest do
                Ash.create(Agent, %{
                  name: "Claude",
                  template_id: ctx.claude.id,
-                 project_id: ctx.project.id
+                 project_id: ctx.project.id,
+                 user_id: ctx.user.id
                })
 
       assert agent.name == "Claude"
@@ -35,7 +37,8 @@ defmodule Camelot.Agents.AgentTest do
       assert {:error, _} =
                Ash.create(Agent, %{
                  template_id: ctx.claude.id,
-                 project_id: ctx.project.id
+                 project_id: ctx.project.id,
+                 user_id: ctx.user.id
                })
     end
 
@@ -44,14 +47,16 @@ defmodule Camelot.Agents.AgentTest do
                Ash.create(Agent, %{
                  name: "A1",
                  template_id: ctx.claude.id,
-                 project_id: ctx.project.id
+                 project_id: ctx.project.id,
+                 user_id: ctx.user.id
                })
 
       assert {:ok, _} =
                Ash.create(Agent, %{
                  name: "A2",
                  template_id: ctx.codex.id,
-                 project_id: ctx.project.id
+                 project_id: ctx.project.id,
+                 user_id: ctx.user.id
                })
     end
   end
@@ -62,7 +67,8 @@ defmodule Camelot.Agents.AgentTest do
         Ash.create(Agent, %{
           name: "Toggler",
           template_id: ctx.claude.id,
-          project_id: ctx.project.id
+          project_id: ctx.project.id,
+          user_id: ctx.user.id
         })
 
       assert agent.status == :idle
