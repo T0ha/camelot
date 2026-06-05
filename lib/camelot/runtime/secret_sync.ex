@@ -54,6 +54,14 @@ defmodule Camelot.Runtime.SecretSync do
     GenServer.call(@name, {:lookup, user_id, kind})
   end
 
+  @doc """
+  Looks up the current secret id by its full Swarm name.
+  Stateless — bypasses the GenServer, suitable for hot paths
+  like runner-spec construction.
+  """
+  @spec lookup_id_by_name(String.t()) :: {:ok, String.t()} | :error
+  def lookup_id_by_name(name), do: fetch_secret_by_name(name)
+
   # --- GenServer ---
 
   @impl GenServer
