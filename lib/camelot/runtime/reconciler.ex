@@ -38,6 +38,7 @@ defmodule Camelot.Runtime.Reconciler do
   require Logger
 
   @tick_ms 60_000
+  @log_retention_ms 300_000
   @name __MODULE__
 
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -194,9 +195,14 @@ defmodule Camelot.Runtime.Reconciler do
   end
 
   defp sweep_orphan_services(live_session_ids) do
+    cutoff = DateTime.add(DateTime.utc_now(), -@log_retention_ms, :millisecond)
+
     valid =
       Session
-      |> Ash.Query.filter(status in [:queued, :running])
+      |> Ash.Query.filter(
+        status in [:queued, :running] or
+          (not is_nil(finished_at) and finished_at > ^cutoff)
+      )
       |> Ash.Query.select([:id])
       |> Ash.read!()
       |> MapSet.new(& &1.id)
