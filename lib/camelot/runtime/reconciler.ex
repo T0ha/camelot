@@ -116,13 +116,19 @@ defmodule Camelot.Runtime.Reconciler do
       if alive_owner?(session) do
         :ok
       else
-        Logger.info("Reconciler: failing stale running session #{session.id}")
-        remove_runner_for(session.id)
+        Logger.info(
+          "Reconciler: failing stale running session #{session.id} " <>
+            "(owning AgentProcess not registered)"
+        )
 
         Ash.update!(
           session,
           %{
-            error_message: "container abandoned during backend restart",
+            error_message:
+              "AgentProcess unregistered without finalising this session " <>
+                "(likely a crash in finish_session/4). Inspect the runner " <>
+                "service `camelot-runner-#{session.id}` for container logs " <>
+                "within the retention window.",
             exit_code: 1
           },
           action: :fail

@@ -131,7 +131,11 @@ defmodule Camelot.Runtime.Runner.Swarm do
 
   defp remove_service(nil), do: :ok
 
-  defp remove_service(id) do
+  defp remove_service(_id) do
+    # Disabled while we debug runner failures — services persist
+    # until the Reconciler orphan sweep reaps them past the
+    # retention window. Re-enable the Req.delete line below
+    # once we no longer need post-mortem `docker service logs`.
     # Req.delete(DockerApi.request(), url: "/services/#{id}")
     :ok
   rescue

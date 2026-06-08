@@ -730,16 +730,25 @@ defmodule Camelot.Runtime.AgentProcess do
           _ -> nil
         end
 
-      Ash.update(
-        session,
-        %{
-          output_log: state.output_buffer,
-          exit_code: exit_code,
-          error_message: error_message,
-          permission_denials: denials
-        },
-        action: action
-      )
+      case Ash.update(
+             session,
+             %{
+               output_log: state.output_buffer,
+               exit_code: exit_code,
+               error_message: error_message,
+               permission_denials: denials
+             },
+             action: action
+           ) do
+        {:ok, _} ->
+          :ok
+
+        {:error, reason} ->
+          Logger.error(
+            "AgentProcess #{state.agent_id} failed to mark session " <>
+              "#{state.current_session_id} as #{action}: #{inspect(reason)}"
+          )
+      end
     end
   end
 
