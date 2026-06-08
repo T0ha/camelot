@@ -24,6 +24,7 @@ defmodule Camelot.Runtime.Runner.Swarm do
   alias Camelot.Runtime.Runner
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.Spec
+  alias Camelot.Runtime.SecretSync
 
   require Logger
 
@@ -185,16 +186,27 @@ defmodule Camelot.Runtime.Runner.Swarm do
   defp secrets(%Spec{secrets: []}), do: []
 
   defp secrets(%Spec{secrets: secrets}) do
-    Enum.map(secrets, fn %{kind: kind, name: name} ->
-      %{
-        "SecretName" => name,
-        "File" => %{
-          "Name" => Atom.to_string(kind),
-          "UID" => "0",
-          "GID" => "0",
-          "Mode" => 0o400
-        }
-      }
+    Enum.flat_map(secrets, fn %{kind: kind, name: name} ->
+      case SecretSync.lookup_id_by_name(name) do
+        {:ok, id} ->
+          [
+            %{
+              "SecretID" => id,
+              "SecretName" => name,
+              "File" => %{
+                "Name" => Atom.to_string(kind),
+                "UID" => "0",
+                "GID" => "0",
+                "Mode" => 0o400
+              }
+            }
+          ]
+
+        :error ->
+          Logger.warning("Swarm: secret #{name} not found in cluster; runner will start without /run/secrets/#{kind}")
+
+          []
+      end
     end)
   end
 
