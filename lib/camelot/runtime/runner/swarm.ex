@@ -195,8 +195,8 @@ defmodule Camelot.Runtime.Runner.Swarm do
               "SecretName" => name,
               "File" => %{
                 "Name" => Atom.to_string(kind),
-                "UID" => "0",
-                "GID" => "0",
+                "UID" => "1000",
+                "GID" => "1000",
                 "Mode" => 0o400
               }
             }
