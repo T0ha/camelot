@@ -30,6 +30,7 @@ defmodule Camelot.Runtime.Runner.Swarm do
 
   @poll_interval_ms 2_000
   @pending_grace_ms 30_000
+  @log_retention_ms 300_000
 
   defstruct [
     :owner,
@@ -86,13 +87,18 @@ defmodule Camelot.Runtime.Runner.Swarm do
 
   def handle_info({:exit_code, code}, state) do
     send(state.owner, {:runner_exit, self(), code})
-    remove_service(state.service_id)
-    {:stop, :normal, state}
+    schedule_cleanup()
+    {:noreply, state}
   end
 
   def handle_info({:cluster_full, reason}, state) do
     send(state.owner, {:runner_data, self(), "[swarm] cluster_full: #{inspect(reason)}\n"})
     send(state.owner, {:runner_exit, self(), 125})
+    schedule_cleanup()
+    {:noreply, state}
+  end
+
+  def handle_info(:cleanup, state) do
     remove_service(state.service_id)
     {:stop, :normal, state}
   end
@@ -100,6 +106,10 @@ defmodule Camelot.Runtime.Runner.Swarm do
   def handle_info({ref, _}, state) when is_reference(ref), do: {:noreply, state}
   def handle_info({:DOWN, _, _, _, _}, state), do: {:noreply, state}
   def handle_info(_msg, state), do: {:noreply, state}
+
+  defp schedule_cleanup do
+    Process.send_after(self(), :cleanup, @log_retention_ms)
+  end
 
   # --- Service create ---
 
