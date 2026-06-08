@@ -132,7 +132,7 @@ defmodule Camelot.Runtime.Runner.Swarm do
   defp remove_service(nil), do: :ok
 
   defp remove_service(id) do
-    Req.delete(DockerApi.request(), url: "/services/#{id}")
+    # Req.delete(DockerApi.request(), url: "/services/#{id}")
     :ok
   rescue
     _ -> :ok
