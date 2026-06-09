@@ -99,7 +99,16 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
 
   @impl GenServer
   def handle_call(:get_container_id, _from, %__MODULE__{container_id: id} = state) when is_binary(id) do
-    {:reply, {:ok, id}, state}
+    if container_alive?(id) do
+      {:reply, {:ok, id}, state}
+    else
+      Logger.info("DockerEngine.TaskContainer #{state.task_id}: cached container #{id} is gone; recreating")
+
+      case create_and_persist(state.task_id, state.spec) do
+        {:ok, new_id} -> {:reply, {:ok, new_id}, %{state | container_id: new_id}}
+        {:error, reason} -> {:reply, {:error, reason}, state}
+      end
+    end
   end
 
   def handle_call(:get_container_id, _from, state) do

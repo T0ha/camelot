@@ -124,7 +124,16 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
 
   @impl GenServer
   def handle_call(:get_service_id, _from, %__MODULE__{service_id: id} = state) when is_binary(id) do
-    {:reply, {:ok, id}, state}
+    if service_alive?(id) do
+      {:reply, {:ok, id}, state}
+    else
+      Logger.info("Swarm.TaskService #{state.task_id}: cached service #{id} is gone; recreating")
+
+      case create_and_persist(state.task_id, state.spec) do
+        {:ok, new_id} -> {:reply, {:ok, new_id}, %{state | service_id: new_id}}
+        {:error, reason} -> {:reply, {:error, reason}, state}
+      end
+    end
   end
 
   def handle_call(:get_service_id, _from, state) do
