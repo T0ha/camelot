@@ -122,6 +122,14 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
     {:stop, :normal, state}
   end
 
+  # Redact secret values from the state dumped by GenServer
+  # crash logs. The Spec's `secrets` list otherwise gets
+  # inspect()'d verbatim — including API keys.
+  @impl GenServer
+  def format_status(status) do
+    update_in(status.state.spec, &Spec.redact/1)
+  end
+
   # --- Container lifecycle ---
 
   defp ensure_container(%__MODULE__{task_id: task_id, spec: spec}) do
@@ -159,6 +167,23 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
   end
 
   defp create_container(task_id, %Spec{} = spec) do
+    case do_create_container(task_id, spec) do
+      {:error, {:create_failed, 404, %{"message" => "No such image:" <> _}}} ->
+        Logger.info(
+          "DockerEngine.TaskContainer #{task_id}: image #{inspect(spec.image)} " <>
+            "not present locally; pulling"
+        )
+
+        with :ok <- pull_image(spec.image) do
+          do_create_container(task_id, spec)
+        end
+
+      other ->
+        other
+    end
+  end
+
+  defp do_create_container(task_id, %Spec{} = spec) do
     name = Spec.task_runner_name(task_id)
     payload = container_create_payload(spec)
 
@@ -172,6 +197,31 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
 
       {:ok, resp} ->
         {:error, {:create_failed, resp.status, resp.body}}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp pull_image(nil), do: {:error, :no_image_to_pull}
+
+  defp pull_image(ref) do
+    # The Docker pull endpoint streams a JSON-lines progress body
+    # and only returns 200 OK once the pull is fully complete. We
+    # drain (and ignore) the body so we know when to retry create.
+    # `fromImage` accepts the full reference including tag/digest
+    # (e.g. `ghcr.io/org/name:tag`), so no need to split it.
+    case Req.post(DockerApi.request(),
+           url: "/images/create",
+           params: [fromImage: ref],
+           receive_timeout: 600_000,
+           into: fn {:data, _chunk}, acc -> {:cont, acc} end
+         ) do
+      {:ok, %Req.Response{status: status}} when status in 200..299 ->
+        :ok
+
+      {:ok, resp} ->
+        {:error, {:pull_failed, resp.status, resp.body}}
 
       {:error, _} = err ->
         err

@@ -147,6 +147,11 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
     {:stop, :normal, state}
   end
 
+  @impl GenServer
+  def format_status(status) do
+    update_in(status.state.spec, &Spec.redact/1)
+  end
+
   # --- Service lifecycle ---
 
   defp ensure_service(%__MODULE__{task_id: task_id, spec: spec}) do

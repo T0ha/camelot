@@ -68,6 +68,11 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
   def handle_cast(:stop, state), do: {:stop, :normal, state}
 
   @impl GenServer
+  def format_status(status) do
+    update_in(status.state.spec, &Spec.redact/1)
+  end
+
+  @impl GenServer
   def handle_info({:chunk, bytes}, %__MODULE__{} = state) do
     send(state.owner, {:runner_data, self(), bytes})
     {:noreply, state}

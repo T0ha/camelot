@@ -87,6 +87,11 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   end
 
   @impl GenServer
+  def format_status(status) do
+    update_in(status.state.spec, &Spec.redact/1)
+  end
+
+  @impl GenServer
   def handle_info({:chunk, bytes}, %__MODULE__{} = state) do
     send(state.owner, {:runner_data, self(), bytes})
     {:noreply, state}
