@@ -62,10 +62,11 @@ RUN echo '. "$HOME/.asdf/asdf.sh"' >> /home/agent/.bashrc
 RUN mkdir -p /home/agent/.config/camelot
 COPY --chown=agent:agent mcp.defaults.json /etc/camelot/mcp.defaults.json
 
-# Entrypoint
+# Entrypoint + per-exec wrapper
 COPY --chown=root:root entrypoint.sh /entrypoint.sh
+COPY --chown=root:root exec-wrapper.sh /exec-wrapper.sh
 USER root
-RUN chmod +x /entrypoint.sh
+RUN chmod +x /entrypoint.sh /exec-wrapper.sh
 USER agent
 
 WORKDIR /workspace

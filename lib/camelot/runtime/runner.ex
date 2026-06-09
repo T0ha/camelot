@@ -33,6 +33,17 @@ defmodule Camelot.Runtime.Runner do
   @callback stop(handle()) :: :ok
 
   @doc """
+  Tear down the long-lived per-task container/service for
+  `task_id`. Called by `AgentProcess` when the task hits a
+  terminal stage (`:done` or `:cancelled`). Backends that
+  don't keep state across sessions (`LocalPort`) return `:ok`
+  immediately.
+  """
+  @callback stop_task(task_id :: String.t()) :: :ok
+
+  @optional_callbacks stop_task: 1
+
+  @doc """
   Returns the configured runner backend module.
   """
   @spec backend() :: module()
@@ -53,4 +64,20 @@ defmodule Camelot.Runtime.Runner do
   """
   @spec stop(handle()) :: :ok
   def stop(handle), do: backend().stop(handle)
+
+  @doc """
+  Tear down the per-task runner for `task_id` via the
+  configured backend. Backends that don't implement
+  `stop_task/1` are treated as a no-op.
+  """
+  @spec stop_task(String.t()) :: :ok
+  def stop_task(task_id) do
+    mod = backend()
+
+    if function_exported?(mod, :stop_task, 1) do
+      mod.stop_task(task_id)
+    else
+      :ok
+    end
+  end
 end

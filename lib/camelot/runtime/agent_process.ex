@@ -53,7 +53,8 @@ defmodule Camelot.Runtime.AgentProcess do
     max_retries: 0,
     retry_count: 0,
     output_buffer: "",
-    allowed_tools: []
+    allowed_tools: [],
+    subscribed_tasks: MapSet.new()
   ]
 
   @type t :: %__MODULE__{
@@ -67,7 +68,8 @@ defmodule Camelot.Runtime.AgentProcess do
           max_retries: non_neg_integer(),
           retry_count: non_neg_integer(),
           output_buffer: String.t(),
-          allowed_tools: [String.t()]
+          allowed_tools: [String.t()],
+          subscribed_tasks: MapSet.t(String.t())
         }
 
   @unscoped_user "_unscoped"
@@ -197,6 +199,7 @@ defmodule Camelot.Runtime.AgentProcess do
           SessionRegistry.register(session_id)
           Process.monitor(runner_pid)
           broadcast_agent_update(state.agent_id)
+          state = subscribe_task(state, state.current_task_id)
 
           {:noreply,
            %{
@@ -220,6 +223,20 @@ defmodule Camelot.Runtime.AgentProcess do
       {:noreply, state}
     end
   end
+
+  def handle_info({:task_updated, %{id: task_id, stage: stage}}, state) when stage in [:done, :cancelled] do
+    if MapSet.member?(state.subscribed_tasks, task_id) do
+      Logger.info("AgentProcess #{state.agent_id}: task #{task_id} reached #{stage}; tearing down runner")
+
+      Runner.stop_task(task_id)
+      Phoenix.PubSub.unsubscribe(Camelot.PubSub, "task:#{task_id}")
+      {:noreply, %{state | subscribed_tasks: MapSet.delete(state.subscribed_tasks, task_id)}}
+    else
+      {:noreply, state}
+    end
+  end
+
+  def handle_info({:task_updated, _task}, state), do: {:noreply, state}
 
   def handle_info({:runner_data, handle, data}, %{runner: handle} = state) do
     output = to_string(data)
@@ -435,9 +452,14 @@ defmodule Camelot.Runtime.AgentProcess do
       repo_url: repo_url_for(backend, agent),
       repo_branch: nil,
       mcp_config_json: build_mcp_config_json(agent),
-      bootstrap?: task == nil
+      bootstrap?: task == nil,
+      task_id: task_id_for(backend, task)
     }
   end
+
+  defp task_id_for(LocalPort, _task), do: nil
+  defp task_id_for(_backend, %{id: id}) when is_binary(id), do: id
+  defp task_id_for(_backend, _task), do: nil
 
   defp build_argv([], executable, cli_args), do: [executable | cli_args]
 
@@ -773,5 +795,18 @@ defmodule Camelot.Runtime.AgentProcess do
       "agent:#{agent_id}",
       {:agent_updated, agent}
     )
+  end
+
+  # Subscribe once per task so we can react when it hits
+  # a terminal stage and tear down the per-task runner.
+  defp subscribe_task(state, nil), do: state
+
+  defp subscribe_task(state, task_id) do
+    if MapSet.member?(state.subscribed_tasks, task_id) do
+      state
+    else
+      Phoenix.PubSub.subscribe(Camelot.PubSub, "task:#{task_id}")
+      %{state | subscribed_tasks: MapSet.put(state.subscribed_tasks, task_id)}
+    end
   end
 end

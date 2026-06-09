@@ -29,7 +29,8 @@ defmodule Camelot.Runtime.Runner.Spec do
             bootstrap?: false,
             node_label: nil,
             resources: %{},
-            service_name: nil
+            service_name: nil,
+            task_id: nil
 
   @type secret :: %{kind: atom(), name: String.t(), value: String.t()}
 
@@ -48,15 +49,25 @@ defmodule Camelot.Runtime.Runner.Spec do
           bootstrap?: boolean(),
           node_label: String.t() | nil,
           resources: %{optional(String.t()) => String.t()},
-          service_name: String.t() | nil
+          service_name: String.t() | nil,
+          task_id: String.t() | nil
         }
 
   @doc """
-  Stable, deterministic service/container name. The
-  Reconciler relies on this naming to adopt containers
-  after a Camelot restart without storing the service
-  id in the DB.
+  Stable, deterministic per-session service/container
+  name. Legacy path — DockerEngine and Swarm have moved
+  to per-task runners (see `task_runner_name/1`); this
+  remains for any backend still creating one container
+  per session.
   """
   @spec service_name(String.t()) :: String.t()
   def service_name(session_id), do: "camelot-runner-#{session_id}"
+
+  @doc """
+  Stable, deterministic per-task service/container name.
+  Used by the DockerEngine and Swarm backends; the
+  Reconciler keys orphan sweeps off this prefix.
+  """
+  @spec task_runner_name(String.t()) :: String.t()
+  def task_runner_name(task_id), do: "camelot-task-#{task_id}"
 end
