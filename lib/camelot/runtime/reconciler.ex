@@ -28,6 +28,7 @@ defmodule Camelot.Runtime.Reconciler do
   use GenServer
 
   alias Camelot.Agents.Session
+  alias Camelot.Board.Task
   alias Camelot.Runtime.Runner
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.Swarm
@@ -95,8 +96,12 @@ defmodule Camelot.Runtime.Reconciler do
     fail_stale_running_sessions()
 
     if backend_available?() do
-      live = list_runner_services()
-      sweep_orphan_services(live)
+      live_sessions = list_runner_services()
+      sweep_orphan_services(live_sessions)
+
+      live_tasks = list_task_runners()
+      sweep_orphan_task_runners(live_tasks)
+
       RunnerPool.tick()
     else
       Logger.debug("Reconciler: backend unavailable, skipping sweep")
@@ -158,32 +163,44 @@ defmodule Camelot.Runtime.Reconciler do
   end
 
   defp list_runner_services do
+    list_runners_with_prefix("camelot-runner-")
+  end
+
+  defp list_task_runners do
+    list_runners_with_prefix("camelot-task-")
+  end
+
+  defp list_runners_with_prefix(prefix) do
     if Runner.backend() == Swarm do
-      list_swarm_services()
+      list_swarm_services(prefix)
     else
-      list_engine_containers()
+      list_engine_containers(prefix)
     end
   end
 
-  defp list_swarm_services do
-    case Req.get(DockerApi.request(), url: "/services", params: [filters: ~s({"name":["camelot-runner-"]})]) do
+  defp list_swarm_services(prefix) do
+    filters = ~s({"name":["#{prefix}"]})
+
+    case Req.get(DockerApi.request(), url: "/services", params: [filters: filters]) do
       {:ok, %Req.Response{status: 200, body: services}} when is_list(services) ->
-        Enum.flat_map(services, &extract_session_id(get_in(&1, ["Spec", "Name"])))
+        Enum.flat_map(services, &extract_id(get_in(&1, ["Spec", "Name"]), prefix))
 
       _ ->
         []
     end
   end
 
-  defp list_engine_containers do
+  defp list_engine_containers(prefix) do
+    filters = ~s({"name":["#{prefix}"]})
+
     case Req.get(DockerApi.request(),
            url: "/containers/json",
-           params: [all: true, filters: ~s({"name":["camelot-runner-"]})]
+           params: [all: true, filters: filters]
          ) do
       {:ok, %Req.Response{status: 200, body: containers}} when is_list(containers) ->
         Enum.flat_map(containers, fn c ->
           name = c |> Map.get("Names", []) |> List.first() |> String.trim_leading("/")
-          extract_session_id(name)
+          extract_id(name, prefix)
         end)
 
       _ ->
@@ -191,10 +208,10 @@ defmodule Camelot.Runtime.Reconciler do
     end
   end
 
-  defp extract_session_id(nil), do: []
+  defp extract_id(nil, _prefix), do: []
 
-  defp extract_session_id(name) when is_binary(name) do
-    case String.split(name, "camelot-runner-", parts: 2) do
+  defp extract_id(name, prefix) when is_binary(name) do
+    case String.split(name, prefix, parts: 2) do
       ["", id] -> [id]
       _ -> []
     end
@@ -223,7 +240,36 @@ defmodule Camelot.Runtime.Reconciler do
 
   defp remove_runner_for(session_id) do
     name = "camelot-runner-#{session_id}"
+    delete_by_name(name)
+  end
 
+  defp sweep_orphan_task_runners(live_task_ids) do
+    cutoff = DateTime.add(DateTime.utc_now(), -@log_retention_ms, :millisecond)
+
+    valid =
+      Task
+      |> Ash.Query.filter(
+        stage not in [:done, :cancelled] or
+          updated_at > ^cutoff
+      )
+      |> Ash.Query.select([:id])
+      |> Ash.read!()
+      |> MapSet.new(& &1.id)
+
+    Enum.each(live_task_ids, fn id ->
+      if !MapSet.member?(valid, id) do
+        Logger.info("Reconciler: removing orphan task runner for task #{id}")
+        remove_task_runner_for(id)
+      end
+    end)
+  end
+
+  defp remove_task_runner_for(task_id) do
+    name = "camelot-task-#{task_id}"
+    delete_by_name(name)
+  end
+
+  defp delete_by_name(name) do
     if Runner.backend() == Swarm do
       Req.delete(DockerApi.request(), url: "/services/#{name}")
     else

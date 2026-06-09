@@ -114,6 +114,18 @@ defmodule Camelot.Board.Task do
       constraints(one_of: @states)
     end
 
+    attribute :runner_handle, :string do
+      allow_nil?(true)
+      public?(false)
+
+      description(
+        "Backend-specific identifier for the long-lived task runner — " <>
+          "Swarm service id or DockerEngine container id. " <>
+          "Set on first session of the task, cleared when the task " <>
+          "reaches :done or :cancelled."
+      )
+    end
+
     timestamps()
   end
 
@@ -156,6 +168,18 @@ defmodule Camelot.Board.Task do
     update :update do
       primary?(true)
       accept([:title, :description, :priority])
+    end
+
+    update :set_runner_handle do
+      accept([:runner_handle])
+
+      validate(present(:runner_handle))
+    end
+
+    update :clear_runner_handle do
+      accept([])
+
+      change(set_attribute(:runner_handle, nil))
     end
 
     update :move_to_todo do

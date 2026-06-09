@@ -365,4 +365,35 @@ defmodule Camelot.Board.TaskTest do
       refute :cancelled in cols
     end
   end
+
+  describe "runner_handle" do
+    setup ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+      %{task: task}
+    end
+
+    test "defaults to nil on create", %{task: task} do
+      assert task.runner_handle == nil
+    end
+
+    test "set_runner_handle stores the id", %{task: task} do
+      assert {:ok, updated} =
+               Ash.update(task, %{runner_handle: "abc123"}, action: :set_runner_handle)
+
+      assert updated.runner_handle == "abc123"
+    end
+
+    test "set_runner_handle rejects a nil id", %{task: task} do
+      assert {:error, _} =
+               Ash.update(task, %{runner_handle: nil}, action: :set_runner_handle)
+    end
+
+    test "clear_runner_handle resets to nil", %{task: task} do
+      {:ok, task} =
+        Ash.update(task, %{runner_handle: "abc123"}, action: :set_runner_handle)
+
+      assert {:ok, cleared} = Ash.update(task, %{}, action: :clear_runner_handle)
+      assert cleared.runner_handle == nil
+    end
+  end
 end

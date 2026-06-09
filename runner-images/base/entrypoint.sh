@@ -14,6 +14,19 @@ set -euo pipefail
 
 log() { printf '[entrypoint] %s\n' "$*" >&2; }
 
+# Per-task containers boot once with this entrypoint, then sleep.
+# Per-session `docker exec` invocations bypass entrypoint.sh and
+# inherit only the container's create-time env — so they don't see
+# anything `materialise_secrets` exports here. We mirror each export
+# to /tmp/camelot.env (sourced by /exec-wrapper.sh) so subsequent
+# execs get the same credentials.
+CAMELOT_ENV_FILE="/tmp/camelot.env"
+CAMELOT_READY_FILE="/tmp/camelot-ready"
+
+persist_env() {
+  printf 'export %s=%q\n' "$1" "$2" >> "$CAMELOT_ENV_FILE"
+}
+
 materialise_secrets() {
   # Source 1: Swarm secrets at /run/secrets/<kind> — used in the
   # Swarm backend. Source 2: env vars (canonical for known CLI tools
@@ -53,30 +66,27 @@ materialise_one() {
   local value="$2"
   case "$kind" in
     claude_api_key)
-      # Detect when an OAuth access token was mis-labeled as an
-      # API key — Anthropic returns 401 if an oat-prefixed token is
-      # sent on the x-api-key header. Best-effort: route it to the
-      # credentials file instead so Claude CLI uses Bearer auth.
       case "$value" in
         sk-ant-oat*)
-          # Long-lived OAuth token (typically from `claude setup-token`).
-          # Claude CLI reads it natively from CLAUDE_CODE_OAUTH_TOKEN;
-          # using x-api-key would 401. Unset ANTHROPIC_API_KEY so it
-          # doesn't override.
           unset ANTHROPIC_API_KEY
           export CLAUDE_CODE_OAUTH_TOKEN="$value"
+          persist_env CLAUDE_CODE_OAUTH_TOKEN "$value"
           ;;
         *)
           export ANTHROPIC_API_KEY="$value"
+          persist_env ANTHROPIC_API_KEY "$value"
           ;;
       esac
       ;;
     openai_api_key|codex_api_key)
       export OPENAI_API_KEY="$value"
+      persist_env OPENAI_API_KEY "$value"
       ;;
     github_pat|github_oauth)
       export GH_TOKEN="$value"
       export GITHUB_TOKEN="$value"
+      persist_env GH_TOKEN "$value"
+      persist_env GITHUB_TOKEN "$value"
       ;;
     ssh_private_key)
       mkdir -p "$HOME/.ssh"
@@ -151,19 +161,29 @@ install_repo_languages() {
   fi
 }
 
+mark_ready() {
+  touch "$CAMELOT_READY_FILE"
+}
+
 main() {
   source "$HOME/.asdf/asdf.sh" 2>/dev/null || true
+
+  # Truncate any stale env from a previous container lifecycle (only
+  # relevant if /tmp is somehow persisted; defensive).
+  : > "$CAMELOT_ENV_FILE"
 
   materialise_secrets
   merge_mcp_config
 
   if [ "${BOOTSTRAP:-0}" = "1" ]; then
     log "bootstrap mode; running command without clone"
+    mark_ready
     exec "$@"
   fi
 
   clone_workspace
   install_repo_languages
+  mark_ready
 
   log "exec: $*"
   exec "$@"

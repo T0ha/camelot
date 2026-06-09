@@ -1,0 +1,115 @@
+defmodule Camelot.Runtime.Runner.Swarm.ProxyRouter do
+  @moduledoc """
+  Resolves the `docker-socket-proxy` task running on a
+  given Swarm node and hands back a `Req` client that
+  targets that task's overlay IP directly.
+
+  Why: the proxy is deployed as a global Swarm service
+  (one task per node), but the per-task runner services
+  can land on any node. `docker exec` only works against
+  the daemon on the node hosting the target container —
+  so each exec must be routed to the proxy task on the
+  *same* node as the target container, bypassing
+  Swarm's load-balancing VIP.
+
+  Cache: results are stored in `:persistent_term` keyed
+  by `node_id`. Each entry is the overlay IP of the
+  proxy task on that node. Writes happen on the first
+  lookup per node and on explicit `invalidate/1`. Reads
+  are zero-overhead.
+  """
+
+  alias Camelot.Runtime.Runner.DockerApi
+
+  require Logger
+
+  @proxy_service_name "srv-captain--docker-socket-proxy"
+  @cache_key {__MODULE__, :proxy_ips}
+
+  @doc """
+  Returns a `Req` client targeting the proxy task on
+  `node_id`. Falls back to the manager's proxy (the
+  default `DockerApi.request/0`) when the per-node
+  resolution fails — Swarm operations like
+  `GET /tasks` work against any manager proxy, so
+  control-plane reads still work; only exec requests
+  truly need per-node routing.
+  """
+  @spec request_for_node(String.t()) :: {:ok, Req.Request.t()} | {:error, term()}
+  def request_for_node(node_id) when is_binary(node_id) do
+    case Map.fetch(get_cache(), node_id) do
+      {:ok, ip} ->
+        {:ok, req_for_ip(ip)}
+
+      :error ->
+        case resolve_ip(node_id) do
+          {:ok, ip} ->
+            put_cache(Map.put(get_cache(), node_id, ip))
+            {:ok, req_for_ip(ip)}
+
+          {:error, _} = err ->
+            err
+        end
+    end
+  end
+
+  @doc """
+  Drop the cached proxy IP for `node_id`. Call when an
+  exec request returns `:econnrefused` / a 5xx — the
+  proxy task may have been rescheduled and its overlay
+  IP changed.
+  """
+  @spec invalidate(String.t()) :: :ok
+  def invalidate(node_id) do
+    put_cache(Map.delete(get_cache(), node_id))
+    :ok
+  end
+
+  defp get_cache, do: :persistent_term.get(@cache_key, %{})
+  defp put_cache(map), do: :persistent_term.put(@cache_key, map)
+
+  defp req_for_ip(ip) do
+    Req.new(base_url: "http://#{ip}:2375/v1.43")
+  end
+
+  defp resolve_ip(node_id) do
+    filters = ~s({"service":["#{@proxy_service_name}"]})
+
+    case Req.get(DockerApi.request(), url: "/tasks", params: [filters: filters]) do
+      {:ok, %Req.Response{status: 200, body: tasks}} when is_list(tasks) ->
+        tasks
+        |> Enum.find(&match_running_on_node?(&1, node_id))
+        |> extract_overlay_ip()
+        |> case do
+          nil ->
+            Logger.warning("ProxyRouter: no proxy task on node #{node_id}")
+            {:error, :no_proxy_on_node}
+
+          ip ->
+            {:ok, ip}
+        end
+
+      {:ok, resp} ->
+        {:error, {:bad_status, resp.status}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp match_running_on_node?(task, node_id) do
+    task["NodeID"] == node_id and
+      get_in(task, ["Status", "State"]) == "running"
+  end
+
+  defp extract_overlay_ip(nil), do: nil
+
+  defp extract_overlay_ip(task) do
+    Enum.find_value(task["NetworksAttachments"] || [], fn att ->
+      case att["Addresses"] do
+        [addr | _] -> addr |> String.split("/") |> List.first()
+        _ -> nil
+      end
+    end)
+  end
+end
