@@ -121,7 +121,7 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
     payload = %{
       "AttachStdout" => false,
       "AttachStderr" => false,
-      "Cmd" => ["test", "-f", "/run/camelot-ready"]
+      "Cmd" => ["test", "-f", "/tmp/camelot-ready"]
     }
 
     with {:ok, %Req.Response{status: 201, body: %{"Id" => exec_id}}} <-
