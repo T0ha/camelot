@@ -8,11 +8,10 @@ release image — they ship separately and are referenced by name from
 ## Layering
 
 ```
-base/                    debian + asdf + git + gh + tini + entrypoint.sh
+base/                    debian + asdf + nodejs (default) + git + gh + tini + entrypoint.sh
  ├─ claude/              + claude-code CLI
  ├─ codex/               + codex CLI
  ├─ elixir/              FROM claude — adds elixir+erlang asdf plugins
- ├─ node/                FROM claude — adds node + common MCPs
  ├─ python/              FROM claude — adds python + uv
  └─ polyglot/            FROM base — everything, big and slow
 ```

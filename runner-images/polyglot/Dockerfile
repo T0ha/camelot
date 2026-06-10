@@ -2,24 +2,16 @@ ARG BASE_IMAGE=ghcr.io/t0ha/camelot-runner-base:latest
 
 FROM ${BASE_IMAGE}
 
-USER root
-
-RUN apt-get update \
- && apt-get install -y --no-install-recommends nodejs npm \
- && rm -rf /var/lib/apt/lists/* \
- && npm install -g @anthropic-ai/claude-code @openai/codex
-
 USER agent
 
+# Node is provided by base via asdf; AI agent CLIs ship as npm packages.
+RUN bash -c "npm install -g @anthropic-ai/claude-code @openai/codex"
+
 # All the common plugins. Versions intentionally NOT pinned globally —
-# each repo's .tool-versions wins.
-RUN bash -lc " \
-      asdf plugin add erlang  https://github.com/asdf-vm/asdf-erlang.git ; \
-      asdf plugin add elixir  https://github.com/asdf-vm/asdf-elixir.git ; \
-      asdf plugin add nodejs  https://github.com/asdf-vm/asdf-nodejs.git ; \
-      asdf plugin add python  https://github.com/danhper/asdf-python.git ; \
-      asdf plugin add ruby    https://github.com/asdf-vm/asdf-ruby.git ; \
-      asdf plugin add golang  https://github.com/asdf-community/asdf-golang.git ; \
-      asdf plugin add rust    https://github.com/code-lever/asdf-rust.git ; \
-      true \
-    "
+# each repo's .tool-versions wins. nodejs plugin is already added by the base image.
+RUN bash -c "asdf plugin add erlang https://github.com/asdf-vm/asdf-erlang.git"
+RUN bash -c "asdf plugin add elixir https://github.com/asdf-vm/asdf-elixir.git"
+RUN bash -c "asdf plugin add python https://github.com/danhper/asdf-python.git"
+RUN bash -c "asdf plugin add ruby https://github.com/asdf-vm/asdf-ruby.git"
+RUN bash -c "asdf plugin add golang https://github.com/asdf-community/asdf-golang.git"
+RUN bash -c "asdf plugin add rust https://github.com/code-lever/asdf-rust.git"

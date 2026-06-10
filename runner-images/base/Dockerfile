@@ -8,6 +8,7 @@ FROM docker.io/debian:${DEBIAN_VERSION}
 ARG TARGETARCH
 ARG ASDF_VERSION=v0.14.1
 ARG GH_VERSION=2.62.0
+ARG NODEJS_VERSION=22.11.0
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -57,6 +58,12 @@ WORKDIR /home/agent
 # asdf
 RUN git clone --depth 1 --branch ${ASDF_VERSION} https://github.com/asdf-vm/asdf.git ${ASDF_DIR}
 RUN echo '. "$HOME/.asdf/asdf.sh"' >> /home/agent/.bashrc
+
+# Node.js — most AI agent CLIs (Claude Code, Codex, gemini-cli, etc.) ship as npm
+# packages, so a baseline node lives here. Repos with .tool-versions override it.
+RUN bash -c "asdf plugin add nodejs https://github.com/asdf-vm/asdf-nodejs.git"
+RUN bash -c "asdf install nodejs ${NODEJS_VERSION}"
+RUN bash -c "asdf global nodejs ${NODEJS_VERSION}"
 
 # Baseline MCP config directory expected by entrypoint
 RUN mkdir -p /home/agent/.config/camelot

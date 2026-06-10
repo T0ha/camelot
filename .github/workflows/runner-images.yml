@@ -90,7 +90,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [elixir, node, python]
+        variant: [elixir, python]
     steps:
       - uses: actions/checkout@v4
 
