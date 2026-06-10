@@ -26,12 +26,18 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
 
   require Logger
 
-  defstruct [:task_id, :service_id, :spec]
+  defstruct task_id: nil,
+            spec: nil,
+            service_id: nil,
+            ensure_task: nil,
+            waiters: []
 
   @type state :: %__MODULE__{
           task_id: String.t(),
+          spec: Spec.t() | nil,
           service_id: String.t() | nil,
-          spec: Spec.t() | nil
+          ensure_task: Elixir.Task.t() | nil,
+          waiters: [GenServer.from()]
         }
 
   # --- Public API ---
@@ -69,11 +75,12 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
 
   @doc """
   Return the Swarm service id. Blocks until the service
-  is created or adopted on init.
+  is created or adopted; the GenServer parks the caller
+  while the async ensure task runs.
   """
   @spec get_service_id(pid()) :: {:ok, String.t()} | {:error, term()}
   def get_service_id(pid) do
-    GenServer.call(pid, :get_service_id, 60_000)
+    GenServer.call(pid, :get_service_id, :infinity)
   end
 
   @doc """
@@ -106,29 +113,25 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
   @impl GenServer
   def init(%Spec{} = spec) do
     state = %__MODULE__{task_id: spec.task_id, spec: spec}
-    {:ok, state, {:continue, :ensure_service}}
+    {:ok, kick_off_ensure(state)}
   end
 
   @impl GenServer
-  def handle_continue(:ensure_service, %__MODULE__{} = state) do
-    case ensure_service(state) do
-      {:ok, service_id} ->
-        {:noreply, %{state | service_id: service_id}}
+  def handle_call(:get_service_id, from, %__MODULE__{service_id: nil} = state) do
+    # Provisioning still in flight — park the caller.
+    {:noreply, %{state | waiters: [from | state.waiters]}}
+  end
 
-      {:error, reason} ->
-        Logger.error("Swarm.TaskService #{state.task_id}: failed to ensure service: #{inspect(reason)}")
+  def handle_call(:get_service_id, from, %__MODULE__{service_id: id} = state) do
+    if service_alive?(id) do
+      {:reply, {:ok, id}, state}
+    else
+      Logger.info("Swarm.TaskService #{state.task_id}: cached service #{id} is gone; recreating")
 
-        {:stop, reason, state}
+      state = kick_off_ensure(%{state | service_id: nil, waiters: [from | state.waiters]})
+
+      {:noreply, state}
     end
-  end
-
-  @impl GenServer
-  def handle_call(:get_service_id, _from, %__MODULE__{service_id: id} = state) when is_binary(id) do
-    {:reply, {:ok, id}, state}
-  end
-
-  def handle_call(:get_service_id, _from, state) do
-    {:reply, {:error, :not_ready}, state}
   end
 
   @impl GenServer
@@ -138,9 +141,41 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
     {:stop, :normal, state}
   end
 
+  @impl GenServer
+  def handle_info({ref, result}, %__MODULE__{ensure_task: %Elixir.Task{ref: ref}} = state) do
+    Process.demonitor(ref, [:flush])
+
+    case result do
+      {:ok, service_id} ->
+        Enum.each(state.waiters, &GenServer.reply(&1, {:ok, service_id}))
+        {:noreply, %{state | service_id: service_id, ensure_task: nil, waiters: []}}
+
+      {:error, reason} ->
+        Enum.each(state.waiters, &GenServer.reply(&1, {:error, reason}))
+        {:stop, reason, %{state | ensure_task: nil, waiters: []}}
+    end
+  end
+
+  def handle_info({:DOWN, ref, :process, _, reason}, %__MODULE__{ensure_task: %Elixir.Task{ref: ref}} = state) do
+    Enum.each(state.waiters, &GenServer.reply(&1, {:error, {:ensure_crashed, reason}}))
+    {:stop, reason, %{state | ensure_task: nil, waiters: []}}
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
+
+  @impl GenServer
+  def format_status(status) do
+    update_in(status.state.spec, &Spec.redact/1)
+  end
+
   # --- Service lifecycle ---
 
-  defp ensure_service(%__MODULE__{task_id: task_id, spec: spec}) do
+  defp kick_off_ensure(%__MODULE__{task_id: task_id, spec: spec} = state) do
+    task = Elixir.Task.async(fn -> ensure_service(task_id, spec) end)
+    %{state | ensure_task: task}
+  end
+
+  defp ensure_service(task_id, spec) do
     case load_task_handle(task_id) do
       {:ok, nil} ->
         create_and_persist(task_id, spec)

@@ -17,12 +17,18 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
 
   require Logger
 
-  defstruct [:task_id, :container_id, :spec]
+  defstruct task_id: nil,
+            spec: nil,
+            container_id: nil,
+            ensure_task: nil,
+            waiters: []
 
   @type state :: %__MODULE__{
           task_id: String.t(),
+          spec: Spec.t() | nil,
           container_id: String.t() | nil,
-          spec: Spec.t() | nil
+          ensure_task: Elixir.Task.t() | nil,
+          waiters: [GenServer.from()]
         }
 
   # --- Public API ---
@@ -50,9 +56,14 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
     end
   end
 
+  # No timeout — pulls and recreates may legitimately take many
+  # minutes for large images. The GenServer parks callers in
+  # `state.waiters` while an async ensure task runs in the
+  # background, so this call only blocks for as long as the
+  # actual container provisioning takes.
   @spec get_container_id(pid()) :: {:ok, String.t()} | {:error, term()}
   def get_container_id(pid) do
-    GenServer.call(pid, :get_container_id, 60_000)
+    GenServer.call(pid, :get_container_id, :infinity)
   end
 
   @spec stop_task(String.t()) :: :ok
@@ -81,29 +92,28 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
   @impl GenServer
   def init(%Spec{} = spec) do
     state = %__MODULE__{task_id: spec.task_id, spec: spec}
-    {:ok, state, {:continue, :ensure_container}}
+    {:ok, kick_off_ensure(state)}
   end
 
   @impl GenServer
-  def handle_continue(:ensure_container, %__MODULE__{} = state) do
-    case ensure_container(state) do
-      {:ok, container_id} ->
-        {:noreply, %{state | container_id: container_id}}
+  def handle_call(:get_container_id, from, %__MODULE__{container_id: nil} = state) do
+    # Provisioning still in flight — park the caller.
+    {:noreply, %{state | waiters: [from | state.waiters]}}
+  end
 
-      {:error, reason} ->
-        Logger.error("DockerEngine.TaskContainer #{state.task_id}: ensure failed: #{inspect(reason)}")
+  def handle_call(:get_container_id, from, %__MODULE__{container_id: id} = state) do
+    if container_alive?(id) do
+      {:reply, {:ok, id}, state}
+    else
+      Logger.info(
+        "DockerEngine.TaskContainer #{state.task_id}: cached container #{id} " <>
+          "is gone; recreating"
+      )
 
-        {:stop, reason, state}
+      state = kick_off_ensure(%{state | container_id: nil, waiters: [from | state.waiters]})
+
+      {:noreply, state}
     end
-  end
-
-  @impl GenServer
-  def handle_call(:get_container_id, _from, %__MODULE__{container_id: id} = state) when is_binary(id) do
-    {:reply, {:ok, id}, state}
-  end
-
-  def handle_call(:get_container_id, _from, state) do
-    {:reply, {:error, :not_ready}, state}
   end
 
   @impl GenServer
@@ -113,9 +123,53 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
     {:stop, :normal, state}
   end
 
+  # Ensure-task finished. Reply to every parked caller with the
+  # result and update state. Errors stop the GenServer so the
+  # parked callers also surface the failure (via :infinity call
+  # → {:noproc, …}).
+  @impl GenServer
+  def handle_info({ref, result}, %__MODULE__{ensure_task: %Elixir.Task{ref: ref}} = state) do
+    Process.demonitor(ref, [:flush])
+
+    case result do
+      {:ok, container_id} ->
+        Enum.each(state.waiters, &GenServer.reply(&1, {:ok, container_id}))
+        {:noreply, %{state | container_id: container_id, ensure_task: nil, waiters: []}}
+
+      {:error, reason} ->
+        Enum.each(state.waiters, &GenServer.reply(&1, {:error, reason}))
+        {:stop, reason, %{state | ensure_task: nil, waiters: []}}
+    end
+  end
+
+  # Ensure-task crashed unexpectedly. Surface to waiters and stop.
+  def handle_info({:DOWN, ref, :process, _, reason}, %__MODULE__{ensure_task: %Elixir.Task{ref: ref}} = state) do
+    Enum.each(state.waiters, &GenServer.reply(&1, {:error, {:ensure_crashed, reason}}))
+    {:stop, reason, %{state | ensure_task: nil, waiters: []}}
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
+
+  # Redact secret values from the state dumped by GenServer
+  # crash logs. The Spec's `secrets` list otherwise gets
+  # inspect()'d verbatim — including API keys.
+  @impl GenServer
+  def format_status(status) do
+    update_in(status.state.spec, &Spec.redact/1)
+  end
+
   # --- Container lifecycle ---
 
-  defp ensure_container(%__MODULE__{task_id: task_id, spec: spec}) do
+  # Run the slow container-provisioning work (DB load, image pull,
+  # /containers/create, /containers/<id>/start) in a linked Task so
+  # the GenServer's mailbox stays responsive. The result lands as
+  # `{ref, {:ok, container_id} | {:error, reason}}` in handle_info/2.
+  defp kick_off_ensure(%__MODULE__{task_id: task_id, spec: spec} = state) do
+    task = Elixir.Task.async(fn -> ensure_container(task_id, spec) end)
+    %{state | ensure_task: task}
+  end
+
+  defp ensure_container(task_id, spec) do
     case load_task_handle(task_id) do
       {:ok, nil} ->
         create_and_persist(task_id, spec)
@@ -124,7 +178,10 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
         if container_alive?(handle) do
           {:ok, handle}
         else
-          Logger.info("DockerEngine.TaskContainer #{task_id}: stored container #{handle} is gone; recreating")
+          Logger.info(
+            "DockerEngine.TaskContainer #{task_id}: stored container #{handle} " <>
+              "is gone; recreating"
+          )
 
           create_and_persist(task_id, spec)
         end
@@ -150,6 +207,23 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
   end
 
   defp create_container(task_id, %Spec{} = spec) do
+    case do_create_container(task_id, spec) do
+      {:error, {:create_failed, 404, %{"message" => "No such image:" <> _}}} ->
+        Logger.info(
+          "DockerEngine.TaskContainer #{task_id}: image #{inspect(spec.image)} " <>
+            "not present locally; pulling"
+        )
+
+        with :ok <- pull_image(spec.image) do
+          do_create_container(task_id, spec)
+        end
+
+      other ->
+        other
+    end
+  end
+
+  defp do_create_container(task_id, %Spec{} = spec) do
     name = Spec.task_runner_name(task_id)
     payload = container_create_payload(spec)
 
@@ -163,6 +237,31 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
 
       {:ok, resp} ->
         {:error, {:create_failed, resp.status, resp.body}}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp pull_image(nil), do: {:error, :no_image_to_pull}
+
+  defp pull_image(ref) do
+    # The Docker pull endpoint streams a JSON-lines progress body
+    # and only returns 200 OK once the pull is fully complete. We
+    # drain (and ignore) the body so we know when to retry create.
+    # `fromImage` accepts the full reference including tag/digest
+    # (e.g. `ghcr.io/org/name:tag`), so no need to split it.
+    case Req.post(DockerApi.request(),
+           url: "/images/create",
+           params: [fromImage: ref],
+           receive_timeout: :infinity,
+           into: fn {:data, _chunk}, acc -> {:cont, acc} end
+         ) do
+      {:ok, %Req.Response{status: status}} when status in 200..299 ->
+        :ok
+
+      {:ok, resp} ->
+        {:error, {:pull_failed, resp.status, resp.body}}
 
       {:error, _} = err ->
         err
@@ -244,6 +343,13 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
     extras = bootstrap_env(spec) ++ repo_env(spec) ++ mcp_env(spec)
 
     base ++ secret_env ++ extras
+  end
+
+  # `sk-ant-oat*` is an OAuth access token. Anthropic returns 401
+  # if it's sent on the `x-api-key` header (ANTHROPIC_API_KEY). Claude
+  # CLI reads it from CLAUDE_CODE_OAUTH_TOKEN and uses Bearer auth.
+  defp secret_to_env(%{kind: :claude_api_key, value: "sk-ant-oat" <> _ = v}) do
+    ["CLAUDE_CODE_OAUTH_TOKEN=#{v}"]
   end
 
   defp secret_to_env(%{kind: :claude_api_key, value: v}), do: ["ANTHROPIC_API_KEY=#{v}"]

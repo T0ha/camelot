@@ -18,8 +18,12 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
 
   require Logger
 
+  # Polling intervals only — no wall-clock deadlines. Container
+  # setup (pull, clone, asdf install) and agent runtime can each
+  # legitimately take many minutes; bounding either with a timeout
+  # would just convert a slow-but-correct dispatch into a spurious
+  # failure. Real upstream failures break the loop via {:error, _}.
   @ready_poll_ms 500
-  @ready_timeout_ms 60_000
   @exit_poll_ms 1_000
 
   defstruct [
@@ -68,6 +72,11 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
   def handle_cast(:stop, state), do: {:stop, :normal, state}
 
   @impl GenServer
+  def format_status(status) do
+    update_in(status.state.spec, &Spec.redact/1)
+  end
+
+  @impl GenServer
   def handle_info({:chunk, bytes}, %__MODULE__{} = state) do
     send(state.owner, {:runner_data, self(), bytes})
     {:noreply, state}
@@ -95,22 +104,13 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
   end
 
   defp wait_for_ready(container_id) do
-    deadline = System.monotonic_time(:millisecond) + @ready_timeout_ms
-    do_wait_for_ready(container_id, deadline)
-  end
-
-  defp do_wait_for_ready(container_id, deadline) do
     case ready_check(container_id) do
       :ok ->
         :ok
 
       :not_ready ->
-        if System.monotonic_time(:millisecond) > deadline do
-          {:error, :ready_timeout}
-        else
-          Process.sleep(@ready_poll_ms)
-          do_wait_for_ready(container_id, deadline)
-        end
+        Process.sleep(@ready_poll_ms)
+        wait_for_ready(container_id)
 
       {:error, _} = err ->
         err
@@ -121,7 +121,7 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
     payload = %{
       "AttachStdout" => false,
       "AttachStderr" => false,
-      "Cmd" => ["test", "-f", "/run/camelot-ready"]
+      "Cmd" => ["test", "-f", "/tmp/camelot-ready"]
     }
 
     with {:ok, %Req.Response{status: 201, body: %{"Id" => exec_id}}} <-
@@ -166,10 +166,47 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
     end
   end
 
-  defp session_env(%Spec{mcp_config_json: nil}), do: nil
+  # Build the per-exec `Env` array. Always re-materialises secrets
+  # from the current Spec so a credential rotation in the UI takes
+  # effect on the next session without rebuilding the container.
+  # The exec-wrapper treats /tmp/camelot.env as a fallback only;
+  # these values override anything baked in at container start.
+  defp session_env(%Spec{} = spec) do
+    secret_env(spec) ++ mcp_env(spec)
+  end
 
-  defp session_env(%Spec{mcp_config_json: json}) do
-    ["PROJECT_MCP_CONFIG_JSON=#{json}"]
+  defp secret_env(%Spec{secrets: secrets}) do
+    Enum.flat_map(secrets, &secret_to_env/1)
+  end
+
+  defp mcp_env(%Spec{mcp_config_json: nil}), do: []
+  defp mcp_env(%Spec{mcp_config_json: json}), do: ["PROJECT_MCP_CONFIG_JSON=#{json}"]
+
+  # Mirror runner-images/base/entrypoint.sh#materialise_one — an
+  # `sk-ant-oat*` value is an OAuth access token that Claude reads
+  # from CLAUDE_CODE_OAUTH_TOKEN (sending it on x-api-key would 401).
+  # Everything else is a plain API key.
+  # When the OAuth path is in play, also explicitly clear
+  # ANTHROPIC_API_KEY in the exec env so that any stale value
+  # baked into the container (e.g. from a previous credential or
+  # the old TaskContainer mapping) can't beat us. claude treats
+  # an empty value as unset and falls back to CLAUDE_CODE_OAUTH_TOKEN.
+  defp secret_to_env(%{kind: :claude_api_key, value: "sk-ant-oat" <> _ = v}) do
+    ["CLAUDE_CODE_OAUTH_TOKEN=#{v}", "ANTHROPIC_API_KEY="]
+  end
+
+  defp secret_to_env(%{kind: :claude_api_key, value: v}) do
+    ["ANTHROPIC_API_KEY=#{v}", "CLAUDE_CODE_OAUTH_TOKEN="]
+  end
+
+  defp secret_to_env(%{kind: :openai_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]
+  defp secret_to_env(%{kind: :codex_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]
+
+  defp secret_to_env(%{kind: kind, value: v}) when kind in [:github_pat, :github_oauth],
+    do: ["GH_TOKEN=#{v}", "GITHUB_TOKEN=#{v}"]
+
+  defp secret_to_env(%{kind: kind, value: v}) do
+    ["CAMELOT_SECRET_#{String.upcase(Atom.to_string(kind))}=#{v}"]
   end
 
   defp kick_off_streams(%__MODULE__{} = state) do
@@ -209,14 +246,16 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
     Process.put(:de_demux_buf, rest)
   end
 
+  # An exec inspect returns `Running: false, ExitCode: nil` between
+  # `POST /containers/<id>/exec` (which creates the exec) and
+  # `POST /exec/<id>/start` (which actually starts it). Treat that
+  # pre-start state the same as "still running" — only ExitCode as
+  # an integer means the process has actually exited.
   defp poll_exec_exit(exec_id, parent) do
     case Req.get(DockerApi.request(), url: "/exec/#{exec_id}/json") do
       {:ok, %Req.Response{status: 200, body: %{"Running" => false, "ExitCode" => code}}}
       when is_integer(code) ->
         send(parent, {:exit_code, code})
-
-      {:ok, %Req.Response{status: 200, body: %{"Running" => false}}} ->
-        send(parent, {:exit_code, 1})
 
       _ ->
         Process.sleep(@exit_poll_ms)

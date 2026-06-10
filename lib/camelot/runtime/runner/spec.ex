@@ -70,4 +70,17 @@ defmodule Camelot.Runtime.Runner.Spec do
   """
   @spec task_runner_name(String.t()) :: String.t()
   def task_runner_name(task_id), do: "camelot-task-#{task_id}"
+
+  @doc """
+  Returns a copy of the spec with secret values replaced
+  by `:redacted`. Used by `format_status/1` in runner
+  GenServers so a crash log doesn't leak API tokens via
+  the state dump.
+  """
+  @spec redact(t()) :: t()
+  def redact(%__MODULE__{} = spec) do
+    %{spec | secrets: Enum.map(spec.secrets, &Map.put(&1, :value, :redacted))}
+  end
+
+  def redact(other), do: other
 end
