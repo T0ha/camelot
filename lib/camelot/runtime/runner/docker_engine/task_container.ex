@@ -50,9 +50,15 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
     end
   end
 
+  # First-call timeout has to cover an image pull plus the
+  # subsequent /containers/create — multi-hundred-MB layers can
+  # take several minutes on a slow link. Matches the
+  # `receive_timeout` set on the pull request itself.
+  @get_container_id_timeout 600_000
+
   @spec get_container_id(pid()) :: {:ok, String.t()} | {:error, term()}
   def get_container_id(pid) do
-    GenServer.call(pid, :get_container_id, 60_000)
+    GenServer.call(pid, :get_container_id, @get_container_id_timeout)
   end
 
   @spec stop_task(String.t()) :: :ok

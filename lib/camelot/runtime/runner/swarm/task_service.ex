@@ -67,13 +67,20 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
     end
   end
 
+  # Match the DockerEngine path: first call has to cover the
+  # full service-create roundtrip and any cluster-level setup
+  # latency. Swarm doesn't block on image pulls here (workers
+  # pull on schedule), but we keep the same generous ceiling
+  # to stay symmetric and survive transient slow managers.
+  @get_service_id_timeout 600_000
+
   @doc """
   Return the Swarm service id. Blocks until the service
   is created or adopted on init.
   """
   @spec get_service_id(pid()) :: {:ok, String.t()} | {:error, term()}
   def get_service_id(pid) do
-    GenServer.call(pid, :get_service_id, 60_000)
+    GenServer.call(pid, :get_service_id, @get_service_id_timeout)
   end
 
   @doc """
