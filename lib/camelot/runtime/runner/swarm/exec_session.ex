@@ -234,10 +234,36 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
     end
   end
 
-  defp session_env(%Spec{mcp_config_json: nil}), do: nil
+  # Build the per-exec `Env` array. Re-materialises secrets from
+  # the current Spec on every exec so a credential rotation in the
+  # UI takes effect on the next session without rebuilding the
+  # Swarm service. The exec-wrapper treats /tmp/camelot.env as a
+  # fallback only; these values override anything mounted from
+  # /run/secrets/ at container-start time.
+  defp session_env(%Spec{} = spec) do
+    secret_env(spec) ++ mcp_env(spec)
+  end
 
-  defp session_env(%Spec{mcp_config_json: json}) do
-    ["PROJECT_MCP_CONFIG_JSON=#{json}"]
+  defp secret_env(%Spec{secrets: secrets}) do
+    Enum.flat_map(secrets, &secret_to_env/1)
+  end
+
+  defp mcp_env(%Spec{mcp_config_json: nil}), do: []
+  defp mcp_env(%Spec{mcp_config_json: json}), do: ["PROJECT_MCP_CONFIG_JSON=#{json}"]
+
+  defp secret_to_env(%{kind: :claude_api_key, value: "sk-ant-oat" <> _ = v}) do
+    ["CLAUDE_CODE_OAUTH_TOKEN=#{v}"]
+  end
+
+  defp secret_to_env(%{kind: :claude_api_key, value: v}), do: ["ANTHROPIC_API_KEY=#{v}"]
+  defp secret_to_env(%{kind: :openai_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]
+  defp secret_to_env(%{kind: :codex_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]
+
+  defp secret_to_env(%{kind: kind, value: v}) when kind in [:github_pat, :github_oauth],
+    do: ["GH_TOKEN=#{v}", "GITHUB_TOKEN=#{v}"]
+
+  defp secret_to_env(%{kind: kind, value: v}) do
+    ["CAMELOT_SECRET_#{String.upcase(Atom.to_string(kind))}=#{v}"]
   end
 
   defp kick_off_streams(%__MODULE__{} = state) do
@@ -281,14 +307,16 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
     Process.put(:swarm_demux_buf, rest)
   end
 
+  # An exec inspect returns `Running: false, ExitCode: nil` between
+  # `POST /containers/<id>/exec` (which creates the exec) and
+  # `POST /exec/<id>/start` (which actually starts it). Treat that
+  # pre-start state the same as "still running" — only ExitCode as
+  # an integer means the process has actually exited.
   defp poll_exec_exit(node_req, exec_id, parent) do
     case Req.get(node_req, url: "/exec/#{exec_id}/json") do
       {:ok, %Req.Response{status: 200, body: %{"Running" => false, "ExitCode" => code}}}
       when is_integer(code) ->
         send(parent, {:exit_code, code})
-
-      {:ok, %Req.Response{status: 200, body: %{"Running" => false}}} ->
-        send(parent, {:exit_code, 1})
 
       _ ->
         Process.sleep(@exit_poll_ms)
