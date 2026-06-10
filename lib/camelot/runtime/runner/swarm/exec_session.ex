@@ -251,11 +251,17 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   defp mcp_env(%Spec{mcp_config_json: nil}), do: []
   defp mcp_env(%Spec{mcp_config_json: json}), do: ["PROJECT_MCP_CONFIG_JSON=#{json}"]
 
+  # Mirror DockerEngine — also clear the opposite var so a stale
+  # value baked into the container at boot can't beat the per-exec
+  # injection. Empty value is treated as unset by claude.
   defp secret_to_env(%{kind: :claude_api_key, value: "sk-ant-oat" <> _ = v}) do
-    ["CLAUDE_CODE_OAUTH_TOKEN=#{v}"]
+    ["CLAUDE_CODE_OAUTH_TOKEN=#{v}", "ANTHROPIC_API_KEY="]
   end
 
-  defp secret_to_env(%{kind: :claude_api_key, value: v}), do: ["ANTHROPIC_API_KEY=#{v}"]
+  defp secret_to_env(%{kind: :claude_api_key, value: v}) do
+    ["ANTHROPIC_API_KEY=#{v}", "CLAUDE_CODE_OAUTH_TOKEN="]
+  end
+
   defp secret_to_env(%{kind: :openai_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]
   defp secret_to_env(%{kind: :codex_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]
 

@@ -345,6 +345,13 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
     base ++ secret_env ++ extras
   end
 
+  # `sk-ant-oat*` is an OAuth access token. Anthropic returns 401
+  # if it's sent on the `x-api-key` header (ANTHROPIC_API_KEY). Claude
+  # CLI reads it from CLAUDE_CODE_OAUTH_TOKEN and uses Bearer auth.
+  defp secret_to_env(%{kind: :claude_api_key, value: "sk-ant-oat" <> _ = v}) do
+    ["CLAUDE_CODE_OAUTH_TOKEN=#{v}"]
+  end
+
   defp secret_to_env(%{kind: :claude_api_key, value: v}), do: ["ANTHROPIC_API_KEY=#{v}"]
   defp secret_to_env(%{kind: :openai_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]
   defp secret_to_env(%{kind: :codex_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]

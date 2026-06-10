@@ -186,11 +186,19 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
   # `sk-ant-oat*` value is an OAuth access token that Claude reads
   # from CLAUDE_CODE_OAUTH_TOKEN (sending it on x-api-key would 401).
   # Everything else is a plain API key.
+  # When the OAuth path is in play, also explicitly clear
+  # ANTHROPIC_API_KEY in the exec env so that any stale value
+  # baked into the container (e.g. from a previous credential or
+  # the old TaskContainer mapping) can't beat us. claude treats
+  # an empty value as unset and falls back to CLAUDE_CODE_OAUTH_TOKEN.
   defp secret_to_env(%{kind: :claude_api_key, value: "sk-ant-oat" <> _ = v}) do
-    ["CLAUDE_CODE_OAUTH_TOKEN=#{v}"]
+    ["CLAUDE_CODE_OAUTH_TOKEN=#{v}", "ANTHROPIC_API_KEY="]
   end
 
-  defp secret_to_env(%{kind: :claude_api_key, value: v}), do: ["ANTHROPIC_API_KEY=#{v}"]
+  defp secret_to_env(%{kind: :claude_api_key, value: v}) do
+    ["ANTHROPIC_API_KEY=#{v}", "CLAUDE_CODE_OAUTH_TOKEN="]
+  end
+
   defp secret_to_env(%{kind: :openai_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]
   defp secret_to_env(%{kind: :codex_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]
 
