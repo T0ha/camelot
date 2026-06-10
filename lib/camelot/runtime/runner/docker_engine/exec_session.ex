@@ -18,8 +18,12 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
 
   require Logger
 
+  # Polling intervals only — no wall-clock deadlines. Container
+  # setup (pull, clone, asdf install) and agent runtime can each
+  # legitimately take many minutes; bounding either with a timeout
+  # would just convert a slow-but-correct dispatch into a spurious
+  # failure. Real upstream failures break the loop via {:error, _}.
   @ready_poll_ms 500
-  @ready_timeout_ms 60_000
   @exit_poll_ms 1_000
 
   defstruct [
@@ -100,22 +104,13 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
   end
 
   defp wait_for_ready(container_id) do
-    deadline = System.monotonic_time(:millisecond) + @ready_timeout_ms
-    do_wait_for_ready(container_id, deadline)
-  end
-
-  defp do_wait_for_ready(container_id, deadline) do
     case ready_check(container_id) do
       :ok ->
         :ok
 
       :not_ready ->
-        if System.monotonic_time(:millisecond) > deadline do
-          {:error, :ready_timeout}
-        else
-          Process.sleep(@ready_poll_ms)
-          do_wait_for_ready(container_id, deadline)
-        end
+        Process.sleep(@ready_poll_ms)
+        wait_for_ready(container_id)
 
       {:error, _} = err ->
         err
