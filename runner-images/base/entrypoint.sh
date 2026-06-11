@@ -165,8 +165,18 @@ mark_ready() {
   touch "$CAMELOT_READY_FILE"
 }
 
+# Seed $HOME files that would otherwise be hidden by the per-task profile
+# volume mounted at /home/agent. The image bakes immutable defaults under
+# /opt; this seeds the mutable per-user view on first boot.
+seed_home() {
+  if [ ! -f "$HOME/.tool-versions" ] && [ -f /opt/asdf/default-tool-versions ]; then
+    cp /opt/asdf/default-tool-versions "$HOME/.tool-versions"
+  fi
+}
+
 main() {
-  source "$HOME/.asdf/asdf.sh" 2>/dev/null || true
+  source "${ASDF_DIR:-/opt/asdf}/asdf.sh" 2>/dev/null || true
+  seed_home
 
   # Truncate any stale env from a previous container lifecycle (only
   # relevant if /tmp is somehow persisted; defensive).

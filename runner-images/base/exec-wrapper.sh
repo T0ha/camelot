@@ -26,9 +26,9 @@ fi
 
 # Ensure asdf shims are on PATH so `claude`, `codex`, etc. resolve
 # the same way they would inside an interactive shell.
-if [ -f "$HOME/.asdf/asdf.sh" ]; then
+if [ -f "${ASDF_DIR:-/opt/asdf}/asdf.sh" ]; then
   # shellcheck disable=SC1091
-  . "$HOME/.asdf/asdf.sh"
+  . "${ASDF_DIR:-/opt/asdf}/asdf.sh"
 fi
 
 cd /workspace 2>/dev/null || true

@@ -10,12 +10,19 @@ ARG ASDF_VERSION=v0.14.1
 ARG GH_VERSION=2.62.0
 ARG NODEJS_VERSION=22.11.0
 
+# asdf and npm caches live under /opt — the per-task profile volume is
+# mounted at /home/agent and would shadow anything baked under $HOME.
+# /opt/agent-cli is ahead of /opt/asdf/shims so the agent-CLI wrappers
+# (claude, codex, ...) take precedence over any version-bound asdf shim
+# created by `npm install -g` — keeping them reachable when a repo's
+# .tool-versions selects a different nodejs.
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     HOME=/home/agent \
-    ASDF_DIR=/home/agent/.asdf \
-    ASDF_DATA_DIR=/home/agent/.asdf \
-    PATH=/home/agent/.asdf/shims:/home/agent/.asdf/bin:/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    ASDF_DIR=/opt/asdf \
+    ASDF_DATA_DIR=/opt/asdf \
+    npm_config_cache=/opt/npm-cache \
+    PATH=/opt/agent-cli/bin:/opt/asdf/shims:/opt/asdf/bin:/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -47,23 +54,30 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
  && dpkg -i /tmp/gh.deb \
  && rm /tmp/gh.deb
 
-# Non-root user for the agent runtime
+# Non-root user for the agent runtime. /opt/asdf, /opt/npm-cache and
+# /opt/agent-cli are pre-owned by agent so plugin/version/global-npm
+# installs work without sudo.
 RUN useradd --create-home --shell /bin/bash --uid 1000 agent \
- && mkdir -p /workspace \
- && chown -R agent:agent /workspace /home/agent
+ && mkdir -p /workspace /opt/asdf /opt/npm-cache /opt/agent-cli \
+ && chown -R agent:agent /workspace /home/agent /opt/asdf /opt/npm-cache /opt/agent-cli
 
 USER agent
 WORKDIR /home/agent
 
-# asdf
+# asdf installs into /opt/asdf — outside the /home/agent cache volume.
 RUN git clone --depth 1 --branch ${ASDF_VERSION} https://github.com/asdf-vm/asdf.git ${ASDF_DIR}
-RUN echo '. "$HOME/.asdf/asdf.sh"' >> /home/agent/.bashrc
 
 # Node.js — most AI agent CLIs (Claude Code, Codex, gemini-cli, etc.) ship as npm
 # packages, so a baseline node lives here. Repos with .tool-versions override it.
 RUN bash -c "asdf plugin add nodejs https://github.com/asdf-vm/asdf-nodejs.git"
 RUN bash -c "asdf install nodejs ${NODEJS_VERSION}"
-RUN bash -c "asdf global nodejs ${NODEJS_VERSION}"
+# /opt/asdf/default-tool-versions is the single source of truth for the
+# image's default versions. It survives the profile volume and is copied
+# into $HOME/.tool-versions both at image build time (so downstream RUN
+# steps resolve the asdf shims) and at runtime by the entrypoint (when
+# the cache volume is empty). Derived images append to it.
+RUN bash -c "echo 'nodejs ${NODEJS_VERSION}' > /opt/asdf/default-tool-versions \
+          && cp /opt/asdf/default-tool-versions \$HOME/.tool-versions"
 
 # Baseline MCP config directory expected by entrypoint
 RUN mkdir -p /home/agent/.config/camelot
