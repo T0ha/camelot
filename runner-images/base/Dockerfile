@@ -12,13 +12,17 @@ ARG NODEJS_VERSION=22.11.0
 
 # asdf and npm caches live under /opt — the per-task profile volume is
 # mounted at /home/agent and would shadow anything baked under $HOME.
+# /opt/agent-cli is ahead of /opt/asdf/shims so the agent-CLI wrappers
+# (claude, codex, ...) take precedence over any version-bound asdf shim
+# created by `npm install -g` — keeping them reachable when a repo's
+# .tool-versions selects a different nodejs.
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     HOME=/home/agent \
     ASDF_DIR=/opt/asdf \
     ASDF_DATA_DIR=/opt/asdf \
     npm_config_cache=/opt/npm-cache \
-    PATH=/opt/asdf/shims:/opt/asdf/bin:/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    PATH=/opt/agent-cli/bin:/opt/asdf/shims:/opt/asdf/bin:/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -50,11 +54,12 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
  && dpkg -i /tmp/gh.deb \
  && rm /tmp/gh.deb
 
-# Non-root user for the agent runtime. /opt/asdf and /opt/npm-cache are
-# pre-owned by agent so plugin/version installs work without sudo.
+# Non-root user for the agent runtime. /opt/asdf, /opt/npm-cache and
+# /opt/agent-cli are pre-owned by agent so plugin/version/global-npm
+# installs work without sudo.
 RUN useradd --create-home --shell /bin/bash --uid 1000 agent \
- && mkdir -p /workspace /opt/asdf /opt/npm-cache \
- && chown -R agent:agent /workspace /home/agent /opt/asdf /opt/npm-cache
+ && mkdir -p /workspace /opt/asdf /opt/npm-cache /opt/agent-cli \
+ && chown -R agent:agent /workspace /home/agent /opt/asdf /opt/npm-cache /opt/agent-cli
 
 USER agent
 WORKDIR /home/agent

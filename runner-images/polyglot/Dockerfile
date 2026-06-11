@@ -4,8 +4,13 @@ FROM ${BASE_IMAGE}
 
 USER agent
 
-# Node is provided by base via asdf; AI agent CLIs ship as npm packages.
-RUN bash -c "npm install -g @anthropic-ai/claude-code @openai/codex"
+# AI agent CLIs ship as npm packages. See claude/Dockerfile for why we
+# install under /opt/agent-cli and pin shebangs to the baseline node.
+RUN bash -c "npm install --prefix /opt/agent-cli -g @anthropic-ai/claude-code @openai/codex \
+          && node_ver=\$(awk '/^nodejs/ {print \$2}' /opt/asdf/default-tool-versions) \
+          && sed -i \"1s|^#!.*|#!/opt/asdf/installs/nodejs/\${node_ver}/bin/node|\" \
+                  \$(readlink -f /opt/agent-cli/bin/claude) \
+                  \$(readlink -f /opt/agent-cli/bin/codex)"
 
 # All the common plugins. Versions intentionally NOT pinned globally —
 # each repo's .tool-versions wins. nodejs plugin is already added by the base image.
