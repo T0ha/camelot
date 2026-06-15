@@ -17,7 +17,8 @@ defmodule CamelotWeb do
   those modules here.
   """
 
-  def static_paths, do: ~w(assets fonts images favicon.ico robots.txt)
+  def static_paths,
+    do: ~w(assets fonts images favicon.ico favicon.svg apple-touch-icon.png favicon-192.png favicon-512.png robots.txt)
 
   def router do
     quote do

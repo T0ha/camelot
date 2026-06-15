@@ -7,6 +7,14 @@
     <.live_title default="Camelot" suffix=" · Phoenix Framework">
       {assigns[:page_title]}
     </.live_title>
+    <link rel="icon" type="image/svg+xml" href={~p"/favicon.svg"} phx-track-static />
+    <link rel="icon" type="image/x-icon" sizes="any" href={~p"/favicon.ico"} phx-track-static />
+    <link
+      rel="apple-touch-icon"
+      sizes="180x180"
+      href={~p"/apple-touch-icon.png"}
+      phx-track-static
+    />
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
     </script>

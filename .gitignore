@@ -1,5 +1,5 @@
 # The directory Mix will write compiled artifacts to.
-/_build/
+_build
 
 # If you run "mix test --cover", coverage assets end up here.
 /cover/
@@ -35,4 +35,5 @@ camelot-*.tar
 npm-debug.log
 /assets/node_modules/
 
-/.envrc
+.envrc
+.DS_Store
