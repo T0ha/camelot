@@ -102,6 +102,25 @@ Key environment variables (see `config/runtime.exs` for full details):
 | `PHX_HOST` | Application hostname | Production |
 | `PORT` | HTTP port (default: 4000) | No |
 | `POOL_SIZE` | Database pool size (default: 10) | No |
+| `REGISTRATION_ENABLED` | When `false`, new sign-ups are blocked; existing users can still sign in (default: `true`) | No |
+
+### Bootstrapping users
+
+When `REGISTRATION_ENABLED=false` (cloud beta mode), the sign-in screen rejects unknown emails. Use the mix task to add users — the first invocation creates an admin who can then add more users from `/admin/users`:
+
+```sh
+# First admin (bootstrap)
+mix camelot.create_user me@example.com
+
+# Subsequent users
+mix camelot.create_user teammate@example.com --role user
+```
+
+Inside a release:
+
+```sh
+bin/camelot eval 'Mix.Tasks.Camelot.CreateUser.run(["me@example.com"])'
+```
 
 ## Architecture
 

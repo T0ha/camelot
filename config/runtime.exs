@@ -24,6 +24,12 @@ end
 
 config :camelot, CamelotWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+# Invite-only mode. When false, /sign-in rejects unknown emails; existing
+# users can still receive magic links. Defaults to open so self-hosted
+# installs work out of the box.
+config :camelot,
+  registration_enabled: System.get_env("REGISTRATION_ENABLED", "true") in ~w(true 1)
+
 # Runner backend is overridable in every env via the RUNNER_BACKEND env
 # var. Default differs by env: prod = swarm, dev/test = local.
 if backend_env = System.get_env("RUNNER_BACKEND") do

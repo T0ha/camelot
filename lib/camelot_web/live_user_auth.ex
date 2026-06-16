@@ -25,4 +25,23 @@ defmodule CamelotWeb.LiveUserAuth do
   def on_mount(:live_user_optional, _params, _session, socket) do
     {:cont, assign_new(socket, :current_user, fn -> nil end)}
   end
+
+  def on_mount(:live_admin_required, _params, _session, socket) do
+    case socket.assigns[:current_user] do
+      %{role: :admin} ->
+        {:cont, socket}
+
+      %{} ->
+        {:halt,
+         socket
+         |> put_flash(:error, "You don't have access to this area.")
+         |> redirect(to: ~p"/")}
+
+      _ ->
+        {:halt,
+         socket
+         |> put_flash(:error, "You must sign in first")
+         |> redirect(to: ~p"/sign-in")}
+    end
+  end
 end

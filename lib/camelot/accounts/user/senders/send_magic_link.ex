@@ -2,10 +2,20 @@ defmodule Camelot.Accounts.User.Senders.SendMagicLink do
   @moduledoc """
   Sends a magic link sign-in email via Swoosh.
   In dev mode, viewable at /dev/mailbox.
+
+  When `:registration_enabled` is `false`, requests for unknown
+  identities (binary email, not a loaded `User` struct) are silently
+  dropped — no email is sent. Existing users always receive sign-in
+  links so they can log in.
+
+  This is the canonical invite-only gate. It catches both the LiveView
+  `phx-submit` path (which never hits HTTP) and the HTTP POST path.
   """
   use AshAuthentication.Sender
 
   import Swoosh.Email
+
+  require Logger
 
   @impl true
   @spec send(
@@ -13,7 +23,24 @@ defmodule Camelot.Accounts.User.Senders.SendMagicLink do
           String.t(),
           keyword()
         ) :: :ok
-  def send(user_or_email, token, _opts) do
+  def send(user_or_email, token, opts) do
+    if blocked_registration?(user_or_email) do
+      Logger.info(fn ->
+        "Skipped magic link to #{user_or_email}: registration disabled"
+      end)
+
+      :ok
+    else
+      deliver(user_or_email, token, opts)
+    end
+  end
+
+  defp blocked_registration?(identity) when is_binary(identity),
+    do: not Application.get_env(:camelot, :registration_enabled, true)
+
+  defp blocked_registration?(_user_struct), do: false
+
+  defp deliver(user_or_email, token, _opts) do
     email = extract_email(user_or_email)
     url = magic_link_url(token)
 
