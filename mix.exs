@@ -44,6 +44,7 @@ defmodule Camelot.MixProject do
     [
       {:tidewave, "~> 0.5", only: [:dev]},
       {:ash, "~> 3.0"},
+      {:simple_sat, "~> 0.1"},
       {:ash_postgres, "~> 2.0"},
       {:ash_authentication, "~> 4.0"},
       {:ash_authentication_phoenix, "~> 2.0"},

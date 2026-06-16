@@ -20,8 +20,12 @@ defmodule CamelotWeb.Router do
     plug :load_from_bearer
   end
 
+  pipeline :registration_gate do
+    plug CamelotWeb.Plugs.RegistrationGate
+  end
+
   scope "/" do
-    pipe_through :browser
+    pipe_through [:browser, :registration_gate]
 
     sign_in_route(
       auth_routes_prefix: "/auth",
@@ -92,6 +96,19 @@ defmodule CamelotWeb.Router do
       live "/prompts/:id/edit", PromptTemplateLive, :edit
 
       live "/profile", UserProfileLive
+    end
+  end
+
+  ash_authentication_live_session :admin,
+    otp_app: :camelot,
+    on_mount: {
+      CamelotWeb.LiveUserAuth,
+      :live_admin_required
+    } do
+    scope "/admin", CamelotWeb do
+      pipe_through :browser
+
+      live "/users", AdminLive.Users, :index
     end
   end
 

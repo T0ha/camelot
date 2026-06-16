@@ -31,6 +31,13 @@
           Prompts
         </a>
       </li>
+      <%= if match?(%{role: :admin}, assigns[:current_user]) do %>
+        <li>
+          <a href="/admin/users" class="btn btn-ghost btn-sm">
+            Users
+          </a>
+        </li>
+      <% end %>
       <%= if assigns[:current_user] do %>
         <li>
           <a href="/profile" class="btn btn-ghost btn-sm">

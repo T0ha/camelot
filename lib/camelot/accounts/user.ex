@@ -6,7 +6,7 @@ defmodule Camelot.Accounts.User do
     domain: Camelot.Accounts,
     data_layer: AshPostgres.DataLayer,
     extensions: [AshAuthentication],
-    authorizers: []
+    authorizers: [Ash.Policy.Authorizer]
 
   postgres do
     table("users")
@@ -59,6 +59,13 @@ defmodule Camelot.Accounts.User do
       public?(true)
     end
 
+    attribute :role, :atom do
+      constraints(one_of: [:admin, :user])
+      default(:user)
+      allow_nil?(false)
+      public?(true)
+    end
+
     attribute :swarm_node_label, :string do
       allow_nil?(true)
       public?(true)
@@ -96,8 +103,46 @@ defmodule Camelot.Accounts.User do
   actions do
     defaults([:read])
 
+    create :create_user do
+      accept([:email, :role])
+      change(set_attribute(:confirmed_at, &DateTime.utc_now/0))
+    end
+
     update :set_swarm_node_label do
       accept([:swarm_node_label])
+    end
+
+    update :set_role do
+      accept([:role])
+      require_atomic?(false)
+    end
+  end
+
+  policies do
+    # Auth flows (sign-in, token, confirmation) run pre-actor or with the user
+    # as actor on themselves. They are explicitly bypassed by AshAuthentication.
+    bypass AshAuthentication.Checks.AshAuthenticationInteraction do
+      authorize_if(always())
+    end
+
+    # Read is open: managed relationship lookups from other resources
+    # (Agent.user, Membership.user, etc.) need to find users without an
+    # authenticated actor. The admin-only listing in /admin/users is gated
+    # at the LiveView mount, not at the resource layer.
+    policy action_type(:read) do
+      authorize_if(always())
+    end
+
+    policy action(:create_user) do
+      authorize_if(actor_attribute_equals(:role, :admin))
+    end
+
+    policy action(:set_role) do
+      authorize_if(actor_attribute_equals(:role, :admin))
+    end
+
+    policy action(:set_swarm_node_label) do
+      authorize_if(expr(id == ^actor(:id)))
     end
   end
 end
