@@ -49,10 +49,22 @@ defmodule Camelot.Prompts.PromptTemplate do
       public?(true)
       attribute_writable?(true)
     end
+
+    belongs_to :user, Camelot.Accounts.User do
+      allow_nil?(true)
+      public?(true)
+      attribute_writable?(true)
+
+      description(
+        "Owner of a per-user-global prompt. " <>
+          "When set with project_id == nil, this prompt is " <>
+          "visible/editable only to that user (plus admins)."
+      )
+    end
   end
 
   identities do
-    identity(:unique_slug_per_scope, [:slug, :project_id])
+    identity(:unique_slug_per_scope, [:slug, :project_id, :user_id])
   end
 
   actions do
@@ -60,7 +72,7 @@ defmodule Camelot.Prompts.PromptTemplate do
 
     create :create do
       primary?(true)
-      accept([:slug, :name, :body, :description, :project_id])
+      accept([:slug, :name, :body, :description, :project_id, :user_id])
     end
 
     update :update do

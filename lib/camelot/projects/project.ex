@@ -116,6 +116,8 @@ defmodule Camelot.Projects.Project do
         :github_owner,
         :github_repo
       ])
+
+      change(Camelot.Projects.Project.Changes.AddActorAsMember)
     end
 
     update :update do

@@ -46,14 +46,20 @@ defmodule CamelotWeb.ConnCase do
   """
   @spec register_and_log_in_user(%{conn: Plug.Conn.t()}) ::
           %{conn: Plug.Conn.t(), user: Ash.Resource.record()}
-  def register_and_log_in_user(%{conn: conn}) do
-    email = "test-#{System.unique_integer()}@example.com"
+  def register_and_log_in_user(%{conn: conn}), do: log_in_with_role(conn, :user)
 
-    user = Ash.Seed.seed!(User, %{email: email})
+  @doc """
+  Same as `register_and_log_in_user/1` but the user is created with `role: :admin`.
+  """
+  @spec register_and_log_in_admin(%{conn: Plug.Conn.t()}) ::
+          %{conn: Plug.Conn.t(), user: Ash.Resource.record()}
+  def register_and_log_in_admin(%{conn: conn}), do: log_in_with_role(conn, :admin)
 
-    {:ok, token, _claims} =
-      AshAuthentication.Jwt.token_for_user(user)
+  defp log_in_with_role(conn, role) do
+    email = "test-#{role}-#{System.unique_integer()}@example.com"
+    user = Ash.Seed.seed!(User, %{email: email, role: role})
 
+    {:ok, token, _claims} = AshAuthentication.Jwt.token_for_user(user)
     user = %{user | __metadata__: Map.put(user.__metadata__, :token, token)}
 
     conn =

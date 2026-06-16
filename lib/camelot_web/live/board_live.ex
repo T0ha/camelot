@@ -10,17 +10,20 @@ defmodule CamelotWeb.BoardLive do
 
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
+  alias CamelotWeb.Scope
   alias Phoenix.LiveView.Socket
+
+  require Ash.Query
 
   @impl true
   @spec mount(map(), map(), Socket.t()) ::
           {:ok, Socket.t()}
-  def mount(_params, _session, socket) do
+  def mount(params, _session, socket) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(Camelot.PubSub, "board")
     end
 
-    {:ok, load_board(socket)}
+    {:ok, socket |> assign(see_all: params["scope"] == "all") |> load_board()}
   end
 
   @impl true
@@ -66,9 +69,23 @@ defmodule CamelotWeb.BoardLive do
     end
   end
 
+  def handle_event("toggle_scope", _params, socket) do
+    {:noreply, socket |> assign(see_all: !socket.assigns.see_all) |> load_board()}
+  end
+
   defp load_board(socket) do
-    tasks = Ash.read!(Task, load: [:project, :sessions])
-    projects = Ash.read!(Project)
+    user = socket.assigns.current_user
+    see_all = socket.assigns.see_all
+
+    tasks =
+      Task
+      |> Scope.maybe_scope(user, see_all, &Scope.scope_tasks/2)
+      |> Ash.read!(load: [:project, :sessions])
+
+    projects =
+      Project
+      |> Scope.maybe_scope(user, see_all, &Scope.scope_projects/2)
+      |> Ash.read!()
 
     columns =
       Enum.map(Task.column_stages(), fn stage ->
@@ -106,12 +123,21 @@ defmodule CamelotWeb.BoardLive do
     <div class="space-y-4">
       <div class="flex items-center justify-between">
         <h1 class="text-2xl font-bold">Board</h1>
-        <button
-          class="btn btn-primary btn-sm"
-          phx-click={show_modal("new-task-modal")}
-        >
-          New Task
-        </button>
+        <div class="flex items-center gap-2">
+          <button
+            :if={@current_user.role == :admin}
+            phx-click="toggle_scope"
+            class="btn btn-ghost btn-sm"
+          >
+            Showing: <span class="font-bold">{if @see_all, do: "All", else: "Mine"}</span>
+          </button>
+          <button
+            class="btn btn-primary btn-sm"
+            phx-click={show_modal("new-task-modal")}
+          >
+            New Task
+          </button>
+        </div>
       </div>
 
       <div class="flex gap-3 overflow-x-auto pb-4">

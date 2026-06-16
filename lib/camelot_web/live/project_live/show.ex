@@ -4,20 +4,43 @@ defmodule CamelotWeb.ProjectLive.Show do
   """
   use CamelotWeb, :live_view
 
+  alias Camelot.Accounts.User
   alias Camelot.Projects.Project
+  alias CamelotWeb.Scope
   alias Phoenix.LiveView.Socket
+
+  require Ash.Query
 
   @impl true
   @spec mount(map(), map(), Socket.t()) ::
-          {:ok, Socket.t()}
+          {:ok, Socket.t()} | {:halt, Socket.t()}
   def mount(%{"id" => id}, _session, socket) do
-    project = Ash.get!(Project, id)
+    case load_or_forbid(id, socket.assigns.current_user) do
+      {:ok, project} ->
+        {:ok,
+         assign(socket,
+           page_title: project.name,
+           project: project
+         )}
 
-    {:ok,
-     assign(socket,
-       page_title: project.name,
-       project: project
-     )}
+      :forbidden ->
+        {:ok,
+         socket
+         |> put_flash(:error, "Project not found")
+         |> push_navigate(to: ~p"/projects")}
+    end
+  end
+
+  defp load_or_forbid(id, %User{role: :admin}), do: {:ok, Ash.get!(Project, id)}
+
+  defp load_or_forbid(id, %User{} = user) do
+    case Project
+         |> Ash.Query.filter(id == ^id)
+         |> Scope.scope_projects(user)
+         |> Ash.read_one() do
+      {:ok, %Project{} = project} -> {:ok, project}
+      _ -> :forbidden
+    end
   end
 
   @impl true

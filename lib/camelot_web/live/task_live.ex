@@ -7,25 +7,49 @@ defmodule CamelotWeb.TaskLive do
 
   import CamelotWeb.BoardComponents, only: [state_badge: 1]
 
+  alias Camelot.Accounts.User
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
   alias Camelot.Board.TaskMessage
+  alias CamelotWeb.Scope
+
+  require Ash.Query
+
+  @task_load [:project, :agent, :creator, :sessions, :messages]
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
-    task =
-      Ash.get!(Task, id, load: [:project, :agent, :creator, :sessions, :messages])
+    case load_or_forbid(id, socket.assigns.current_user) do
+      {:ok, task} ->
+        if connected?(socket) do
+          Phoenix.PubSub.subscribe(Camelot.PubSub, "task:#{id}")
+        end
 
-    if connected?(socket) do
-      Phoenix.PubSub.subscribe(Camelot.PubSub, "task:#{id}")
+        {:ok,
+         assign(socket,
+           page_title: task.title,
+           task: task,
+           message_input: ""
+         )}
+
+      :forbidden ->
+        {:ok,
+         socket
+         |> put_flash(:error, "Task not found")
+         |> push_navigate(to: ~p"/")}
     end
+  end
 
-    {:ok,
-     assign(socket,
-       page_title: task.title,
-       task: task,
-       message_input: ""
-     )}
+  defp load_or_forbid(id, %User{role: :admin}), do: {:ok, Ash.get!(Task, id, load: @task_load)}
+
+  defp load_or_forbid(id, %User{} = user) do
+    case Task
+         |> Ash.Query.filter(id == ^id)
+         |> Scope.scope_tasks(user)
+         |> Ash.read_one(load: @task_load) do
+      {:ok, %Task{} = task} -> {:ok, task}
+      _ -> :forbidden
+    end
   end
 
   @impl true

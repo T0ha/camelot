@@ -10,10 +10,11 @@ defmodule CamelotWeb.TaskLiveTest do
 
   setup %{user: user} do
     {:ok, project} =
-      Ash.create(Project, %{
-        name: "task-live-proj",
-        path: "/tmp/task-live-proj"
-      })
+      Ash.create(
+        Project,
+        %{name: "task-live-proj", path: "/tmp/task-live-proj"},
+        actor: user
+      )
 
     {:ok, task} =
       Ash.create(Task, %{
@@ -41,6 +42,31 @@ defmodule CamelotWeb.TaskLiveTest do
       assert view
              |> element("button", "Cancel")
              |> render_click() =~ "cancelled"
+    end
+  end
+
+  describe "scoping" do
+    test "redirects non-member from another user's task", %{conn: conn} do
+      other = Ash.Seed.seed!(Camelot.Accounts.User, %{email: "to-#{System.unique_integer()}@x.com"})
+
+      {:ok, project} =
+        Ash.create(
+          Project,
+          %{name: "scope-task-#{System.unique_integer()}", path: "/tmp/st"},
+          actor: other
+        )
+
+      {:ok, other_task} =
+        Ash.create(Task, %{
+          title: "Other's task",
+          project_id: project.id,
+          creator_id: other.id
+        })
+
+      assert {:error, {kind, %{to: "/"}}} =
+               live(conn, ~p"/tasks/#{other_task.id}")
+
+      assert kind in [:redirect, :live_redirect]
     end
   end
 end

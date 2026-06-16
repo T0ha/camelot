@@ -7,11 +7,16 @@ defmodule CamelotWeb.AgentLive.Index do
   alias Camelot.Agents.Agent
   alias Camelot.Agents.AgentTemplate
   alias Camelot.Projects.Project
+  alias CamelotWeb.Scope
+
+  require Ash.Query
 
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(params, _session, socket) do
+    socket = assign(socket, see_all: params["scope"] == "all")
+
     if connected?(socket) do
-      for agent <- Ash.read!(Agent) do
+      for agent <- scoped_agents(socket) do
         Phoenix.PubSub.subscribe(
           Camelot.PubSub,
           "agent:#{agent.id}"
@@ -27,7 +32,7 @@ defmodule CamelotWeb.AgentLive.Index do
     socket =
       case socket.assigns.live_action do
         :new ->
-          projects = Ash.read!(Project)
+          projects = scoped_projects(socket)
           templates = load_templates()
           default_template_id = default_template_id(templates)
 
@@ -68,7 +73,7 @@ defmodule CamelotWeb.AgentLive.Index do
       |> normalise_max_retries()
       |> Map.put("user_id", socket.assigns.current_user.id)
 
-    case Ash.create(Agent, agent_params) do
+    case Ash.create(Agent, agent_params, actor: socket.assigns.current_user) do
       {:ok, _agent} ->
         {:noreply,
          socket
@@ -83,6 +88,10 @@ defmodule CamelotWeb.AgentLive.Index do
            "Failed to create agent: #{format_error(error)}"
          )}
     end
+  end
+
+  def handle_event("toggle_scope", _params, socket) do
+    {:noreply, socket |> assign(see_all: !socket.assigns.see_all) |> load_agents()}
   end
 
   defp normalise_max_retries(%{"max_retries" => v} = p) when is_binary(v) do
@@ -105,9 +114,27 @@ defmodule CamelotWeb.AgentLive.Index do
   defp format_error(other), do: inspect(other)
 
   defp load_agents(socket) do
-    agents = Ash.read!(Agent, load: [:project, :template])
+    assign(socket, agents: scoped_agents(socket, load: [:project, :template]))
+  end
 
-    assign(socket, agents: agents)
+  defp scoped_agents(socket, opts \\ []) do
+    Agent
+    |> Scope.maybe_scope(
+      socket.assigns.current_user,
+      socket.assigns.see_all,
+      &Scope.scope_agents/2
+    )
+    |> Ash.read!(opts)
+  end
+
+  defp scoped_projects(socket) do
+    Project
+    |> Scope.maybe_scope(
+      socket.assigns.current_user,
+      socket.assigns.see_all,
+      &Scope.scope_projects/2
+    )
+    |> Ash.read!()
   end
 
   defp load_templates do
@@ -125,12 +152,21 @@ defmodule CamelotWeb.AgentLive.Index do
     <div class="space-y-6">
       <div class="flex items-center justify-between">
         <h1 class="text-2xl font-bold">Agents</h1>
-        <.link
-          navigate={~p"/agents/new"}
-          class="btn btn-primary"
-        >
-          New Agent
-        </.link>
+        <div class="flex items-center gap-2">
+          <button
+            :if={@current_user.role == :admin}
+            phx-click="toggle_scope"
+            class="btn btn-ghost btn-sm"
+          >
+            Showing: <span class="font-bold">{if @see_all, do: "All", else: "Mine"}</span>
+          </button>
+          <.link
+            navigate={~p"/agents/new"}
+            class="btn btn-primary"
+          >
+            New Agent
+          </.link>
+        </div>
       </div>
 
       <%= if @live_action == :new do %>
