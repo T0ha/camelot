@@ -207,31 +207,13 @@ defmodule CamelotWeb.TaskLive do
     end
   end
 
-  def handle_event("reset_agent", _params, socket) do
+  def handle_event("reset_task", _params, socket) do
     task = socket.assigns.task
 
-    if Ash.Resource.loaded?(task, :agent) && task.agent do
-      case Ash.update(task.agent, %{}, action: :mark_idle) do
-        {:ok, _} ->
-          task =
-            Ash.load!(task, [
-              :project,
-              :agent,
-              :creator,
-              :sessions,
-              :messages
-            ])
-
-          {:noreply,
-           socket
-           |> assign(task: task)
-           |> put_flash(:info, "Agent reset to idle")}
-
-        {:error, _} ->
-          {:noreply, put_flash(socket, :error, "Failed to reset agent")}
-      end
-    else
+    if not Ash.Resource.loaded?(task, :agent) or is_nil(task.agent) do
       {:noreply, put_flash(socket, :error, "No agent assigned")}
+    else
+      reset_task_and_agent(socket, task)
     end
   end
 
@@ -255,6 +237,32 @@ defmodule CamelotWeb.TaskLive do
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, "Cannot cancel task")}
+    end
+  end
+
+  defp reset_task_and_agent(socket, task) do
+    stop_agent_process(task.agent.id)
+
+    with {:ok, _agent} <- Ash.update(task.agent, %{}, action: :mark_idle),
+         {:ok, updated} <- Ash.update(task, %{}, action: :reset) do
+      broadcast_update(updated)
+      updated = Ash.load!(updated, @task_load)
+
+      {:noreply,
+       socket
+       |> assign(task: updated)
+       |> put_flash(:info, "Task reset — work will resume shortly")}
+    else
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Failed to reset task")}
+    end
+  end
+
+  defp stop_agent_process(agent_id) do
+    case Camelot.Runtime.AgentSupervisor.stop_agent(agent_id) do
+      :ok -> :ok
+      {:error, :not_found} -> :ok
+      _ -> :ok
     end
   end
 
@@ -329,11 +337,11 @@ defmodule CamelotWeb.TaskLive do
           </button>
           <button
             :if={agent_stuck?(@task)}
-            phx-click="reset_agent"
-            data-confirm="Reset agent to idle?"
+            phx-click="reset_task"
+            data-confirm="Reset task and agent? Work will resume from this stage."
             class="btn btn-sm btn-ghost text-warning"
           >
-            Reset Agent
+            Reset Task
           </button>
           <button
             :if={@task.state == :error}

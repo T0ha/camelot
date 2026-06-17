@@ -344,6 +344,53 @@ defmodule Camelot.Board.TaskTest do
     end
   end
 
+  describe "reset" do
+    test "executing/in_progress → executing/queued", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      {:ok, task} =
+        Ash.update(
+          task,
+          %{agent_id: ctx.agent.id},
+          action: :begin_work
+        )
+
+      {:ok, task} =
+        Ash.update(task, %{plan: "plan"}, action: :submit_plan)
+
+      {:ok, task} = Ash.update(task, %{}, action: :approve_plan)
+
+      {:ok, task} =
+        Ash.update(
+          task,
+          %{agent_id: ctx.agent.id},
+          action: :begin_work
+        )
+
+      assert task.stage == :executing
+      assert task.state == :in_progress
+
+      assert {:ok, reset} = Ash.update(task, %{}, action: :reset)
+      assert reset.stage == :executing
+      assert reset.state == :queued
+    end
+
+    test "todo/queued stays queued", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      assert {:ok, reset} = Ash.update(task, %{}, action: :reset)
+      assert reset.stage == :todo
+      assert reset.state == :queued
+    end
+
+    test "rejects terminal stages", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+      {:ok, done} = Ash.update(task, %{}, action: :cancel)
+
+      assert {:error, _} = Ash.update(done, %{}, action: :reset)
+    end
+  end
+
   describe "stages/0" do
     test "returns all stages" do
       stages = Task.stages()
