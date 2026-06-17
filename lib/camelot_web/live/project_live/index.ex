@@ -6,13 +6,16 @@ defmodule CamelotWeb.ProjectLive.Index do
 
   alias Camelot.Projects.Project
   alias CamelotWeb.Components.FolderPicker
+  alias CamelotWeb.Scope
   alias Phoenix.LiveView.Socket
+
+  require Ash.Query
 
   @impl true
   @spec mount(map(), map(), Socket.t()) ::
           {:ok, Socket.t()}
-  def mount(_params, _session, socket) do
-    {:ok, load_projects(socket)}
+  def mount(params, _session, socket) do
+    {:ok, socket |> assign(see_all: params["scope"] == "all") |> load_projects()}
   end
 
   @impl true
@@ -72,6 +75,10 @@ defmodule CamelotWeb.ProjectLive.Index do
     save_project(socket, socket.assigns.live_action, extract_project_params(params))
   end
 
+  def handle_event("toggle_scope", _params, socket) do
+    {:noreply, socket |> assign(see_all: !socket.assigns.see_all) |> load_projects()}
+  end
+
   @impl true
   def handle_info({:folder_selected, path}, socket) do
     form_params =
@@ -83,7 +90,7 @@ defmodule CamelotWeb.ProjectLive.Index do
   end
 
   defp save_project(socket, :new, params) do
-    case Ash.create(Project, params, action: :create) do
+    case Ash.create(Project, params, action: :create, actor: socket.assigns.current_user) do
       {:ok, _project} ->
         {:noreply,
          socket
@@ -109,7 +116,15 @@ defmodule CamelotWeb.ProjectLive.Index do
   end
 
   defp load_projects(socket) do
-    projects = Ash.read!(Project)
+    projects =
+      Project
+      |> Scope.maybe_scope(
+        socket.assigns.current_user,
+        socket.assigns.see_all,
+        &Scope.scope_projects/2
+      )
+      |> Ash.read!()
+
     assign(socket, projects: projects)
   end
 
@@ -270,12 +285,21 @@ defmodule CamelotWeb.ProjectLive.Index do
     <div class="space-y-6">
       <div class="flex items-center justify-between">
         <h1 class="text-2xl font-bold">Projects</h1>
-        <.link
-          navigate={~p"/projects/new"}
-          class="btn btn-primary"
-        >
-          New Project
-        </.link>
+        <div class="flex items-center gap-2">
+          <button
+            :if={@current_user.role == :admin}
+            phx-click="toggle_scope"
+            class="btn btn-ghost btn-sm"
+          >
+            Showing: <span class="font-bold">{if @see_all, do: "All", else: "Mine"}</span>
+          </button>
+          <.link
+            navigate={~p"/projects/new"}
+            class="btn btn-primary"
+          >
+            New Project
+          </.link>
+        </div>
       </div>
 
       <%= if @live_action in [:new, :edit] do %>

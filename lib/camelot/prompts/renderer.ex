@@ -10,34 +10,32 @@ defmodule Camelot.Prompts.Renderer do
   @placeholder_pattern ~r/\{\{(\w+)\}\}/
 
   @doc """
-  Renders a prompt template for the given slug, with
-  project-specific override taking precedence over global.
+  Renders a prompt template for the given slug. Resolution order:
+  project-specific → user-global → system-global. The first match wins.
 
   Variables is a map of string keys to values, e.g.
   `%{"title" => "Fix bug", "description" => "..."}`.
   """
-  @spec render(String.t(), String.t() | nil, map()) ::
+  @spec render(String.t(), String.t() | nil, String.t() | nil, map()) ::
           {:ok, String.t()} | {:error, :template_not_found}
-  def render(slug, project_id, variables) do
-    case resolve_template(slug, project_id) do
+  def render(slug, project_id, user_id, variables) do
+    case resolve_template(slug, project_id, user_id) do
       nil -> {:error, :template_not_found}
       template -> {:ok, interpolate(template.body, variables)}
     end
   end
 
-  defp resolve_template(slug, nil) do
-    find_template(slug, nil)
+  defp resolve_template(slug, project_id, user_id) do
+    templates = Ash.read!(PromptTemplate)
+
+    find_in(templates, slug, project_id, nil) ||
+      find_in(templates, slug, nil, user_id) ||
+      find_in(templates, slug, nil, nil)
   end
 
-  defp resolve_template(slug, project_id) do
-    find_template(slug, project_id) || find_template(slug, nil)
-  end
-
-  defp find_template(slug, project_id) do
-    PromptTemplate
-    |> Ash.read!()
-    |> Enum.find(fn t ->
-      t.slug == slug and t.project_id == project_id
+  defp find_in(templates, slug, project_id, user_id) do
+    Enum.find(templates, fn t ->
+      t.slug == slug and t.project_id == project_id and t.user_id == user_id
     end)
   end
 

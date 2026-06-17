@@ -1,6 +1,7 @@
 defmodule Camelot.Projects.ProjectTest do
   use Camelot.DataCase, async: true
 
+  alias Camelot.Projects.Membership
   alias Camelot.Projects.Project
 
   @valid_attrs %{
@@ -16,6 +17,37 @@ defmodule Camelot.Projects.ProjectTest do
       assert project.name == "my-project"
       assert project.path == "/tmp/my-project"
       assert project.status == :active
+    end
+
+    test "auto-adds the actor as a member" do
+      require Ash.Query
+
+      user = Ash.Seed.seed!(Camelot.Accounts.User, %{email: "member-#{System.unique_integer()}@x.com"})
+
+      {:ok, project} =
+        Ash.create(Project, %{name: "auto-mem-#{System.unique_integer()}", path: "/tmp/x"}, actor: user)
+
+      memberships =
+        Membership
+        |> Ash.Query.filter(project_id == ^project.id)
+        |> Ash.read!(authorize?: false)
+
+      assert [%{user_id: uid, role: :member}] = memberships
+      assert uid == user.id
+    end
+
+    test "creates without membership when no actor" do
+      require Ash.Query
+
+      {:ok, project} =
+        Ash.create(Project, %{name: "no-actor-#{System.unique_integer()}", path: "/tmp/y"})
+
+      memberships =
+        Membership
+        |> Ash.Query.filter(project_id == ^project.id)
+        |> Ash.read!(authorize?: false)
+
+      assert memberships == []
     end
 
     test "creates a project with all fields" do

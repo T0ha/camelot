@@ -4,24 +4,44 @@ defmodule CamelotWeb.AgentLive.Show do
   """
   use CamelotWeb, :live_view
 
+  alias Camelot.Accounts.User
   alias Camelot.Agents.Agent
+  alias CamelotWeb.Scope
+
+  require Ash.Query
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
-    agent = Ash.get!(Agent, id, load: [:project, :template, :sessions])
+    case load_or_forbid(id, socket.assigns.current_user) do
+      {:ok, agent} ->
+        if connected?(socket) do
+          Phoenix.PubSub.subscribe(Camelot.PubSub, "agent:#{id}")
+        end
 
-    if connected?(socket) do
-      Phoenix.PubSub.subscribe(
-        Camelot.PubSub,
-        "agent:#{id}"
-      )
+        {:ok,
+         assign(socket,
+           page_title: agent.name,
+           agent: agent
+         )}
+
+      :forbidden ->
+        {:ok,
+         socket
+         |> put_flash(:error, "Agent not found")
+         |> push_navigate(to: ~p"/agents")}
     end
+  end
 
-    {:ok,
-     assign(socket,
-       page_title: agent.name,
-       agent: agent
-     )}
+  defp load_or_forbid(id, %User{role: :admin}), do: {:ok, Ash.get!(Agent, id, load: [:project, :template, :sessions])}
+
+  defp load_or_forbid(id, %User{} = user) do
+    case Agent
+         |> Ash.Query.filter(id == ^id)
+         |> Scope.scope_agents(user)
+         |> Ash.read_one(load: [:project, :template, :sessions]) do
+      {:ok, %Agent{} = agent} -> {:ok, agent}
+      _ -> :forbidden
+    end
   end
 
   @impl true

@@ -79,18 +79,6 @@ defmodule CamelotWeb.Router do
       live "/agents/new", AgentLive.Index, :new
       live "/agents/:id", AgentLive.Show
 
-      live "/agent-templates",
-           AgentTemplateLive.Index,
-           :index
-
-      live "/agent-templates/new",
-           AgentTemplateLive.Index,
-           :new
-
-      live "/agent-templates/:id/edit",
-           AgentTemplateLive.Index,
-           :edit
-
       live "/prompts", PromptTemplateLive, :index
       live "/prompts/new", PromptTemplateLive, :new
       live "/prompts/:id/edit", PromptTemplateLive, :edit
@@ -109,6 +97,14 @@ defmodule CamelotWeb.Router do
       pipe_through :browser
 
       live "/users", AdminLive.Users, :index
+    end
+
+    scope "/", CamelotWeb do
+      pipe_through :browser
+
+      live "/agent-templates", AgentTemplateLive.Index, :index
+      live "/agent-templates/new", AgentTemplateLive.Index, :new
+      live "/agent-templates/:id/edit", AgentTemplateLive.Index, :edit
     end
   end
 

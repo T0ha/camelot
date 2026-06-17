@@ -120,7 +120,7 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
     variables = build_variables(task)
 
     base =
-      case Renderer.render(slug, task.project_id, variables) do
+      case Renderer.render(slug, task.project_id, task.creator_id, variables) do
         {:ok, prompt} -> prompt
         {:error, :template_not_found} -> fallback_prompt(task)
       end
