@@ -232,10 +232,39 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
     end
   end
 
+  # The service object alone isn't enough — a Swarm service whose
+  # only replica was SIGKILLed (and RestartPolicy is "none") still
+  # responds 200 here but has zero live tasks. Adopting that
+  # corpse wedges `ExecSession.resolve_container/1` polling forever
+  # for a task that will never appear. Require both that the
+  # service exists AND that it has at least one task whose desired
+  # state is "running"; anything else is treated as gone so
+  # `create_and_persist/2` rebuilds it.
   defp service_alive?(service_id) do
-    case Req.get(DockerApi.request(), url: "/services/#{service_id}") do
-      {:ok, %Req.Response{status: 200}} -> true
+    with {:ok, %Req.Response{status: 200}} <-
+           Req.get(DockerApi.request(), url: "/services/#{service_id}"),
+         {:ok, [_ | _]} <- list_runnable_tasks(service_id) do
+      true
+    else
       _ -> false
+    end
+  end
+
+  defp list_runnable_tasks(service_id) do
+    case Req.get(DockerApi.request(),
+           url: "/tasks",
+           params: [
+             filters: ~s({"service":["#{service_id}"],"desired-state":["running"]})
+           ]
+         ) do
+      {:ok, %Req.Response{status: 200, body: tasks}} when is_list(tasks) ->
+        {:ok, tasks}
+
+      {:ok, resp} ->
+        {:error, {:tasks_bad_status, resp.status}}
+
+      {:error, _} = err ->
+        err
     end
   end
 
