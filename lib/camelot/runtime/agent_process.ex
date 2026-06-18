@@ -562,6 +562,35 @@ defmodule Camelot.Runtime.AgentProcess do
     transition(task, :mark_error)
   end
 
+  # Variant used by paths where the CLI exited cleanly but the
+  # post-exit interpretation decided the task is in error (empty
+  # plan, no PR URL). `finish_session/4` has already written the
+  # session row with status :completed and an empty error_message;
+  # annotate it here so the UI can explain *why* the card jumped
+  # to :error instead of progressing.
+  defp mark_error_with_reason(state, task, reason) do
+    annotate_session_error(state.current_session_id, reason)
+    transition(task, :mark_error)
+  end
+
+  defp annotate_session_error(nil, _reason), do: :ok
+
+  defp annotate_session_error(session_id, reason) do
+    case Ash.get(Session, session_id) do
+      {:ok, session} ->
+        case Ash.update(session, %{error_message: reason}, action: :annotate_error) do
+          {:ok, _} ->
+            :ok
+
+          {:error, err} ->
+            Logger.warning("Failed to annotate session #{session_id} with error reason: #{inspect(err)}")
+        end
+
+      {:error, err} ->
+        Logger.warning("Failed to load session #{session_id} for error annotation: #{inspect(err)}")
+    end
+  end
+
   defp mark_session_running(session_id, runner_pid) do
     session = Ash.get!(Session, session_id)
 
@@ -609,7 +638,12 @@ defmodule Camelot.Runtime.AgentProcess do
 
       trimmed == "" ->
         Logger.warning("Empty plan for task #{task_id}, marking error")
-        transition(task, :mark_error)
+
+        mark_error_with_reason(
+          state,
+          task,
+          "Agent finished planning without producing a plan."
+        )
 
       true ->
         submit_plan(task, text, task_id)
@@ -651,7 +685,13 @@ defmodule Camelot.Runtime.AgentProcess do
       end
     else
       Logger.warning("Execution completed without PR for task #{task_id}")
-      transition(task, :mark_error)
+
+      mark_error_with_reason(
+        state,
+        task,
+        "Agent finished executing without opening a PR. " <>
+          "No PR URL was found in the agent's final output."
+      )
     end
   end
 

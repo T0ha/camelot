@@ -218,5 +218,9 @@ defmodule Camelot.Agents.Session do
       accept([])
       change(set_attribute(:clarified, true))
     end
+
+    update :annotate_error do
+      accept([:error_message])
+    end
   end
 end
