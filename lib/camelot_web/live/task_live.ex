@@ -262,7 +262,6 @@ defmodule CamelotWeb.TaskLive do
     case Camelot.Runtime.AgentSupervisor.stop_agent(agent_id) do
       :ok -> :ok
       {:error, :not_found} -> :ok
-      _ -> :ok
     end
   end
 
