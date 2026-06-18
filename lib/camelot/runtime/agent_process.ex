@@ -487,33 +487,78 @@ defmodule Camelot.Runtime.AgentProcess do
   defp node_label_for(%Agent{user: %{swarm_node_label: l}}) when is_binary(l), do: l
   defp node_label_for(_), do: nil
 
-  defp build_secrets(%Agent{user_id: nil}, _config), do: []
+  @doc false
+  # Builds the secrets list mounted into the runner.
+  #
+  # Always appends the user's default SSH key (`name: "default"`) when
+  # present, regardless of the template's `required_credential_kinds`,
+  # so git just works without every template having to declare the
+  # requirement. Dedupes by `kind` — the template's explicit entry
+  # wins if it's already in the list.
+  def build_secrets(%Agent{user_id: nil}, _config), do: []
 
-  defp build_secrets(%Agent{user_id: uid}, %AgentConfig{required_credential_kinds: kinds}) do
-    Enum.flat_map(kinds, fn kind_atom ->
-      case fetch_credential(uid, kind_atom) do
-        nil ->
-          Logger.warning("AgentProcess: missing credential #{kind_atom} for user #{uid}")
-          []
+  def build_secrets(%Agent{user_id: uid}, %AgentConfig{required_credential_kinds: kinds}) do
+    template_secrets =
+      Enum.flat_map(kinds, fn kind_atom ->
+        case fetch_credential(uid, kind_atom) do
+          nil ->
+            Logger.warning("AgentProcess: missing credential #{kind_atom} for user #{uid}")
+            []
 
-        %Credential{value: value} ->
+          %Credential{value: value} ->
+            [
+              %{
+                kind: kind_atom,
+                name: SecretSync.secret_name(uid, kind_atom),
+                value: value
+              }
+            ]
+        end
+      end)
+
+    template_secrets
+    |> append_default_ssh_key(uid)
+    |> Enum.uniq_by(& &1.kind)
+  end
+
+  defp append_default_ssh_key(secrets, user_id) do
+    case fetch_credential(user_id, :ssh_private_key, "default") do
+      nil ->
+        secrets
+
+      %Credential{value: value} ->
+        secrets ++
           [
             %{
-              kind: kind_atom,
-              name: SecretSync.secret_name(uid, kind_atom),
+              kind: :ssh_private_key,
+              name: SecretSync.secret_name(user_id, :ssh_private_key),
               value: value
             }
           ]
-      end
-    end)
+    end
   end
 
-  defp fetch_credential(user_id, kind_atom) do
-    case Credential
-         |> Ash.Query.filter(user_id == ^user_id and kind == ^kind_atom)
-         |> Ash.Query.limit(1)
-         |> Ash.Query.load(:value)
-         |> Ash.read() do
+  defp fetch_credential(user_id, kind_atom, name \\ nil)
+
+  defp fetch_credential(user_id, kind_atom, nil) do
+    Credential
+    |> Ash.Query.filter(user_id == ^user_id and kind == ^kind_atom)
+    |> Ash.Query.limit(1)
+    |> Ash.Query.load(:value)
+    |> Ash.read()
+    |> case do
+      {:ok, [cred | _]} -> cred
+      _ -> nil
+    end
+  end
+
+  defp fetch_credential(user_id, kind_atom, name) do
+    Credential
+    |> Ash.Query.filter(user_id == ^user_id and kind == ^kind_atom and name == ^name)
+    |> Ash.Query.limit(1)
+    |> Ash.Query.load(:value)
+    |> Ash.read()
+    |> case do
       {:ok, [cred | _]} -> cred
       _ -> nil
     end

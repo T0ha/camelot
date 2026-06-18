@@ -532,6 +532,56 @@ defmodule CamelotWeb.CoreComponents do
     """
   end
 
+  @doc """
+  Small button that copies the text content (or `value`) of the element
+  referenced by `target` into the user's clipboard. The button label
+  flips to "Copied" for a moment on success.
+  """
+  attr :target, :string,
+    required: true,
+    doc: "id of the element whose text/value should be copied"
+
+  attr :label, :string, default: "Copy"
+  attr :class, :any, default: "btn btn-sm btn-ghost"
+  attr :rest, :global
+
+  def copy_button(assigns) do
+    ~H"""
+    <button
+      type="button"
+      class={@class}
+      phx-hook=".CopyToClipboard"
+      id={"copy-#{@target}"}
+      data-copy-target={@target}
+      data-copy-label={@label}
+      {@rest}
+    >
+      <.icon name="hero-clipboard-document" class="size-4" />
+      <span class="copy-label">{@label}</span>
+    </button>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".CopyToClipboard">
+      export default {
+        mounted() {
+          this.el.addEventListener("click", () => {
+            const targetId = this.el.dataset.copyTarget
+            const target = document.getElementById(targetId)
+            if (!target) return
+            const text = "value" in target ? target.value : target.textContent
+            navigator.clipboard.writeText(text).then(() => {
+              const label = this.el.querySelector(".copy-label")
+              if (!label) return
+              const original = this.el.dataset.copyLabel
+              label.textContent = "Copied"
+              clearTimeout(this._copyTimer)
+              this._copyTimer = setTimeout(() => { label.textContent = original }, 1500)
+            })
+          })
+        }
+      }
+    </script>
+    """
+  end
+
   ## JS Commands
 
   def show_modal(id) do

@@ -100,6 +100,14 @@ defmodule Camelot.Accounts.User do
     identity(:unique_email, [:email])
   end
 
+  changes do
+    # Server-generated Ed25519 SSH key on every user creation —
+    # covers both admin :create_user and magic-link
+    # :sign_in_with_magic_link (the auto-generated upsert that
+    # creates new users on first sign-in).
+    change(Camelot.Accounts.User.Changes.EnsureDefaultSshKey, on: [:create])
+  end
+
   actions do
     defaults([:read])
 
