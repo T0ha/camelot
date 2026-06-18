@@ -294,6 +294,23 @@ defmodule Camelot.Board.Task do
       change(set_attribute(:state, :queued))
     end
 
+    update :reset do
+      accept([])
+      require_atomic?(false)
+
+      validate(fn changeset, _ctx ->
+        stage = Ash.Changeset.get_attribute(changeset, :stage)
+
+        if stage in [:todo, :planning, :executing, :pr] do
+          :ok
+        else
+          {:error, field: :stage, message: "cannot reset task in stage #{inspect(stage)}"}
+        end
+      end)
+
+      change(set_attribute(:state, :queued))
+    end
+
     update :pr_created do
       accept([:pr_url, :pr_number])
 

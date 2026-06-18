@@ -3,6 +3,7 @@ defmodule CamelotWeb.TaskLiveTest do
 
   import Phoenix.LiveViewTest
 
+  alias Camelot.Agents.Agent
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
 
@@ -42,6 +43,52 @@ defmodule CamelotWeb.TaskLiveTest do
       assert view
              |> element("button", "Cancel")
              |> render_click() =~ "cancelled"
+    end
+  end
+
+  describe "reset_task" do
+    test "re-queues task and marks agent idle", %{conn: conn, project: project, user: user} do
+      {:ok, agent} =
+        Ash.create(Agent, %{
+          name: "stuck-agent",
+          template_id: agent_template!("claude_code").id,
+          project_id: project.id,
+          user_id: user.id
+        })
+
+      {:ok, task} =
+        Ash.create(Task, %{
+          title: "Stuck task",
+          project_id: project.id,
+          creator_id: user.id
+        })
+
+      {:ok, task} =
+        Ash.update(task, %{agent_id: agent.id}, action: :begin_work)
+
+      {:ok, _busy} = Ash.update(agent, %{}, action: :mark_busy)
+
+      assert task.stage == :planning
+      assert task.state == :in_progress
+
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      html =
+        view
+        |> element("button", "Reset Task")
+        |> render_click()
+
+      assert html =~ "work will resume"
+
+      {:ok, reloaded} = Ash.get(Task, task.id, load: [:agent])
+      assert reloaded.state == :queued
+      assert reloaded.stage == :planning
+      assert reloaded.agent.status == :idle
+    end
+
+    test "button is hidden when no agent is assigned", %{conn: conn, task: task} do
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+      refute html =~ "Reset Task"
     end
   end
 
