@@ -131,4 +131,34 @@ defmodule Camelot.Agents.SessionTest do
       assert cancelled.finished_at
     end
   end
+
+  describe "annotate_error" do
+    test "sets error_message without changing status or finished_at", ctx do
+      {:ok, session} =
+        Ash.create(Session, %{
+          agent_id: ctx.agent.id,
+          task_id: ctx.task.id
+        })
+
+      {:ok, completed} =
+        Ash.update(
+          session,
+          %{output_log: "ok", exit_code: 0},
+          action: :complete
+        )
+
+      assert completed.error_message == nil
+
+      assert {:ok, annotated} =
+               Ash.update(
+                 completed,
+                 %{error_message: "Agent finished without opening a PR."},
+                 action: :annotate_error
+               )
+
+      assert annotated.error_message == "Agent finished without opening a PR."
+      assert annotated.status == :completed
+      assert annotated.finished_at == completed.finished_at
+    end
+  end
 end
