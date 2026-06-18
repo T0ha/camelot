@@ -102,16 +102,22 @@ defmodule Camelot.Accounts.Credential do
       accept([:value])
       require_atomic?(false)
 
+      # Optional partial metadata override — callers rotating an
+      # ssh_private_key pass {public_key, fingerprint, algorithm} so
+      # those derived fields stay in lock-step with `value` rather than
+      # being patched in a second action.
+      argument(:metadata, :map, allow_nil?: true)
+
       change(fn changeset, _ ->
-        Ash.Changeset.change_attribute(
-          changeset,
-          :metadata,
-          Map.put(
-            Ash.Changeset.get_attribute(changeset, :metadata) || %{},
-            "rotated_at",
-            DateTime.to_iso8601(DateTime.utc_now())
-          )
-        )
+        existing = Ash.Changeset.get_attribute(changeset, :metadata) || %{}
+        override = Ash.Changeset.get_argument(changeset, :metadata) || %{}
+
+        merged =
+          existing
+          |> Map.merge(override)
+          |> Map.put("rotated_at", DateTime.to_iso8601(DateTime.utc_now()))
+
+        Ash.Changeset.change_attribute(changeset, :metadata, merged)
       end)
     end
   end
