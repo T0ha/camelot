@@ -50,15 +50,19 @@ materialise_secrets() {
 
   # Generic CAMELOT_SECRET_* env var fallback for kinds without a
   # natural canonical env var (claude_oauth, ssh_private_key, generic).
-  local var name kind value
-  while IFS='=' read -r var value; do
+  #
+  # Iterate variable NAMES via compgen and look up values with bash
+  # indirect expansion — `env | while read` would split multi-line
+  # values (e.g. OpenSSH private keys) at the first newline.
+  local var kind
+  while IFS= read -r var; do
     case "$var" in
       CAMELOT_SECRET_*)
         kind="$(printf '%s' "${var#CAMELOT_SECRET_}" | tr '[:upper:]' '[:lower:]')"
-        materialise_one "$kind" "$value"
+        materialise_one "$kind" "${!var}"
         ;;
     esac
-  done < <(env)
+  done < <(compgen -e)
 }
 
 materialise_one() {

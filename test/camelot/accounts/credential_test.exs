@@ -3,6 +3,36 @@ defmodule Camelot.Accounts.CredentialTest do
 
   alias Camelot.Accounts.Credential
 
+  require Ash.Query
+
+  describe ":value attribute" do
+    test "preserves trailing whitespace verbatim across create + read" do
+      # OpenSSH private keys end in `\n`; Ash's default trim?: true on
+      # :string silently strips it and the resulting file is rejected
+      # by OpenSSH as "invalid format". This guards against regression.
+      user = user!()
+
+      value = "-----BEGIN OPENSSH PRIVATE KEY-----\nb64data==\n-----END OPENSSH PRIVATE KEY-----\n"
+
+      {:ok, cred} =
+        Ash.create(Credential, %{
+          user_id: user.id,
+          kind: :ssh_private_key,
+          name: "default",
+          value: value
+        })
+
+      {:ok, reloaded} =
+        Credential
+        |> Ash.Query.filter(id == ^cred.id)
+        |> Ash.Query.load(:value)
+        |> Ash.read_one()
+
+      assert reloaded.value == value
+      assert String.ends_with?(reloaded.value, "\n")
+    end
+  end
+
   describe ":rotate action" do
     test "replaces value, stamps rotated_at, preserves untouched metadata" do
       user = user!()

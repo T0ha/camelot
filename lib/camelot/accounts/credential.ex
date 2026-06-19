@@ -55,6 +55,10 @@ defmodule Camelot.Accounts.Credential do
       allow_nil?(false)
       public?(true)
       sensitive?(true)
+      # Secrets are opaque — Ash's default trim?: true silently dropped
+      # the trailing newline from OpenSSH private keys, leaving us with
+      # files OpenSSH would reject as "invalid format".
+      constraints(trim?: false, allow_empty?: false)
       description("Secret value, encrypted at rest via AshCloak")
     end
 
