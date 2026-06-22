@@ -42,9 +42,19 @@ defmodule Camelot.Runtime.SecretSync do
   @doc """
   Returns the Swarm secret name for a given user and
   kind. Used by the Runner spec builder.
+
+  Docker caps secret names at 64 chars. `camelot_user_<uuid>_` is
+  already 49, leaving 15 chars for the kind suffix — `ssh_private_key`
+  itself is 15, but adding the underscore separator pushes us to 65.
+  Map long kind atoms to short suffixes here; everything outside this
+  module (kind atom, mounted file name in `/run/secrets/`, entrypoint
+  case) is unaffected.
   """
   @spec secret_name(String.t(), atom()) :: String.t()
-  def secret_name(user_id, kind), do: "camelot_user_#{user_id}_#{kind}"
+  def secret_name(user_id, kind), do: "camelot_user_#{user_id}_#{kind_suffix(kind)}"
+
+  defp kind_suffix(:ssh_private_key), do: "ssh_pk"
+  defp kind_suffix(kind), do: Atom.to_string(kind)
 
   @doc """
   Looks up the current secret id for `(user_id, kind)`.
