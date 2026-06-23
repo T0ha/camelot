@@ -94,7 +94,11 @@ materialise_one() {
       ;;
     ssh_private_key)
       mkdir -p "$HOME/.ssh"
-      printf '%s' "$value" > "$HOME/.ssh/id_ed25519"
+      # OpenSSH requires the PEM file to end with a newline; reject as
+      # "invalid format" / "error in libcrypto" otherwise. Strip a
+      # trailing newline if the source already has one, then re-add
+      # exactly one — idempotent across sources that do and don't.
+      printf '%s\n' "${value%$'\n'}" > "$HOME/.ssh/id_ed25519"
       chmod 600 "$HOME/.ssh/id_ed25519"
       ssh-keyscan -t ed25519 github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
       ;;
