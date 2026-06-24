@@ -334,14 +334,38 @@ defmodule Camelot.Runtime.Reconciler do
     end
   end
 
+  # Mirror `Swarm.TaskService.service_alive?/1`: a service whose
+  # only replica got SIGKILLed (or whose node died) still answers
+  # 200 here but has zero tasks with `desired-state=running`, and
+  # the name slot is occupied so any recreate hits 409. Treat that
+  # corpse as :missing so the task gets surfaced to the user.
   defp probe_swarm_service(id) do
-    case Req.get(DockerApi.request(), url: "/services/#{id}") do
-      {:ok, %Req.Response{status: 200}} -> :present
+    with {:ok, %Req.Response{status: 200}} <-
+           Req.get(DockerApi.request(), url: "/services/#{id}"),
+         {:ok, [_ | _]} <- list_runnable_swarm_tasks(id) do
+      :present
+    else
       {:ok, %Req.Response{status: 404}} -> :missing
+      {:ok, []} -> :missing
       _ -> :unknown
     end
   rescue
     _ -> :unknown
+  end
+
+  defp list_runnable_swarm_tasks(service_id) do
+    case Req.get(DockerApi.request(),
+           url: "/tasks",
+           params: [
+             filters: ~s({"service":["#{service_id}"],"desired-state":["running"]})
+           ]
+         ) do
+      {:ok, %Req.Response{status: 200, body: tasks}} when is_list(tasks) ->
+        {:ok, tasks}
+
+      _ ->
+        :error
+    end
   end
 
   defp probe_engine_container(id) do
