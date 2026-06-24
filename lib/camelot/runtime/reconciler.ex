@@ -19,6 +19,13 @@ defmodule Camelot.Runtime.Reconciler do
        normally.
     3. Sweeps orphan `camelot-runner-*` services that no
        longer have a `:queued` or `:running` session row.
+    4. Sweeps tasks whose `runner_handle` points to a
+       missing backend service (node loss, manual
+       `docker service rm`) — marks them as
+       `state: :error` and clears `runner_handle` so the
+       user can retry. A 15-minute grace on
+       `updated_at` keeps in-flight dispatches from
+       being false-positives.
 
   In steady state, the same sweep runs every 60s to
   catch any drift Camelot didn't notice (manual
@@ -40,6 +47,7 @@ defmodule Camelot.Runtime.Reconciler do
 
   @tick_ms 60_000
   @log_retention_ms 300_000
+  @stale_runner_grace_ms 900_000
   @name __MODULE__
 
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -101,6 +109,7 @@ defmodule Camelot.Runtime.Reconciler do
 
       live_tasks = list_task_runners()
       sweep_orphan_task_runners(live_tasks)
+      sweep_stale_task_runner_handles()
 
       RunnerPool.tick()
     else
@@ -267,6 +276,82 @@ defmodule Camelot.Runtime.Reconciler do
   defp remove_task_runner_for(task_id) do
     name = "camelot-task-#{task_id}"
     delete_by_name(name)
+  end
+
+  # Probe per-task (not via bulk list) so a transient Docker API
+  # hiccup can't false-positive every in-flight task at once.
+  defp sweep_stale_task_runner_handles do
+    cutoff =
+      DateTime.add(DateTime.utc_now(), -@stale_runner_grace_ms, :millisecond)
+
+    Task
+    |> Ash.Query.filter(
+      not is_nil(runner_handle) and
+        state == :in_progress and
+        stage in [:planning, :executing] and
+        updated_at < ^cutoff
+    )
+    |> Ash.read!()
+    |> Enum.each(&maybe_mark_runner_lost/1)
+  end
+
+  defp maybe_mark_runner_lost(%Task{} = task) do
+    case probe_runner(task.runner_handle) do
+      :missing ->
+        Logger.warning(
+          "Reconciler: task #{task.id} runner_handle " <>
+            "#{task.runner_handle} is gone; marking task as " <>
+            "error and clearing runner_handle"
+        )
+
+        updated = Ash.update!(task, %{}, action: :mark_runner_lost)
+        broadcast_task_update(updated)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp broadcast_task_update(%Task{id: id} = task) do
+    Phoenix.PubSub.broadcast(
+      Camelot.PubSub,
+      "task:#{id}",
+      {:task_updated, task}
+    )
+
+    Phoenix.PubSub.broadcast(
+      Camelot.PubSub,
+      "board",
+      {:task_updated, task}
+    )
+  end
+
+  defp probe_runner(handle) do
+    if Runner.backend() == Swarm do
+      probe_swarm_service(handle)
+    else
+      probe_engine_container(handle)
+    end
+  end
+
+  defp probe_swarm_service(id) do
+    case Req.get(DockerApi.request(), url: "/services/#{id}") do
+      {:ok, %Req.Response{status: 200}} -> :present
+      {:ok, %Req.Response{status: 404}} -> :missing
+      _ -> :unknown
+    end
+  rescue
+    _ -> :unknown
+  end
+
+  defp probe_engine_container(id) do
+    case Req.get(DockerApi.request(), url: "/containers/#{id}/json") do
+      {:ok, %Req.Response{status: 200}} -> :present
+      {:ok, %Req.Response{status: 404}} -> :missing
+      _ -> :unknown
+    end
+  rescue
+    _ -> :unknown
   end
 
   defp delete_by_name(name) do

@@ -281,6 +281,13 @@ defmodule Camelot.Board.Task do
       change(set_attribute(:state, :error))
     end
 
+    update :mark_runner_lost do
+      accept([])
+
+      change(set_attribute(:state, :error))
+      change(set_attribute(:runner_handle, nil))
+    end
+
     update :mark_in_progress do
       accept([])
 

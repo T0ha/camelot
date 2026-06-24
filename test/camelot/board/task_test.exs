@@ -442,5 +442,14 @@ defmodule Camelot.Board.TaskTest do
       assert {:ok, cleared} = Ash.update(task, %{}, action: :clear_runner_handle)
       assert cleared.runner_handle == nil
     end
+
+    test "mark_runner_lost sets error state and clears handle", %{task: task} do
+      {:ok, task} =
+        Ash.update(task, %{runner_handle: "svc-123"}, action: :set_runner_handle)
+
+      assert {:ok, updated} = Ash.update(task, %{}, action: :mark_runner_lost)
+      assert updated.state == :error
+      assert updated.runner_handle == nil
+    end
   end
 end
