@@ -219,10 +219,33 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
     name = Spec.task_runner_name(task_id)
     payload = service_create_payload(spec, name)
 
+    case post_create(payload) do
+      {:ok, id} ->
+        {:ok, id}
+
+      {:error, :name_conflict} ->
+        Logger.info(
+          "Swarm.TaskService #{task_id}: service name " <>
+            "#{name} already exists; deleting stale " <>
+            "service and retrying create"
+        )
+
+        delete_service_by_name(name)
+        post_create_strict(payload)
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp post_create(payload) do
     case Req.post(DockerApi.request(), url: "/services/create", json: payload) do
       {:ok, %Req.Response{status: status, body: %{"ID" => id}}}
       when status in 200..299 ->
         {:ok, id}
+
+      {:ok, %Req.Response{status: 409}} ->
+        {:error, :name_conflict}
 
       {:ok, resp} ->
         {:error, {:create_failed, resp.status, resp.body}}
@@ -230,6 +253,26 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  defp post_create_strict(payload) do
+    case post_create(payload) do
+      {:ok, id} ->
+        {:ok, id}
+
+      {:error, :name_conflict} ->
+        {:error, {:create_failed, 409, %{"message" => "service name still conflicts after delete-by-name retry"}}}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp delete_service_by_name(name) do
+    Req.delete(DockerApi.request(), url: "/services/#{name}")
+    :ok
+  rescue
+    _ -> :ok
   end
 
   # The service object alone isn't enough — a Swarm service whose
