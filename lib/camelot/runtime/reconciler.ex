@@ -20,12 +20,18 @@ defmodule Camelot.Runtime.Reconciler do
     3. Sweeps orphan `camelot-runner-*` services that no
        longer have a `:queued` or `:running` session row.
     4. Sweeps tasks whose `runner_handle` points to a
-       missing backend service (node loss, manual
-       `docker service rm`) — marks them as
-       `state: :error` and clears `runner_handle` so the
-       user can retry. A 15-minute grace on
-       `updated_at` keeps in-flight dispatches from
-       being false-positives.
+       stale backend service (node partition, manual
+       `docker service rm`, swarm reschedule failure).
+       For Swarm services that still exist but have zero
+       runnable tasks, triggers a `force-redeploy` (bumps
+       `Spec.TaskTemplate.ForceUpdate`) so the swarm
+       reschedules without losing the service identity.
+       Only after the redeploy fails to yield a runnable
+       task within `@redeploy_wait_ms`, or when the service
+       is genuinely 404, the task is marked
+       `state: :error` and `runner_handle` cleared so the
+       user can retry. A 15-minute grace on `updated_at`
+       keeps in-flight dispatches from being false-positives.
 
   In steady state, the same sweep runs every 60s to
   catch any drift Camelot didn't notice (manual
@@ -48,6 +54,8 @@ defmodule Camelot.Runtime.Reconciler do
   @tick_ms 60_000
   @log_retention_ms 300_000
   @stale_runner_grace_ms 900_000
+  @redeploy_wait_ms 15_000
+  @redeploy_poll_ms 1_000
   @name __MODULE__
 
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -297,19 +305,68 @@ defmodule Camelot.Runtime.Reconciler do
 
   defp maybe_mark_runner_lost(%Task{} = task) do
     case probe_runner(task.runner_handle) do
-      :missing ->
-        Logger.warning(
-          "Reconciler: task #{task.id} runner_handle " <>
-            "#{task.runner_handle} is gone; marking task as " <>
-            "error and clearing runner_handle"
-        )
+      :present -> :ok
+      :gone -> mark_runner_lost(task, "service returned 404")
+      :no_tasks -> attempt_force_redeploy(task)
+      :unknown -> :ok
+    end
+  end
 
-        updated = Ash.update!(task, %{}, action: :mark_runner_lost)
-        broadcast_task_update(updated)
+  defp attempt_force_redeploy(%Task{} = task) do
+    Logger.info(
+      "Reconciler: task #{task.id} service #{task.runner_handle} " <>
+        "has zero runnable tasks; attempting force-redeploy"
+    )
+
+    case Swarm.TaskService.force_redeploy(task.runner_handle) do
+      :ok ->
+        if wait_for_runnable(task.runner_handle, @redeploy_wait_ms) do
+          Logger.info(
+            "Reconciler: task #{task.id} service #{task.runner_handle} " <>
+              "rescheduled by force-redeploy"
+          )
+        else
+          mark_runner_lost(
+            task,
+            "force-redeploy did not yield a runnable task within " <>
+              "#{@redeploy_wait_ms}ms (constraint likely unsatisfiable)"
+          )
+        end
+
+      {:error, :not_found} ->
+        mark_runner_lost(task, "service returned 404 to force-redeploy")
+
+      {:error, reason} ->
+        Logger.warning(
+          "Reconciler: force-redeploy failed for task #{task.id}: " <>
+            "#{inspect(reason)}; will retry next tick"
+        )
+    end
+  end
+
+  defp wait_for_runnable(_service_id, remaining_ms) when remaining_ms <= 0, do: false
+
+  defp wait_for_runnable(service_id, remaining_ms) do
+    case list_runnable_swarm_tasks(service_id) do
+      {:ok, [_ | _]} ->
+        true
 
       _ ->
-        :ok
+        step = min(@redeploy_poll_ms, remaining_ms)
+        Process.sleep(step)
+        wait_for_runnable(service_id, remaining_ms - step)
     end
+  end
+
+  defp mark_runner_lost(%Task{} = task, reason) do
+    Logger.warning(
+      "Reconciler: task #{task.id} runner_handle " <>
+        "#{task.runner_handle} treated as lost (#{reason}); " <>
+        "marking task as error and clearing runner_handle"
+    )
+
+    updated = Ash.update!(task, %{}, action: :mark_runner_lost)
+    broadcast_task_update(updated)
   end
 
   defp broadcast_task_update(%Task{id: id} = task) do
@@ -334,20 +391,25 @@ defmodule Camelot.Runtime.Reconciler do
     end
   end
 
-  # Mirror `Swarm.TaskService.service_alive?/1`: a service whose
-  # only replica got SIGKILLed (or whose node died) still answers
-  # 200 here but has zero tasks with `desired-state=running`, and
-  # the name slot is occupied so any recreate hits 409. Treat that
-  # corpse as :missing so the task gets surfaced to the user.
+  # Distinguish the recoverable case (service still exists in the
+  # swarm catalog but has zero runnable tasks — fixable with
+  # force-redeploy) from the terminal case (service truly gone),
+  # so the orphan sweep can self-heal transient node partitions
+  # before falling back to marking the task as error.
   defp probe_swarm_service(id) do
-    with {:ok, %Req.Response{status: 200}} <-
-           Req.get(DockerApi.request(), url: "/services/#{id}"),
-         {:ok, [_ | _]} <- list_runnable_swarm_tasks(id) do
-      :present
-    else
-      {:ok, %Req.Response{status: 404}} -> :missing
-      {:ok, []} -> :missing
-      _ -> :unknown
+    case Req.get(DockerApi.request(), url: "/services/#{id}") do
+      {:ok, %Req.Response{status: 200}} ->
+        case list_runnable_swarm_tasks(id) do
+          {:ok, [_ | _]} -> :present
+          {:ok, []} -> :no_tasks
+          _ -> :unknown
+        end
+
+      {:ok, %Req.Response{status: 404}} ->
+        :gone
+
+      _ ->
+        :unknown
     end
   rescue
     _ -> :unknown
@@ -371,7 +433,7 @@ defmodule Camelot.Runtime.Reconciler do
   defp probe_engine_container(id) do
     case Req.get(DockerApi.request(), url: "/containers/#{id}/json") do
       {:ok, %Req.Response{status: 200}} -> :present
-      {:ok, %Req.Response{status: 404}} -> :missing
+      {:ok, %Req.Response{status: 404}} -> :gone
       _ -> :unknown
     end
   rescue
