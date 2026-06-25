@@ -97,6 +97,27 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
     :ok
   end
 
+  @doc """
+  Force swarm to redeploy the service's tasks without
+  deleting the service. Used to recover a service that
+  sits at `0/N` replicas after a transient node partition:
+  bumps `Spec.TaskTemplate.ForceUpdate` and POSTs the
+  current spec back, which makes swarm schedule a fresh
+  replica on whatever node matches the constraints.
+
+  Returns `{:error, :not_found}` if the service is genuinely
+  gone (caller should recreate), or `{:error, reason}` on
+  any other Docker API error.
+  """
+  @spec force_redeploy(String.t()) ::
+          :ok | {:error, :not_found} | {:error, term()}
+  def force_redeploy(service_id) when is_binary(service_id) do
+    with {:ok, %{"Version" => %{"Index" => version}, "Spec" => spec}} <-
+           fetch_service(service_id) do
+      post_service_update(service_id, version, bump_force_update(spec))
+    end
+  end
+
   # --- GenServer plumbing ---
 
   @doc false
@@ -219,16 +240,87 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
     name = Spec.task_runner_name(task_id)
     payload = service_create_payload(spec, name)
 
+    case post_create(payload) do
+      {:ok, id} ->
+        {:ok, id}
+
+      {:error, :name_conflict} ->
+        Logger.info(
+          "Swarm.TaskService #{task_id}: service name " <>
+            "#{name} already exists; deleting stale " <>
+            "service and retrying create"
+        )
+
+        delete_service_by_name(name)
+        post_create_strict(payload)
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp post_create(payload) do
     case Req.post(DockerApi.request(), url: "/services/create", json: payload) do
       {:ok, %Req.Response{status: status, body: %{"ID" => id}}}
       when status in 200..299 ->
         {:ok, id}
+
+      {:ok, %Req.Response{status: 409}} ->
+        {:error, :name_conflict}
 
       {:ok, resp} ->
         {:error, {:create_failed, resp.status, resp.body}}
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp post_create_strict(payload) do
+    case post_create(payload) do
+      {:ok, id} ->
+        {:ok, id}
+
+      {:error, :name_conflict} ->
+        {:error, {:create_failed, 409, %{"message" => "service name still conflicts after delete-by-name retry"}}}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp delete_service_by_name(name) do
+    Req.delete(DockerApi.request(), url: "/services/#{name}")
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  defp fetch_service(id) do
+    case Req.get(DockerApi.request(), url: "/services/#{id}") do
+      {:ok, %Req.Response{status: 200, body: body}} -> {:ok, body}
+      {:ok, %Req.Response{status: 404}} -> {:error, :not_found}
+      {:ok, resp} -> {:error, {:fetch_failed, resp.status, resp.body}}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp bump_force_update(spec) do
+    template = Map.get(spec, "TaskTemplate", %{})
+    current = Map.get(template, "ForceUpdate", 0)
+    Map.put(spec, "TaskTemplate", Map.put(template, "ForceUpdate", current + 1))
+  end
+
+  defp post_service_update(id, version, spec) do
+    case Req.post(DockerApi.request(),
+           url: "/services/#{id}/update",
+           params: [version: version],
+           json: spec
+         ) do
+      {:ok, %Req.Response{status: status}} when status in 200..299 -> :ok
+      {:ok, %Req.Response{status: 404}} -> {:error, :not_found}
+      {:ok, resp} -> {:error, {:update_failed, resp.status, resp.body}}
+      {:error, _} = err -> err
     end
   end
 
