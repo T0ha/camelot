@@ -25,14 +25,20 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   require Logger
 
   # Polling intervals — pure rate-limiters on the loops below.
-  # We deliberately do NOT bound these loops with a wall-clock
-  # deadline: container scheduling, image pulls on workers, and
-  # in-container clone+asdf install can each legitimately take
-  # arbitrarily long. Anything that's broken upstream surfaces
-  # as an :error from the Docker API and breaks the loop, so
-  # we never spin forever on a real failure.
+  # We deliberately do NOT bound the *not-ready* / *not-yet-exited*
+  # paths with a wall-clock deadline: container scheduling, image
+  # pulls on workers, and in-container clone+asdf install can each
+  # legitimately take arbitrarily long.
+  #
+  # `@transport_budget_ms` is a separate, narrower budget that ONLY
+  # applies to time accumulated in `Req.TransportError` retries.
+  # That class of failure means the node proxy IP is stale or the
+  # node is unreachable — neither of which the user's task itself
+  # can resolve, so we re-resolve the proxy and try again. After
+  # the budget expires we give up and surface the transport error.
   @ready_poll_ms 500
   @exit_poll_ms 1_000
+  @transport_budget_ms 60_000
 
   defstruct [
     :owner,
@@ -118,10 +124,11 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   defp start_exec(%__MODULE__{spec: spec} = state) do
     with {:ok, ts_pid} <- TaskService.ensure_started(spec),
          {:ok, service_id} <- TaskService.get_service_id(ts_pid),
-         {:ok, container_id, node_id} <- resolve_container(service_id),
-         {:ok, node_req} <- ProxyRouter.request_for_node(node_id),
-         :ok <- wait_for_ready(node_req, container_id),
-         {:ok, exec_id} <- create_exec(node_req, container_id, spec) do
+         {:ok, container_id, node_id} <-
+           resolve_container(service_id, @transport_budget_ms),
+         :ok <- wait_for_ready(node_id, container_id, @transport_budget_ms),
+         {:ok, exec_id} <- create_exec(node_id, container_id, spec, @transport_budget_ms),
+         {:ok, node_req} <- ProxyRouter.request_for_node(node_id) do
       state = %{
         state
         | service_id: service_id,
@@ -135,9 +142,18 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
     end
   end
 
-  defp resolve_container(service_id) do
-    with {:ok, tasks} <- list_service_tasks(service_id) do
-      handle_pick(pick_running_task(tasks), service_id)
+  defp resolve_container(service_id, transport_budget_ms) do
+    case list_service_tasks(service_id) do
+      {:ok, tasks} ->
+        handle_pick(pick_running_task(tasks), service_id, transport_budget_ms)
+
+      {:error, %Req.TransportError{}} = err ->
+        absorb_transport_error(err, transport_budget_ms, fn remaining ->
+          resolve_container(service_id, remaining)
+        end)
+
+      {:error, _} = err ->
+        err
     end
   end
 
@@ -152,13 +168,13 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
     end
   end
 
-  defp handle_pick({:ok, container_id, node_id}, _service_id) do
+  defp handle_pick({:ok, container_id, node_id}, _service_id, _budget) do
     {:ok, container_id, node_id}
   end
 
-  defp handle_pick(:pending, service_id) do
+  defp handle_pick(:pending, service_id, transport_budget_ms) do
     Process.sleep(@ready_poll_ms)
-    resolve_container(service_id)
+    resolve_container(service_id, transport_budget_ms)
   end
 
   defp pick_running_task(tasks) do
@@ -177,19 +193,40 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
     end)
   end
 
-  defp wait_for_ready(node_req, container_id) do
-    case ready_check(node_req, container_id) do
-      :ok ->
-        :ok
+  defp wait_for_ready(node_id, container_id, transport_budget_ms) do
+    case ProxyRouter.request_for_node(node_id) do
+      {:ok, node_req} ->
+        handle_ready_check(
+          ready_check(node_req, container_id),
+          node_id,
+          container_id,
+          transport_budget_ms
+        )
 
-      :not_ready ->
-        Process.sleep(@ready_poll_ms)
-        wait_for_ready(node_req, container_id)
+      {:error, %Req.TransportError{}} = err ->
+        absorb_node_transport_error(node_id, err, transport_budget_ms, fn remaining ->
+          wait_for_ready(node_id, container_id, remaining)
+        end)
 
       {:error, _} = err ->
         err
     end
   end
+
+  defp handle_ready_check(:ok, _node_id, _container_id, _budget), do: :ok
+
+  defp handle_ready_check(:not_ready, node_id, container_id, transport_budget_ms) do
+    Process.sleep(@ready_poll_ms)
+    wait_for_ready(node_id, container_id, transport_budget_ms)
+  end
+
+  defp handle_ready_check({:error, %Req.TransportError{}} = err, node_id, container_id, transport_budget_ms) do
+    absorb_node_transport_error(node_id, err, transport_budget_ms, fn remaining ->
+      wait_for_ready(node_id, container_id, remaining)
+    end)
+  end
+
+  defp handle_ready_check({:error, _} = err, _node_id, _container_id, _budget), do: err
 
   defp ready_check(node_req, container_id) do
     payload = %{
@@ -211,7 +248,7 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
     end
   end
 
-  defp create_exec(node_req, container_id, %Spec{} = spec) do
+  defp create_exec(node_id, container_id, %Spec{} = spec, transport_budget_ms) do
     payload = %{
       "AttachStdout" => true,
       "AttachStderr" => true,
@@ -222,7 +259,25 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
       "Cmd" => ["/exec-wrapper.sh"] ++ spec.argv
     }
 
-    case Req.post(node_req, url: "/containers/#{container_id}/exec", json: reject_nil(payload)) do
+    with {:ok, node_req} <- ProxyRouter.request_for_node(node_id),
+         {:ok, exec_id} <- post_exec_create(node_req, container_id, payload) do
+      {:ok, exec_id}
+    else
+      {:error, %Req.TransportError{}} = err ->
+        absorb_node_transport_error(node_id, err, transport_budget_ms, fn remaining ->
+          create_exec(node_id, container_id, spec, remaining)
+        end)
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp post_exec_create(node_req, container_id, payload) do
+    case Req.post(node_req,
+           url: "/containers/#{container_id}/exec",
+           json: reject_nil(payload)
+         ) do
       {:ok, %Req.Response{status: 201, body: %{"Id" => exec_id}}} ->
         {:ok, exec_id}
 
@@ -232,6 +287,39 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
       {:error, _} = err ->
         err
     end
+  end
+
+  # Transport errors against the manager proxy (used by
+  # `resolve_container/2`): no per-node cache to invalidate, just
+  # sleep and retry within the budget.
+  defp absorb_transport_error({:error, _} = err, budget_ms, _retry_fn) when budget_ms <= 0, do: err
+
+  defp absorb_transport_error({:error, reason}, budget_ms, retry_fn) do
+    Logger.warning(
+      "Swarm.ExecSession: transient transport error against manager " <>
+        "proxy (#{inspect(reason)}); retrying with #{budget_ms}ms budget"
+    )
+
+    Process.sleep(@ready_poll_ms)
+    retry_fn.(budget_ms - @ready_poll_ms)
+  end
+
+  # Transport errors against a node proxy: invalidate the cached IP
+  # so the retry re-resolves via `GET /tasks`, then loop within the
+  # budget. Covers the case where the node's `docker-socket-proxy`
+  # was rescheduled and its overlay IP changed.
+  defp absorb_node_transport_error(_node_id, {:error, _} = err, budget_ms, _retry_fn) when budget_ms <= 0, do: err
+
+  defp absorb_node_transport_error(node_id, {:error, reason}, budget_ms, retry_fn) do
+    Logger.warning(
+      "Swarm.ExecSession: transient transport error against node " <>
+        "#{node_id} proxy (#{inspect(reason)}); invalidating proxy " <>
+        "cache and retrying with #{budget_ms}ms budget"
+    )
+
+    ProxyRouter.invalidate(node_id)
+    Process.sleep(@ready_poll_ms)
+    retry_fn.(budget_ms - @ready_poll_ms)
   end
 
   # Build the per-exec `Env` array. Re-materialises secrets from
@@ -282,7 +370,7 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
 
     poll_task =
       Task.async(fn ->
-        poll_exec_exit(state.node_req, state.exec_id, parent)
+        poll_exec_exit(state.node_id, state.exec_id, parent)
       end)
 
     %{state | stream_task: stream_task, poll_task: poll_task}
@@ -318,16 +406,38 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   # `POST /exec/<id>/start` (which actually starts it). Treat that
   # pre-start state the same as "still running" — only ExitCode as
   # an integer means the process has actually exited.
-  defp poll_exec_exit(node_req, exec_id, parent) do
+  #
+  # Transport errors here mean the node proxy IP is likely stale
+  # (the proxy task was rescheduled). Invalidate the cache so the
+  # next iteration re-resolves; the exec_id itself is durable in
+  # dockerd, so once we reach the right proxy again we'll learn the
+  # exit code.
+  defp poll_exec_exit(node_id, exec_id, parent) do
+    case ProxyRouter.request_for_node(node_id) do
+      {:ok, node_req} -> poll_via_node_req(node_id, node_req, exec_id, parent)
+      {:error, _} -> retry_poll_after_invalidate(node_id, exec_id, parent)
+    end
+  end
+
+  defp poll_via_node_req(node_id, node_req, exec_id, parent) do
     case Req.get(node_req, url: "/exec/#{exec_id}/json") do
       {:ok, %Req.Response{status: 200, body: %{"Running" => false, "ExitCode" => code}}}
       when is_integer(code) ->
         send(parent, {:exit_code, code})
 
+      {:error, %Req.TransportError{}} ->
+        retry_poll_after_invalidate(node_id, exec_id, parent)
+
       _ ->
         Process.sleep(@exit_poll_ms)
-        poll_exec_exit(node_req, exec_id, parent)
+        poll_exec_exit(node_id, exec_id, parent)
     end
+  end
+
+  defp retry_poll_after_invalidate(node_id, exec_id, parent) do
+    ProxyRouter.invalidate(node_id)
+    Process.sleep(@exit_poll_ms)
+    poll_exec_exit(node_id, exec_id, parent)
   end
 
   # Cancel path: no first-party /exec/<id>/kill endpoint exists.
