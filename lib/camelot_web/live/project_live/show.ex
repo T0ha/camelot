@@ -6,6 +6,7 @@ defmodule CamelotWeb.ProjectLive.Show do
 
   alias Camelot.Accounts.User
   alias Camelot.Projects.Project
+  alias CamelotWeb.Components.EnvVarEditor
   alias CamelotWeb.Scope
   alias Phoenix.LiveView.Socket
 
@@ -89,6 +90,12 @@ defmodule CamelotWeb.ProjectLive.Show do
           {@project.github_repo_url}
         </:item>
       </.list>
+
+      <.live_component
+        module={EnvVarEditor}
+        id="project-env-vars"
+        scope={{:project, @project.id}}
+      />
     </div>
     """
   end

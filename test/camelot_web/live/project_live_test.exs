@@ -66,6 +66,67 @@ defmodule CamelotWeb.ProjectLiveTest do
     end
   end
 
+  describe "environment variables" do
+    setup %{user: user} do
+      {:ok, project} =
+        Ash.create(Project, %{name: "env-#{System.unique_integer()}", path: "/tmp/env"}, actor: user)
+
+      %{project: project}
+    end
+
+    test "adds a plain env var and lists its value", %{conn: conn, project: project} do
+      {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}")
+
+      html =
+        view
+        |> form("#env-var-form-project-env-vars", %{
+          "key" => "DATABASE_URL",
+          "value" => "postgres://demo",
+          "secret" => "false"
+        })
+        |> render_submit()
+
+      assert html =~ "DATABASE_URL"
+      assert html =~ "postgres://demo"
+    end
+
+    test "masks a secret env var's value", %{conn: conn, project: project} do
+      {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}")
+
+      html =
+        view
+        |> form("#env-var-form-project-env-vars", %{
+          "key" => "NATS_URL",
+          "value" => "nats://user:pw@host",
+          "secret" => "true"
+        })
+        |> render_submit()
+
+      assert html =~ "NATS_URL"
+      refute html =~ "nats://user:pw@host"
+      assert html =~ "••••"
+    end
+
+    test "deletes an env var", %{conn: conn, project: project} do
+      {:ok, _} =
+        Ash.create(Camelot.Projects.EnvVar, %{
+          key: "GONE",
+          value: "x",
+          project_id: project.id
+        })
+
+      {:ok, view, html} = live(conn, ~p"/projects/#{project.id}")
+      assert html =~ "GONE"
+
+      html =
+        view
+        |> element(~s(button[phx-click="delete_env_var"]))
+        |> render_click()
+
+      refute html =~ "GONE"
+    end
+  end
+
   describe "scoping" do
     test "non-admin sees only memberships", %{conn: conn, user: user} do
       {:ok, _mine} =
