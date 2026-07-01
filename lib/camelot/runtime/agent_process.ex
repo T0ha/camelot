@@ -31,6 +31,7 @@ defmodule Camelot.Runtime.AgentProcess do
   alias Camelot.Board.TaskMessage
   alias Camelot.Runtime.AgentConfig
   alias Camelot.Runtime.AgentRegistry
+  alias Camelot.Runtime.EnvVarResolver
   alias Camelot.Runtime.OutputParser
   alias Camelot.Runtime.Runner
   alias Camelot.Runtime.Runner.LocalPort
@@ -442,7 +443,11 @@ defmodule Camelot.Runtime.AgentProcess do
       service_name: Spec.service_name(state.current_session_id),
       owner_pid: self(),
       argv: argv,
-      env: config |> AgentConfig.env_for_port() |> normalise_env(),
+      env:
+        config
+        |> AgentConfig.env_for_port()
+        |> normalise_env()
+        |> Map.merge(EnvVarResolver.resolve(agent)),
       image: config.runner_image,
       cwd: cwd_for(backend, agent),
       profile_volume: if(agent.user_id, do: "camelot_user_#{agent.user_id}_profile"),

@@ -8,5 +8,6 @@ defmodule Camelot.Projects do
     resource(Camelot.Projects.Project)
     resource(Camelot.Projects.Membership)
     resource(Camelot.Projects.Mcp)
+    resource(Camelot.Projects.EnvVar)
   end
 end
