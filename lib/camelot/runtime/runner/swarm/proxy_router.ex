@@ -77,10 +77,7 @@ defmodule Camelot.Runtime.Runner.Swarm.ProxyRouter do
 
     case Req.get(DockerApi.request(), url: "/tasks", params: [filters: filters]) do
       {:ok, %Req.Response{status: 200, body: tasks}} when is_list(tasks) ->
-        tasks
-        |> Enum.find(&match_running_on_node?(&1, node_id))
-        |> extract_overlay_ip()
-        |> case do
+        case proxy_ip_for_node(tasks, node_id) do
           nil ->
             Logger.warning("ProxyRouter: no proxy task on node #{node_id}")
             {:error, :no_proxy_on_node}
@@ -97,8 +94,25 @@ defmodule Camelot.Runtime.Runner.Swarm.ProxyRouter do
     end
   end
 
+  @doc """
+  Picks the overlay IP of the *desired-running* proxy task on
+  `node_id` from a Docker `GET /tasks` list, or `nil`.
+
+  Requires `DesiredState == "running"` so a rescheduled proxy's
+  orphaned old task — which can linger in `Status.State ==
+  "running"` advertising a stale overlay IP — is never chosen.
+  Routing to that IP would produce endless transport errors.
+  """
+  @spec proxy_ip_for_node([map()], String.t()) :: String.t() | nil
+  def proxy_ip_for_node(tasks, node_id) do
+    tasks
+    |> Enum.find(&match_running_on_node?(&1, node_id))
+    |> extract_overlay_ip()
+  end
+
   defp match_running_on_node?(task, node_id) do
     task["NodeID"] == node_id and
+      task["DesiredState"] == "running" and
       get_in(task, ["Status", "State"]) == "running"
   end
 
