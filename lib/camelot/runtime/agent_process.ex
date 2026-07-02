@@ -253,42 +253,23 @@ defmodule Camelot.Runtime.AgentProcess do
 
   def handle_info({:runner_exit, handle, exit_code}, %{runner: handle} = state) do
     Logger.info("Agent #{state.agent_id} runner exited with code #{exit_code}")
-
-    parsed = OutputParser.parse(parser_for(state), state.output_buffer)
-    denials = extract_denials(parsed)
-    finish_session(state, exit_code, parsed, denials)
-    if state.current_session_id, do: SessionRegistry.unregister(state.current_session_id)
-
-    failed? = exit_code != 0 or match?({:error, _}, parsed)
-
-    if failed? and state.retry_count < state.max_retries do
-      release_pool_slot(state)
-      schedule_retry(state)
-    else
-      handle_cli_exit(state, exit_code, parsed)
-      if failed?, do: mark_task_error(state.current_task_id)
-      release_and_idle(state)
-
-      if denials == [] do
-        {:noreply, reset_runner(state)}
-      else
-        {:noreply, clear_runner(state)}
-      end
-    end
+    finalize_runner_exit(state, exit_code, nil)
   end
 
   # Runner GenServer died without sending us :runner_exit (e.g. a
-  # linked Task inside the runner crashed). Treat it as an exit-1
-  # so we finalise the session and clean up state — otherwise the
-  # AgentProcess sits forever pinned to a dead runner pid.
+  # linked Task inside the runner crashed, or the exec never
+  # started because the node proxy was unreachable). Finalise as
+  # exit-1 so we clean up — otherwise the AgentProcess sits forever
+  # pinned to a dead runner pid. The death `reason` is threaded
+  # through so the session records it instead of the misleading
+  # "empty output" the parser would infer from an empty buffer.
   def handle_info({:DOWN, _ref, :process, pid, reason}, %{runner: pid} = state) do
     Logger.warning(
       "Agent #{state.agent_id} runner #{inspect(pid)} died without " <>
         "sending exit: #{inspect(reason)}"
     )
 
-    send(self(), {:runner_exit, pid, 1})
-    {:noreply, state}
+    finalize_runner_exit(state, 1, reason)
   end
 
   def handle_info({:DOWN, _, _, _, _}, state), do: {:noreply, state}
@@ -313,6 +294,48 @@ defmodule Camelot.Runtime.AgentProcess do
   def handle_info(_msg, state), do: {:noreply, state}
 
   # --- Internals ---
+
+  # Shared finalisation for a runner leaving. A clean exit passes
+  # `died_reason: nil` and the result is parsed from the captured
+  # output buffer; an abnormal death passes the exit `reason`, whose
+  # message is recorded directly (the buffer is meaningless there).
+  defp finalize_runner_exit(state, exit_code, died_reason) do
+    parsed = parsed_for_exit(state, died_reason)
+    denials = extract_denials(parsed)
+    finish_session(state, exit_code, parsed, denials)
+    if state.current_session_id, do: SessionRegistry.unregister(state.current_session_id)
+
+    failed? = exit_code != 0 or match?({:error, _}, parsed)
+
+    if failed? and state.retry_count < state.max_retries do
+      release_pool_slot(state)
+      schedule_retry(state)
+    else
+      handle_cli_exit(state, exit_code, parsed)
+      if failed?, do: mark_task_error(state.current_task_id)
+      release_and_idle(state)
+
+      if denials == [] do
+        {:noreply, reset_runner(state)}
+      else
+        {:noreply, clear_runner(state)}
+      end
+    end
+  end
+
+  defp parsed_for_exit(state, nil) do
+    OutputParser.parse(parser_for(state), state.output_buffer)
+  end
+
+  defp parsed_for_exit(_state, reason) do
+    {:error, runner_died_message(reason)}
+  end
+
+  @doc false
+  @spec runner_died_message(term()) :: String.t()
+  def runner_died_message(reason) do
+    "runner exited before producing output (#{inspect(reason)})"
+  end
 
   defp parser_for(%__MODULE__{config: %AgentConfig{parser: p}}), do: p
   defp parser_for(_), do: :raw_text

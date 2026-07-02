@@ -177,14 +177,30 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
     resolve_container(service_id, transport_budget_ms)
   end
 
-  defp pick_running_task(tasks) do
+  @doc """
+  Selects the container id + node id of the service's live
+  placement from a Docker `GET /tasks` list, or `:pending`
+  when no such task exists yet (the caller polls).
+
+  A task qualifies only when it is BOTH `DesiredState` and
+  `Status.State` `"running"`. Filtering on `DesiredState` is
+  essential: Swarm keeps historical task records, and a
+  shut-down replica on an unreachable or memory-starved node
+  can linger in `Status.State == "running"` long after a
+  reschedule created a new replica elsewhere. Selecting that
+  orphaned task would route every exec at a dead node until
+  the transport budget expires.
+  """
+  @spec pick_running_task([map()]) :: {:ok, String.t(), String.t()} | :pending
+  def pick_running_task(tasks) do
     Enum.find_value(tasks, :pending, fn task ->
+      desired = task["DesiredState"]
       state = get_in(task, ["Status", "State"])
       cid = get_in(task, ["Status", "ContainerStatus", "ContainerID"])
       node = task["NodeID"]
 
-      case {state, cid, node} do
-        {"running", cid, node} when is_binary(cid) and is_binary(node) ->
+      case {desired, state, cid, node} do
+        {"running", "running", cid, node} when is_binary(cid) and is_binary(node) ->
           {:ok, cid, node}
 
         _ ->

@@ -172,4 +172,14 @@ defmodule Camelot.Runtime.AgentProcessTest do
                )
     end
   end
+
+  describe "runner_died_message/1" do
+    test "surfaces the transport reason instead of an empty-output guess" do
+      reason = %Req.TransportError{reason: :ehostunreach}
+      msg = AgentProcess.runner_died_message(reason)
+
+      assert msg =~ "runner exited before producing output"
+      assert msg =~ "ehostunreach"
+    end
+  end
 end
