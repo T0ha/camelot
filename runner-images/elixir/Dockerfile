@@ -10,7 +10,7 @@ RUN bash -c "asdf plugin add erlang https://github.com/asdf-vm/asdf-erlang.git"
 RUN bash -c "asdf plugin add elixir https://github.com/asdf-vm/asdf-elixir.git"
 
 # A reasonable default so an empty .tool-versions still works
-RUN bash -c "asdf install erlang 27.1"
-RUN bash -c "asdf install elixir 1.18.0-otp-27"
-RUN bash -c "printf 'erlang 27.1\nelixir 1.18.0-otp-27\n' >> /opt/asdf/default-tool-versions \
+RUN bash -c "asdf install erlang 28.0.2"
+RUN bash -c "asdf install elixir 1.18.4-otp-28"
+RUN bash -c "printf 'erlang 28.0.2\nelixir 1.18.4-otp-28\n' >> /opt/asdf/default-tool-versions \
           && cp /opt/asdf/default-tool-versions \$HOME/.tool-versions"
