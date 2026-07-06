@@ -52,7 +52,7 @@ defmodule Camelot.Runtime.OutputParser do
         {:ok,
          %{
            result_text: result_text,
-           cost_usd: data["cost_usd"],
+           cost_usd: data["cost_usd"] || data["total_cost_usd"],
            duration_ms: data["duration_ms"],
            permission_denials: denials
          }}
@@ -65,21 +65,45 @@ defmodule Camelot.Runtime.OutputParser do
     end
   end
 
-  # Tries the whole buffer first (fast path for clean output), then
-  # falls back to scanning lines from the end. Container runners emit
-  # entrypoint log lines before the CLI output and terminal escape
-  # codes after, so a whole-buffer decode often fails even though a
-  # valid JSON line is in there.
+  # Tries the whole buffer first (fast path for a single-object
+  # `--output-format json` result), then falls back to scanning the
+  # per-line objects. Container runners emit entrypoint log lines
+  # before the CLI output and terminal escape codes after, so a
+  # whole-buffer decode often fails even though valid JSON lines are
+  # in there.
   defp extract_json(buffer) do
     case Jason.decode(String.trim(buffer)) do
-      {:ok, data} ->
-        {:ok, data}
+      {:ok, data} -> {:ok, data}
+      {:error, _} -> extract_json_from_lines(buffer)
+    end
+  end
 
-      {:error, _} ->
-        buffer
-        |> String.split(~r/\r?\n/)
-        |> Enum.reverse()
-        |> Enum.find_value(:error, &decode_line/1)
+  # `--output-format stream-json` emits one JSON object per line:
+  # a system/init event, assistant/tool events, then a final
+  # `type: "result"` event carrying the same fields the single-object
+  # format uses. Prefer that result event; fall back to the last
+  # decodable object so a single-object buffer wrapped in log/terminal
+  # noise still parses.
+  defp extract_json_from_lines(buffer) do
+    objects =
+      buffer
+      |> String.split(~r/\r?\n/)
+      |> Enum.flat_map(&decode_line_to_list/1)
+
+    pick_object(Enum.find(objects, &result_event?/1), objects)
+  end
+
+  defp pick_object(nil, []), do: :error
+  defp pick_object(nil, objects), do: {:ok, List.last(objects)}
+  defp pick_object(result, _objects), do: {:ok, result}
+
+  defp result_event?(%{"type" => "result"}), do: true
+  defp result_event?(_), do: false
+
+  defp decode_line_to_list(line) do
+    case decode_line(line) do
+      {:ok, data} -> [data]
+      _ -> []
     end
   end
 

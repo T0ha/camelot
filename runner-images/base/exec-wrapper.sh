@@ -33,4 +33,15 @@ fi
 
 cd /workspace 2>/dev/null || true
 
-exec "$@"
+# Tee the agent's output to a per-session file so the BEAM can fetch
+# the complete result with a short `docker exec cat` after the process
+# exits, instead of depending on the long-lived, mostly-idle exec
+# stream (which an intermediary can sever on long runs, losing the
+# single final JSON blob). stdout still flows to the exec stream for
+# live output. `set -e` must not abort before we read PIPESTATUS.
+out="/tmp/camelot-output-${CAMELOT_SESSION_ID:-session}.log"
+set +e
+"$@" 2>&1 | tee "$out"
+code=${PIPESTATUS[0]}
+set -e
+exit "$code"

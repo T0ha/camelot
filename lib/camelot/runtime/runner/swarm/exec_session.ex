@@ -111,6 +111,19 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   def handle_info({:stream_done, _}, state), do: {:noreply, state}
 
   def handle_info({:exit_code, code}, %__MODULE__{} = state) do
+    # The live stream can be severed on long, quiet runs, so the
+    # accumulated buffer may be incomplete. Fetch the durable copy the
+    # exec-wrapper tee'd to a file and hand it to the owner as the
+    # authoritative result; on any failure we fall back to whatever
+    # the stream delivered.
+    case fetch_output_file(state) do
+      {:ok, bytes} when bytes != "" ->
+        send(state.owner, {:runner_output, self(), bytes})
+
+      _ ->
+        :ok
+    end
+
     send(state.owner, {:runner_exit, self(), code})
     {:stop, :normal, state}
   end
@@ -345,8 +358,12 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   # fallback only; these values override anything mounted from
   # /run/secrets/ at container-start time.
   defp session_env(%Spec{} = spec) do
-    secret_env(spec) ++ mcp_env(spec)
+    session_id_env(spec) ++ secret_env(spec) ++ mcp_env(spec)
   end
+
+  # The exec-wrapper tees output to /tmp/camelot-output-<id>.log so we
+  # can fetch it after exit; it needs the session id to name the file.
+  defp session_id_env(%Spec{session_id: id}), do: ["CAMELOT_SESSION_ID=#{id}"]
 
   defp secret_env(%Spec{secrets: secrets}) do
     Enum.flat_map(secrets, &secret_to_env/1)
@@ -455,6 +472,32 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
     Process.sleep(@exit_poll_ms)
     poll_exec_exit(node_id, exec_id, parent)
   end
+
+  # Fetch the exec-wrapper's tee'd output file with a short `cat`
+  # exec. Short and chatty, so it can't hit the idle timeout that
+  # loses the long-lived agent stream. Returns `:error` (caller falls
+  # back to the streamed buffer) on any missing field or Docker error.
+  defp fetch_output_file(%__MODULE__{session_id: sid, container_id: cid, node_req: req})
+       when is_binary(sid) and is_binary(cid) and not is_nil(req) do
+    payload = %{
+      "AttachStdout" => true,
+      "AttachStderr" => false,
+      "Tty" => false,
+      "Cmd" => ["cat", "/tmp/camelot-output-#{sid}.log"]
+    }
+
+    with {:ok, %Req.Response{status: 201, body: %{"Id" => exec_id}}} <-
+           Req.post(req, url: "/containers/#{cid}/exec", json: payload),
+         {:ok, %Req.Response{status: 200, body: body}} when is_binary(body) <-
+           Req.post(req, url: "/exec/#{exec_id}/start", json: %{"Detach" => false, "Tty" => false}) do
+      {payloads, _rest} = DockerStreamDemux.drain(<<>>, body)
+      {:ok, IO.iodata_to_binary(payloads)}
+    else
+      _ -> :error
+    end
+  end
+
+  defp fetch_output_file(_), do: :error
 
   # Cancel path: no first-party /exec/<id>/kill endpoint exists.
   # Docker only kills exec processes by signalling the whole

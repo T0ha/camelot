@@ -68,6 +68,62 @@ defmodule Camelot.Runtime.OutputParserTest do
     end
   end
 
+  describe "parse/2 with :claude_code_json — stream-json (NDJSON)" do
+    test "picks the type:result event out of a multi-line stream" do
+      buffer =
+        Enum.map_join(
+          [
+            %{"type" => "system", "subtype" => "init", "session_id" => "abc"},
+            %{"type" => "assistant", "message" => %{"content" => [%{"type" => "text", "text" => "working"}]}},
+            %{
+              "type" => "result",
+              "subtype" => "success",
+              "is_error" => false,
+              "result" => "All done.",
+              "total_cost_usd" => 0.12,
+              "duration_ms" => 4567,
+              "permission_denials" => []
+            }
+          ],
+          "\n",
+          &Jason.encode!/1
+        )
+
+      assert {:ok, parsed} = OutputParser.parse(:claude_code_json, buffer)
+      assert parsed.result_text == "All done."
+      assert parsed.cost_usd == 0.12
+      assert parsed.duration_ms == 4567
+      assert parsed.permission_denials == []
+    end
+
+    test "prefers type:result even when a later line also decodes" do
+      buffer =
+        Enum.map_join(
+          [
+            %{"type" => "result", "result" => "the answer", "is_error" => false},
+            %{"type" => "trailing", "note" => "should be ignored"}
+          ],
+          "\n",
+          &Jason.encode!/1
+        )
+
+      assert {:ok, %{result_text: "the answer"}} =
+               OutputParser.parse(:claude_code_json, buffer)
+    end
+
+    test "surfaces is_error from a stream-json result event" do
+      buffer =
+        Enum.map_join(
+          [%{"type" => "system", "subtype" => "init"}, %{"type" => "result", "is_error" => true, "result" => "boom"}],
+          "\n",
+          &Jason.encode!/1
+        )
+
+      assert {:error, "claude error: boom"} =
+               OutputParser.parse(:claude_code_json, buffer)
+    end
+  end
+
   describe "parse/2 with :raw_text" do
     test "returns raw text as-is" do
       buffer = "some raw output\nwith newlines"

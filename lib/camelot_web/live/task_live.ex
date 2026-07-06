@@ -25,12 +25,18 @@ defmodule CamelotWeb.TaskLive do
           Phoenix.PubSub.subscribe(Camelot.PubSub, "task:#{id}")
         end
 
-        {:ok,
-         assign(socket,
-           page_title: task.title,
-           task: task,
-           message_input: ""
-         )}
+        socket =
+          socket
+          |> assign(
+            page_title: task.title,
+            task: task,
+            message_input: "",
+            live_output: "",
+            subscribed_agent_id: nil
+          )
+          |> maybe_subscribe_agent(task)
+
+        {:ok, socket}
 
       :forbidden ->
         {:ok,
@@ -63,7 +69,18 @@ defmodule CamelotWeb.TaskLive do
         :messages
       ])
 
-    {:noreply, assign(socket, task: task)}
+    {:noreply,
+     socket
+     |> assign(task: task)
+     |> maybe_subscribe_agent(task)
+     |> reset_live_output_unless_running(task)}
+  end
+
+  # Live agent output (one NDJSON chunk per broadcast). Accumulate,
+  # bounded, for the running-session panel.
+  def handle_info({:agent_output, _agent_id, chunk}, socket) do
+    combined = socket.assigns.live_output <> to_string(chunk)
+    {:noreply, assign(socket, live_output: cap_tail(combined, 20_000))}
   end
 
   @impl true
@@ -439,6 +456,16 @@ defmodule CamelotWeb.TaskLive do
           </form>
         </div>
 
+        <div
+          :if={@task.state == :in_progress && @live_output != ""}
+          class="space-y-2"
+        >
+          <h3 class="font-semibold flex items-center gap-2">
+            Live output <span class="loading loading-dots loading-xs"></span>
+          </h3>
+          <pre class="text-xs overflow-auto max-h-96 bg-base-300 p-2 rounded whitespace-pre-wrap">{humanize_stream(@live_output)}</pre>
+        </div>
+
         <div class="space-y-4">
           <h3 class="font-semibold">Sessions</h3>
           <div
@@ -600,6 +627,80 @@ defmodule CamelotWeb.TaskLive do
       []
     end
   end
+
+  # Subscribe to the running agent's live-output topic once the task
+  # has an agent. Idempotent per agent id so a re-render/reassign
+  # doesn't double-subscribe (which would duplicate every chunk).
+  defp maybe_subscribe_agent(socket, %Task{agent_id: nil}), do: socket
+
+  defp maybe_subscribe_agent(%{assigns: %{subscribed_agent_id: id}} = socket, %Task{agent_id: id}) do
+    socket
+  end
+
+  defp maybe_subscribe_agent(socket, %Task{agent_id: agent_id}) do
+    if connected?(socket) do
+      Phoenix.PubSub.subscribe(Camelot.PubSub, "agent:#{agent_id}")
+    end
+
+    assign(socket, subscribed_agent_id: agent_id)
+  end
+
+  # The live buffer is only meaningful while a session is actively
+  # running; once the task leaves :in_progress the persisted
+  # output_log takes over, so drop the buffer.
+  defp reset_live_output_unless_running(socket, %Task{state: :in_progress}), do: socket
+  defp reset_live_output_unless_running(socket, _task), do: assign(socket, live_output: "")
+
+  defp cap_tail(str, max) do
+    if String.length(str) > max do
+      String.slice(str, -max, max)
+    else
+      str
+    end
+  end
+
+  # Best-effort render of the NDJSON stream-json feed: surface
+  # assistant text and tool calls, collapse other events to a marker,
+  # and pass a trailing partial line through untouched.
+  defp humanize_stream(text) do
+    text
+    |> String.split(~r/\r?\n/)
+    |> Enum.map(&humanize_line/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join("\n")
+  end
+
+  defp humanize_line(line) do
+    case Jason.decode(line) do
+      {:ok, %{"type" => "assistant", "message" => %{"content" => content}}} ->
+        humanize_content(content)
+
+      {:ok, %{"type" => "result", "result" => result}} when is_binary(result) ->
+        result
+
+      {:ok, %{"type" => type}} ->
+        "· #{type}"
+
+      {:ok, _} ->
+        ""
+
+      {:error, _} ->
+        line
+    end
+  end
+
+  defp humanize_content(content) when is_list(content) do
+    content
+    |> Enum.map(&humanize_block/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join("\n")
+  end
+
+  defp humanize_content(_), do: ""
+
+  defp humanize_block(%{"type" => "text", "text" => text}) when is_binary(text), do: text
+  defp humanize_block(%{"type" => "tool_use", "name" => name}), do: "→ #{name}"
+  defp humanize_block(_), do: ""
 
   defp mark_session_clarified(nil), do: :ok
 
