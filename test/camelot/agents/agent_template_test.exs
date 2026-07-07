@@ -9,7 +9,7 @@ defmodule Camelot.Agents.AgentTemplateTest do
 
       assert template.name == "Claude Code"
       assert template.executable == "claude"
-      assert template.base_args == ["--output-format", "json"]
+      assert template.base_args == ["--output-format", "stream-json", "--verbose"]
       assert template.prompt_flag == "-p"
       assert template.tools_flag == "--allowedTools"
       assert template.parser == :claude_code_json

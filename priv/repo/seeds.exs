@@ -37,7 +37,7 @@ if !Enum.any?(existing_templates, &(&1.slug == "claude_code")) do
     slug: "claude_code",
     name: "Claude Code",
     executable: "claude",
-    base_args: ["--output-format", "json"],
+    base_args: ["--output-format", "stream-json", "--verbose"],
     prompt_flag: "-p",
     tools_flag: "--allowedTools",
     tools_separator: ",",

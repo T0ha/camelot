@@ -29,7 +29,8 @@ defmodule Camelot.Runtime.AgentConfigTest do
 
       assert args == [
                "--output-format",
-               "json",
+               "stream-json",
+               "--verbose",
                "--permission-mode",
                "plan",
                "--allowedTools",
@@ -50,7 +51,8 @@ defmodule Camelot.Runtime.AgentConfigTest do
 
       assert args == [
                "--output-format",
-               "json",
+               "stream-json",
+               "--verbose",
                "--permission-mode",
                "acceptEdits",
                "--allowedTools",
@@ -194,7 +196,7 @@ defmodule Camelot.Runtime.AgentConfigTest do
     %Camelot.Agents.AgentTemplate{
       command_prefix: nil,
       executable: "claude",
-      base_args: ["--output-format", "json"],
+      base_args: ["--output-format", "stream-json", "--verbose"],
       prompt_flag: "-p",
       tools_flag: "--allowedTools",
       tools_separator: ",",

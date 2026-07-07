@@ -251,6 +251,14 @@ defmodule Camelot.Runtime.AgentProcess do
     {:noreply, %{state | output_buffer: state.output_buffer <> output}}
   end
 
+  # Authoritative output fetched from the runner's tee'd file after
+  # the process exited. Replaces (not appends to) the streamed buffer,
+  # which may be incomplete if the live exec stream was severed on a
+  # long, quiet run. Arrives just before `{:runner_exit, ...}`.
+  def handle_info({:runner_output, handle, bytes}, %{runner: handle} = state) do
+    {:noreply, %{state | output_buffer: to_string(bytes)}}
+  end
+
   def handle_info({:runner_exit, handle, exit_code}, %{runner: handle} = state) do
     Logger.info("Agent #{state.agent_id} runner exited with code #{exit_code}")
     finalize_runner_exit(state, exit_code, nil)
