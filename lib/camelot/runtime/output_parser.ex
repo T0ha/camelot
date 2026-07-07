@@ -90,7 +90,21 @@ defmodule Camelot.Runtime.OutputParser do
       |> String.split(~r/\r?\n/)
       |> Enum.flat_map(&decode_line_to_list/1)
 
-    pick_object(Enum.find(objects, &result_event?/1), objects)
+    pick_object(last_result_event(objects), objects)
+  end
+
+  # A resumed session — the agent yields to a background sub-agent, then
+  # wakes on a task-notification — runs as several `claude` invocations
+  # concatenated into one log, each emitting its own `type: "result"`
+  # event. Every result event is a cumulative snapshot of the session, so
+  # the last top-level one is the terminal state (its cost and turn count
+  # already include the earlier invocations). Sub-agent streams are inlined
+  # with a non-nil `parent_tool_use_id`; skip them so a sub-agent result can
+  # never masquerade as the session result.
+  defp last_result_event(objects) do
+    objects
+    |> Enum.filter(&(result_event?(&1) and top_level?(&1)))
+    |> List.last()
   end
 
   defp pick_object(nil, []), do: :error
@@ -99,6 +113,10 @@ defmodule Camelot.Runtime.OutputParser do
 
   defp result_event?(%{"type" => "result"}), do: true
   defp result_event?(_), do: false
+
+  defp top_level?(%{"parent_tool_use_id" => nil}), do: true
+  defp top_level?(%{"parent_tool_use_id" => _id}), do: false
+  defp top_level?(_), do: true
 
   defp decode_line_to_list(line) do
     case decode_line(line) do

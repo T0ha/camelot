@@ -122,6 +122,68 @@ defmodule Camelot.Runtime.OutputParserTest do
       assert {:error, "claude error: boom"} =
                OutputParser.parse(:claude_code_json, buffer)
     end
+
+    test "picks the last result event of a resumed (multi-invocation) session" do
+      buffer =
+        Enum.map_join(
+          [
+            %{"type" => "system", "subtype" => "init", "session_id" => "s1"},
+            %{
+              "type" => "result",
+              "subtype" => "success",
+              "is_error" => false,
+              "result" => "I'll wait for the exploration agent's findings.",
+              "total_cost_usd" => 0.18,
+              "num_turns" => 4,
+              "permission_denials" => []
+            },
+            %{"type" => "system", "subtype" => "init", "session_id" => "s1"},
+            %{"type" => "assistant", "message" => %{"content" => [%{"type" => "text", "text" => "writing plan"}]}},
+            %{
+              "type" => "result",
+              "subtype" => "success",
+              "is_error" => false,
+              "result" => "I've completed the plan.",
+              "total_cost_usd" => 0.74,
+              "num_turns" => 8,
+              "permission_denials" => []
+            }
+          ],
+          "\n",
+          &Jason.encode!/1
+        )
+
+      assert {:ok, parsed} = OutputParser.parse(:claude_code_json, buffer)
+      assert parsed.result_text == "I've completed the plan."
+      # The last event is a cumulative snapshot: take its cost, don't sum.
+      assert parsed.cost_usd == 0.74
+    end
+
+    test "ignores sub-agent result events (non-nil parent_tool_use_id)" do
+      buffer =
+        Enum.map_join(
+          [
+            %{"type" => "system", "subtype" => "init"},
+            %{
+              "type" => "result",
+              "is_error" => false,
+              "result" => "session result",
+              "parent_tool_use_id" => nil
+            },
+            %{
+              "type" => "result",
+              "is_error" => false,
+              "result" => "sub-agent result",
+              "parent_tool_use_id" => "toolu_123"
+            }
+          ],
+          "\n",
+          &Jason.encode!/1
+        )
+
+      assert {:ok, %{result_text: "session result"}} =
+               OutputParser.parse(:claude_code_json, buffer)
+    end
   end
 
   describe "parse/2 with :raw_text" do
