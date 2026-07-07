@@ -26,18 +26,19 @@
   default: false;
   prefersdark: true;
   color-scheme: "dark";
-  --color-base-100: oklch(30.33% 0.016 252.42);
-  --color-base-200: oklch(25.26% 0.014 253.1);
-  --color-base-300: oklch(20.15% 0.012 254.09);
-  --color-base-content: oklch(97.807% 0.029 256.847);
-  --color-primary: oklch(58% 0.233 277.117);
-  --color-primary-content: oklch(96% 0.018 272.314);
-  --color-secondary: oklch(58% 0.233 277.117);
-  --color-secondary-content: oklch(96% 0.018 272.314);
-  --color-accent: oklch(60% 0.25 292.717);
-  --color-accent-content: oklch(96% 0.016 293.756);
-  --color-neutral: oklch(37% 0.044 257.287);
-  --color-neutral-content: oklch(98% 0.003 247.858);
+  /* Synced with landing page (html/style.css) dark theme */
+  --color-base-100: oklch(17.43% 0.023 283.8); /* --bg #0f0f1a */
+  --color-base-200: oklch(22.84% 0.038 282.932); /* --bg-alt #1a1a2e */
+  --color-base-300: oklch(24.53% 0.038 283.259); /* --bg-card #1e1e32 */
+  --color-base-content: oklch(92.15% 0.012 286.16); /* --text #e4e4ed */
+  --color-primary: oklch(70.9% 0.159 293.541); /* --primary #a78bfa */
+  --color-primary-content: oklch(17.43% 0.023 283.8); /* --primary-text #0f0f1a */
+  --color-secondary: oklch(60.56% 0.219 292.717); /* --primary-hover #8b5cf6 */
+  --color-secondary-content: oklch(17.43% 0.023 283.8);
+  --color-accent: oklch(81.12% 0.101 293.571); /* --badge-text #c4b5fd */
+  --color-accent-content: oklch(17.43% 0.023 283.8);
+  --color-neutral: oklch(31.36% 0.046 283.411); /* --border #2e2e48 */
+  --color-neutral-content: oklch(92.15% 0.012 286.16);
   --color-info: oklch(58% 0.158 241.966);
   --color-info-content: oklch(97% 0.013 236.62);
   --color-success: oklch(60% 0.118 184.704);
@@ -46,12 +47,12 @@
   --color-warning-content: oklch(98% 0.022 95.277);
   --color-error: oklch(58% 0.253 17.585);
   --color-error-content: oklch(96% 0.015 12.422);
-  --radius-selector: 0.25rem;
-  --radius-field: 0.25rem;
-  --radius-box: 0.5rem;
+  --radius-selector: 999px;
+  --radius-field: 0.5rem;
+  --radius-box: 0.75rem;
   --size-selector: 0.21875rem;
   --size-field: 0.21875rem;
-  --border: 1.5px;
+  --border: 1px;
   --depth: 1;
   --noise: 0;
 }
@@ -61,18 +62,19 @@
   default: true;
   prefersdark: false;
   color-scheme: "light";
-  --color-base-100: oklch(98% 0 0);
-  --color-base-200: oklch(96% 0.001 286.375);
-  --color-base-300: oklch(92% 0.004 286.32);
-  --color-base-content: oklch(21% 0.006 285.885);
-  --color-primary: oklch(70% 0.213 47.604);
-  --color-primary-content: oklch(98% 0.016 73.684);
-  --color-secondary: oklch(55% 0.027 264.364);
-  --color-secondary-content: oklch(98% 0.002 247.839);
-  --color-accent: oklch(0% 0 0);
+  /* Synced with landing page (html/style.css) light theme */
+  --color-base-100: oklch(100% 0 0); /* --bg #ffffff */
+  --color-base-200: oklch(97.02% 0 0); /* --bg-alt #f5f5f5 */
+  --color-base-300: oklch(92.19% 0 0); /* --border #e5e5e5 */
+  --color-base-content: oklch(22.84% 0.038 282.932); /* --text #1a1a2e */
+  --color-primary: oklch(54.13% 0.247 293.009); /* --primary #7c3aed */
+  --color-primary-content: oklch(100% 0 0); /* --primary-text #ffffff */
+  --color-secondary: oklch(49.07% 0.241 292.581); /* --primary-hover #6d28d9 */
+  --color-secondary-content: oklch(100% 0 0);
+  --color-accent: oklch(43.2% 0.211 292.759); /* --badge-text #5b21b6 */
   --color-accent-content: oklch(100% 0 0);
-  --color-neutral: oklch(44% 0.017 285.786);
-  --color-neutral-content: oklch(98% 0 0);
+  --color-neutral: oklch(22.84% 0.038 282.932); /* --text #1a1a2e */
+  --color-neutral-content: oklch(100% 0 0);
   --color-info: oklch(62% 0.214 259.815);
   --color-info-content: oklch(97% 0.014 254.604);
   --color-success: oklch(70% 0.14 182.503);
@@ -81,14 +83,19 @@
   --color-warning-content: oklch(98% 0.022 95.277);
   --color-error: oklch(58% 0.253 17.585);
   --color-error-content: oklch(96% 0.015 12.422);
-  --radius-selector: 0.25rem;
-  --radius-field: 0.25rem;
-  --radius-box: 0.5rem;
+  --radius-selector: 999px;
+  --radius-field: 0.5rem;
+  --radius-box: 0.75rem;
   --size-selector: 0.21875rem;
   --size-field: 0.21875rem;
-  --border: 1.5px;
+  --border: 1px;
   --depth: 1;
   --noise: 0;
+}
+
+/* Brand font, synced with landing page logo (html/style.css .logo) */
+@theme {
+  --font-brand: "MedievalSharp", cursive;
 }
 
 /* Add variants based on LiveView classes */
