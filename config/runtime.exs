@@ -22,6 +22,17 @@ if System.get_env("PHX_SERVER") do
   config :camelot, CamelotWeb.Endpoint, server: true
 end
 
+# Overlay networks the task-runner services should join, comma-separated
+# (e.g. "captain-overlay-network"). Needed on Swarm so runners can reach
+# DB/service hostnames that only resolve on a shared overlay; empty (the
+# default) is correct for plain-Docker / non-Swarm self-hosting.
+runner_networks =
+  "RUNNER_NETWORKS"
+  |> System.get_env("")
+  |> String.split(",", trim: true)
+  |> Enum.map(&String.trim/1)
+  |> Enum.reject(&(&1 == ""))
+
 config :camelot, CamelotWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
 # Invite-only mode. When false, /sign-in rejects unknown emails; existing
@@ -45,7 +56,8 @@ if backend_env = System.get_env("RUNNER_BACKEND") do
     backend: runner_backend,
     docker_host: System.get_env("DOCKER_HOST", "unix:///var/run/docker.sock"),
     global_max: String.to_integer(System.get_env("RUNNER_GLOBAL_MAX", "20")),
-    per_user_max: String.to_integer(System.get_env("RUNNER_PER_USER_MAX", "2"))
+    per_user_max: String.to_integer(System.get_env("RUNNER_PER_USER_MAX", "2")),
+    networks: runner_networks
 end
 
 if config_env() == :prod do
@@ -69,7 +81,8 @@ if config_env() == :prod do
       backend: Swarm,
       docker_host: System.get_env("DOCKER_HOST", "unix:///var/run/docker.sock"),
       global_max: String.to_integer(System.get_env("RUNNER_GLOBAL_MAX", "20")),
-      per_user_max: String.to_integer(System.get_env("RUNNER_PER_USER_MAX", "2"))
+      per_user_max: String.to_integer(System.get_env("RUNNER_PER_USER_MAX", "2")),
+      networks: runner_networks
   end
 
   maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []

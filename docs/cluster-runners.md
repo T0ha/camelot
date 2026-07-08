@@ -17,6 +17,8 @@ For a hosted CapRover deployment:
    - `ENCRYPTION_KEY=<32-byte base64>`
    - `RUNNER_GLOBAL_MAX=20` (or whatever your cluster can handle)
    - `RUNNER_PER_USER_MAX=2` (default tier)
+   - `RUNNER_NETWORKS=captain-overlay-network` if runners must reach a
+     DB/service by its overlay hostname (see *Runner networking*)
 4. Build and push the runner images
    (`.github/workflows/runner-images.yml`). Reference them from
    `AgentTemplate.runner_image`.
@@ -102,6 +104,26 @@ through Camelot's admin UI.
 
 Sessions never get refused — they queue. Wait time surfaces in the UI;
 a future paid tier will let users buy higher per-user caps.
+
+## Runner networking
+
+By default a task-runner service joins only the Swarm bridge network,
+so it can reach the public internet but **cannot resolve other Swarm
+services by name**. Swarm's service-discovery DNS (e.g. a CapRover
+`srv-captain--db`) only works between containers attached to the same
+overlay. A runner that needs to run the project's test suite against a
+shared database — with `DATABASE_URL=ecto://…@srv-captain--db:5432/…` —
+will otherwise fail with *"Name or service not known"*.
+
+| Env var | Default | What it controls |
+|---|---|---|
+| `RUNNER_NETWORKS` | *(empty)* | Comma-separated overlay networks each runner service joins, e.g. `captain-overlay-network`. |
+
+Empty is the correct default for plain-Docker and non-Swarm
+self-hosting, where there is no overlay to join. On CapRover, use
+`captain-overlay-network` (confirm the exact name with
+`docker network ls`). List several networks comma-separated to join
+more than one.
 
 ## Backups & disaster recovery
 
