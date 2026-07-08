@@ -22,17 +22,26 @@ if System.get_env("PHX_SERVER") do
   config :camelot, CamelotWeb.Endpoint, server: true
 end
 
-# Overlay networks the task-runner services should join, comma-separated
-# (e.g. "captain-overlay-network"), or "auto" to copy the networks the
-# Camelot service is itself on. Needed on Swarm so runners can reach
-# DB/service hostnames that only resolve on a shared overlay; empty (the
-# default) is correct for plain-Docker / non-Swarm self-hosting.
+# Overlay networks the task-runner services should join, so runners can
+# reach DB/service hostnames that only resolve on a shared overlay.
+# Defaults to "auto": copy the networks the Camelot service is itself on
+# (a no-op that fails soft when there's nothing to discover, e.g.
+# plain-Docker / non-Swarm self-hosting). Override with a comma-separated
+# list of network names/IDs, or "none" to keep runners isolated.
 runner_networks =
-  "RUNNER_NETWORKS"
-  |> System.get_env("")
-  |> String.split(",", trim: true)
-  |> Enum.map(&String.trim/1)
-  |> Enum.reject(&(&1 == ""))
+  case System.get_env("RUNNER_NETWORKS") do
+    nil ->
+      ["auto"]
+
+    "" ->
+      ["auto"]
+
+    value ->
+      value
+      |> String.split(",", trim: true)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+  end
 
 config :camelot, CamelotWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 

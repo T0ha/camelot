@@ -17,8 +17,8 @@ For a hosted CapRover deployment:
    - `ENCRYPTION_KEY=<32-byte base64>`
    - `RUNNER_GLOBAL_MAX=20` (or whatever your cluster can handle)
    - `RUNNER_PER_USER_MAX=2` (default tier)
-   - `RUNNER_NETWORKS=auto` if runners must reach a DB/service by its
-     overlay hostname (see *Runner networking*)
+   - `RUNNER_NETWORKS` — optional; defaults to `auto` (see *Runner
+     networking*). Set `none` to keep runners isolated.
 4. Build and push the runner images
    (`.github/workflows/runner-images.yml`). Reference them from
    `AgentTemplate.runner_image`.
@@ -107,34 +107,34 @@ a future paid tier will let users buy higher per-user caps.
 
 ## Runner networking
 
-By default a task-runner service joins only the Swarm bridge network,
-so it can reach the public internet but **cannot resolve other Swarm
-services by name**. Swarm's service-discovery DNS (e.g. a CapRover
-`srv-captain--db`) only works between containers attached to the same
-overlay. A runner that needs to run the project's test suite against a
-shared database — with `DATABASE_URL=ecto://…@srv-captain--db:5432/…` —
-will otherwise fail with *"Name or service not known"*.
+A task-runner container joins the Swarm bridge network for outbound
+internet, but Swarm's service-discovery DNS (e.g. a CapRover
+`srv-captain--db`) only resolves between containers on the same
+*overlay*. A runner that runs the project's test suite against a shared
+database — `DATABASE_URL=ecto://…@srv-captain--db:5432/…` — needs to be
+on that overlay, or it fails with *"Name or service not known"* /
+`nxdomain`.
 
-| Env var | Default | What it controls |
-|---|---|---|
-| `RUNNER_NETWORKS` | *(empty)* | Overlay networks each runner service joins. Comma-separated network names/IDs, or `auto`. |
+`RUNNER_NETWORKS` controls which overlays runners join.
 
-Empty is the correct default for plain-Docker and non-Swarm
-self-hosting, where there is no overlay to join.
+| Value | What happens |
+|---|---|
+| *(unset)* / `auto` | **Default.** Camelot copies the overlay network(s) its *own* service is on onto each runner. |
+| `net-a,net-b` | Explicit network names/IDs. Combine with `auto` (`auto,net-a`) to add to the discovered set. |
+| `none` | Keep runners isolated — bridge only, no overlay. |
 
-**`RUNNER_NETWORKS=auto` (recommended on Swarm)** — Camelot discovers the
-overlay network(s) its *own* service is attached to and places runners
-on the same ones, so a runner reaches exactly what Camelot reaches. No
-network name to hardcode. Discovery reads the app's own task and service
-via the Docker API (`TASKS` + `SERVICES`, already in the socket-proxy
-allow-list) and memoizes the result; if it can't complete, runners start
-with no extra network and a warning is logged rather than failing.
+**`auto` (the default)** — a runner reaches exactly what Camelot
+reaches, with nothing to hardcode. Discovery reads the app's own task and
+service via the Docker API (`TASKS` + `SERVICES`, already in the
+socket-proxy allow-list) and memoizes the result. If it can't complete
+(e.g. plain-Docker / non-Swarm self-hosting, where there is no overlay to
+discover), runners start with no extra network and a warning is logged —
+never a hard failure.
 
-**Explicit list** — set the names yourself, e.g.
-`RUNNER_NETWORKS=captain-overlay-network` (confirm the exact name with
-`docker network ls`). Comma-separate several, and combine with `auto`
-(e.g. `auto,some-extra-net`) to add networks on top of the discovered
-ones.
+**Security note:** `auto` places runners on the same overlay as Camelot,
+so they can reach the control-plane services on it (including Camelot's
+own DB). Set `RUNNER_NETWORKS=none` — or an explicit, dedicated overlay —
+if you need runners isolated from the control plane.
 
 ## Backups & disaster recovery
 

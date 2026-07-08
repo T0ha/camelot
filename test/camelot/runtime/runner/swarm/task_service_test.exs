@@ -28,8 +28,16 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskServiceTest do
   end
 
   describe "service_create_payload/2 — networks" do
-    test "omits Networks when none are configured" do
+    test "omits Networks when the list is empty" do
       put_networks([])
+
+      payload = TaskService.service_create_payload(spec(), "camelot-task-task-1")
+
+      refute Map.has_key?(payload["TaskTemplate"], "Networks")
+    end
+
+    test "none keeps runners isolated (no Networks)" do
+      put_networks(["none"])
 
       payload = TaskService.service_create_payload(spec(), "camelot-task-task-1")
 

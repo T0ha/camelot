@@ -426,11 +426,10 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
   # Swarm resolves a service's DNS name (e.g. a CapRover
   # `srv-captain--db`) only for containers on the same overlay
   # network. Task runners land on the default bridge and so can't
-  # reach such hostnames; operators list the overlays to join via the
-  # `RUNNER_NETWORKS` env var (`:runner, :networks` config), or set it
-  # to `auto` to copy the networks the Camelot service is itself on.
-  # Empty is the default and correct for plain-Docker / non-Swarm
-  # self-hosting.
+  # reach such hostnames. The `RUNNER_NETWORKS` env var
+  # (`:runner, :networks` config) controls which overlays they join;
+  # it defaults to `auto` (copy the networks the Camelot service is
+  # itself on). `none` keeps runners isolated.
   defp task_networks do
     case configured_networks() do
       [] -> nil
@@ -441,20 +440,23 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
   defp configured_networks do
     :camelot
     |> Application.get_env(:runner, [])
-    |> Keyword.get(:networks, [])
+    |> Keyword.get(:networks, ["auto"])
     |> resolve_networks()
   end
 
-  # `auto` (from `RUNNER_NETWORKS=auto`) is replaced with the networks
-  # discovered from the Camelot service itself; any explicit entries
-  # alongside it are kept.
+  # `auto` is replaced with the networks discovered from the Camelot
+  # service itself (explicit entries alongside it are kept); `none`
+  # forces isolation regardless of other entries.
   defp resolve_networks(names) do
-    if "auto" in names do
-      Enum.uniq(SelfNetworks.discover() ++ List.delete(names, "auto"))
-    else
-      names
-    end
+    resolve_networks(names, "auto" in names, "none" in names)
   end
+
+  defp resolve_networks(names, true, _none) do
+    Enum.uniq(SelfNetworks.discover() ++ (names -- ["auto", "none"]))
+  end
+
+  defp resolve_networks(_names, false, true), do: []
+  defp resolve_networks(names, false, false), do: names
 
   defp container_spec(%Spec{} = spec) do
     reject_nil(%{

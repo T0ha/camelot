@@ -6,7 +6,7 @@ defmodule Camelot.Runtime.Runner.Swarm.SelfNetworks do
   e.g. reaching a CapRover `srv-captain--db` DB host that only resolves
   on a shared overlay.
 
-  Enabled with `RUNNER_NETWORKS=auto`. Discovery walks:
+  Used when `RUNNER_NETWORKS` is `auto` (the default). Discovery walks:
 
     1. own container id — the container hostname (Swarm sets it to the
        container's short id unless overridden);
