@@ -404,17 +404,41 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
 
   # --- Service spec construction ---
 
-  defp service_create_payload(%Spec{} = spec, name) do
+  @doc false
+  # Public only so the payload can be asserted on in tests.
+  @spec service_create_payload(Spec.t(), String.t()) :: map()
+  def service_create_payload(%Spec{} = spec, name) do
     reject_nil(%{
       "Name" => name,
-      "TaskTemplate" => %{
-        "ContainerSpec" => container_spec(spec),
-        "Placement" => placement(spec),
-        "Resources" => resources(spec),
-        "RestartPolicy" => %{"Condition" => "none"}
-      },
+      "TaskTemplate" =>
+        reject_nil(%{
+          "ContainerSpec" => container_spec(spec),
+          "Networks" => task_networks(),
+          "Placement" => placement(spec),
+          "Resources" => resources(spec),
+          "RestartPolicy" => %{"Condition" => "none"}
+        }),
       "Mode" => %{"Replicated" => %{"Replicas" => 1}}
     })
+  end
+
+  # Swarm resolves a service's DNS name (e.g. a CapRover
+  # `srv-captain--db`) only for containers on the same overlay
+  # network. Task runners land on the default bridge and so can't
+  # reach such hostnames; operators list the overlays to join via the
+  # `RUNNER_NETWORKS` env var (`:runner, :networks` config). Empty is
+  # the default and correct for plain-Docker / non-Swarm self-hosting.
+  defp task_networks do
+    case configured_networks() do
+      [] -> nil
+      names -> Enum.map(names, &%{"Target" => &1})
+    end
+  end
+
+  defp configured_networks do
+    :camelot
+    |> Application.get_env(:runner, [])
+    |> Keyword.get(:networks, [])
   end
 
   defp container_spec(%Spec{} = spec) do
