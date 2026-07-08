@@ -122,11 +122,11 @@ defmodule Camelot.Runtime.Runner.Swarm.SelfNetworks do
     end
   end
 
+  # `:inet.gethostname/0` is typed to always succeed; in a container the
+  # hostname is the short container id (Swarm sets it unless overridden).
   defp own_container_id do
-    case :inet.gethostname() do
-      {:ok, name} -> {:ok, List.to_string(name)}
-      other -> {:error, {:hostname, other}}
-    end
+    {:ok, name} = :inet.gethostname()
+    {:ok, List.to_string(name)}
   end
 
   defp fetch_running_tasks do
