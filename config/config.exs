@@ -51,7 +51,7 @@ config :camelot, :runner,
   docker_host: "unix:///var/run/docker.sock",
   global_max: 20,
   per_user_max: 2,
-  networks: []
+  networks: ["auto"]
 
 config :camelot, :token_signing_secret, "dev-only-signing-secret-change-in-prod"
 
