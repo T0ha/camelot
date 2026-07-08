@@ -3,6 +3,7 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskServiceTest do
   use ExUnit.Case, async: false
 
   alias Camelot.Runtime.Runner.Spec
+  alias Camelot.Runtime.Runner.Swarm.SelfNetworks
   alias Camelot.Runtime.Runner.Swarm.TaskService
 
   setup do
@@ -55,6 +56,29 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskServiceTest do
       assert payload["Name"] == "camelot-task-task-1"
       assert template["RestartPolicy"] == %{"Condition" => "none"}
       assert template["ContainerSpec"]["Image"] == "ghcr.io/example/runner"
+    end
+
+    test "auto resolves to the discovered networks" do
+      SelfNetworks.put_cache(["discovered-net"])
+      on_exit(&SelfNetworks.reset_cache/0)
+      put_networks(["auto"])
+
+      payload = TaskService.service_create_payload(spec(), "camelot-task-task-1")
+
+      assert payload["TaskTemplate"]["Networks"] == [%{"Target" => "discovered-net"}]
+    end
+
+    test "auto merges discovered networks with explicit extras" do
+      SelfNetworks.put_cache(["discovered-net"])
+      on_exit(&SelfNetworks.reset_cache/0)
+      put_networks(["auto", "extra-net"])
+
+      payload = TaskService.service_create_payload(spec(), "camelot-task-task-1")
+
+      assert payload["TaskTemplate"]["Networks"] == [
+               %{"Target" => "discovered-net"},
+               %{"Target" => "extra-net"}
+             ]
     end
   end
 end

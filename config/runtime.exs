@@ -23,7 +23,8 @@ if System.get_env("PHX_SERVER") do
 end
 
 # Overlay networks the task-runner services should join, comma-separated
-# (e.g. "captain-overlay-network"). Needed on Swarm so runners can reach
+# (e.g. "captain-overlay-network"), or "auto" to copy the networks the
+# Camelot service is itself on. Needed on Swarm so runners can reach
 # DB/service hostnames that only resolve on a shared overlay; empty (the
 # default) is correct for plain-Docker / non-Swarm self-hosting.
 runner_networks =

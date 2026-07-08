@@ -22,6 +22,7 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
   alias Camelot.Board.Task
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.Spec
+  alias Camelot.Runtime.Runner.Swarm.SelfNetworks
   alias Camelot.Runtime.SecretSync
 
   require Logger
@@ -426,8 +427,10 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
   # `srv-captain--db`) only for containers on the same overlay
   # network. Task runners land on the default bridge and so can't
   # reach such hostnames; operators list the overlays to join via the
-  # `RUNNER_NETWORKS` env var (`:runner, :networks` config). Empty is
-  # the default and correct for plain-Docker / non-Swarm self-hosting.
+  # `RUNNER_NETWORKS` env var (`:runner, :networks` config), or set it
+  # to `auto` to copy the networks the Camelot service is itself on.
+  # Empty is the default and correct for plain-Docker / non-Swarm
+  # self-hosting.
   defp task_networks do
     case configured_networks() do
       [] -> nil
@@ -439,6 +442,18 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
     :camelot
     |> Application.get_env(:runner, [])
     |> Keyword.get(:networks, [])
+    |> resolve_networks()
+  end
+
+  # `auto` (from `RUNNER_NETWORKS=auto`) is replaced with the networks
+  # discovered from the Camelot service itself; any explicit entries
+  # alongside it are kept.
+  defp resolve_networks(names) do
+    if "auto" in names do
+      Enum.uniq(SelfNetworks.discover() ++ List.delete(names, "auto"))
+    else
+      names
+    end
   end
 
   defp container_spec(%Spec{} = spec) do

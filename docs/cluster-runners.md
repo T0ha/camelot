@@ -17,8 +17,8 @@ For a hosted CapRover deployment:
    - `ENCRYPTION_KEY=<32-byte base64>`
    - `RUNNER_GLOBAL_MAX=20` (or whatever your cluster can handle)
    - `RUNNER_PER_USER_MAX=2` (default tier)
-   - `RUNNER_NETWORKS=captain-overlay-network` if runners must reach a
-     DB/service by its overlay hostname (see *Runner networking*)
+   - `RUNNER_NETWORKS=auto` if runners must reach a DB/service by its
+     overlay hostname (see *Runner networking*)
 4. Build and push the runner images
    (`.github/workflows/runner-images.yml`). Reference them from
    `AgentTemplate.runner_image`.
@@ -117,13 +117,24 @@ will otherwise fail with *"Name or service not known"*.
 
 | Env var | Default | What it controls |
 |---|---|---|
-| `RUNNER_NETWORKS` | *(empty)* | Comma-separated overlay networks each runner service joins, e.g. `captain-overlay-network`. |
+| `RUNNER_NETWORKS` | *(empty)* | Overlay networks each runner service joins. Comma-separated network names/IDs, or `auto`. |
 
 Empty is the correct default for plain-Docker and non-Swarm
-self-hosting, where there is no overlay to join. On CapRover, use
-`captain-overlay-network` (confirm the exact name with
-`docker network ls`). List several networks comma-separated to join
-more than one.
+self-hosting, where there is no overlay to join.
+
+**`RUNNER_NETWORKS=auto` (recommended on Swarm)** — Camelot discovers the
+overlay network(s) its *own* service is attached to and places runners
+on the same ones, so a runner reaches exactly what Camelot reaches. No
+network name to hardcode. Discovery reads the app's own task and service
+via the Docker API (`TASKS` + `SERVICES`, already in the socket-proxy
+allow-list) and memoizes the result; if it can't complete, runners start
+with no extra network and a warning is logged rather than failing.
+
+**Explicit list** — set the names yourself, e.g.
+`RUNNER_NETWORKS=captain-overlay-network` (confirm the exact name with
+`docker network ls`). Comma-separate several, and combine with `auto`
+(e.g. `auto,some-extra-net`) to add networks on top of the discovered
+ones.
 
 ## Backups & disaster recovery
 
