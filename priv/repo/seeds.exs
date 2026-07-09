@@ -11,6 +11,7 @@
 # and so on) as they will fail if something goes wrong.
 
 alias Camelot.Agents.AgentTemplate
+alias Camelot.Agents.ClaudeCodeDefaults
 alias Camelot.Prompts.PromptTemplate
 
 pr_url_pattern = "https://github\\.com/[^\\s]+/pull/(\\d+)"
@@ -33,51 +34,12 @@ question_phrases = [
 existing_templates = Ash.read!(AgentTemplate)
 
 # Planning delivers a machine-readable decision via the CLI's
-# `--json-schema` structured-output contract. The runner's Claude Code
+# `--json-schema` structured-output contract (see
+# `Camelot.Agents.ClaudeCodeDefaults` and
+# docs/planning-output-contract.md). The runner's Claude Code
 # (ToolSearch build) does NOT expose ExitPlanMode in the headless tool
 # registry, so the plan/question can't be recovered from a tool denial;
-# instead the agent must emit this object via the injected
-# `StructuredOutput` tool, which the parser reads from the result event's
-# `structured_output` field. See docs/planning-output-contract.md.
-planning_schema =
-  Jason.encode!(%{
-    "type" => "object",
-    "properties" => %{
-      "decision" => %{
-        "type" => "string",
-        "enum" => ["plan", "question"],
-        "description" =>
-          ~s(Use "plan" when you have a complete implementation plan ) <>
-            ~s(ready for approval. Use "question" when you need input, a ) <>
-            ~s(decision, or clarification from the user before the plan ) <>
-            ~s(can be finalized.)
-      },
-      "plan" => %{
-        "type" => "string",
-        "description" =>
-          ~s(The full implementation plan in Markdown. Required when ) <>
-            ~s(decision is "plan".)
-      },
-      "questions" => %{
-        "type" => "array",
-        "items" => %{"type" => "string"},
-        "description" =>
-          ~s(One clarifying question per item. Required when decision ) <>
-            ~s(is "question".)
-      }
-    },
-    "required" => ["decision"]
-  })
-
-planning_system_prompt =
-  ~s(You are in planning mode: investigate the repository read-only, ) <>
-    ~s(then deliver your result by calling the StructuredOutput tool. ) <>
-    ~s(Set decision="plan" with a complete Markdown plan when you are ) <>
-    ~s(ready for approval, or decision="question" with specific ) <>
-    ~s(questions when you need input or a decision before planning can ) <>
-    ~s(complete. Never ask questions as plain assistant text; always ) <>
-    ~s(use StructuredOutput.)
-
+# instead the agent emits it via the injected `StructuredOutput` tool.
 claude_code_attrs = %{
   name: "Claude Code",
   executable: "claude",
@@ -85,17 +47,7 @@ claude_code_attrs = %{
   prompt_flag: "-p",
   tools_flag: "--allowedTools",
   tools_separator: ",",
-  permission_args_by_stage: %{
-    "planning" => [
-      "--permission-mode",
-      "plan",
-      "--append-system-prompt",
-      planning_system_prompt,
-      "--json-schema",
-      planning_schema
-    ],
-    "executing" => ["--permission-mode", "acceptEdits"]
-  },
+  permission_args_by_stage: ClaudeCodeDefaults.permission_args_by_stage(),
   internal_tools: ["EnterPlanMode", "ExitPlanMode"],
   env_vars: %{"CLAUDECODE" => "false"},
   parser: :claude_code_json,
