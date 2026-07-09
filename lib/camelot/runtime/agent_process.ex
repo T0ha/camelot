@@ -738,17 +738,27 @@ defmodule Camelot.Runtime.AgentProcess do
   end
 
   defp handle_task_result(state, %{stage: :executing} = task, result, task_id) do
-    real_denials = reject_internal_denials(state, result.denials)
+    case executing_action(state, result) do
+      {:request_input, text} ->
+        request_user_input(task, text, task_id)
 
-    cond do
-      questions = structured_questions(result.structured) ->
-        request_user_input(task, questions, task_id)
+      {:create_pr, url, number} ->
+        create_pr(task, url, number, task_id)
 
-      has_questions?(real_denials) or real_denials != [] ->
-        request_user_input(task, result.text, task_id)
+      {:error_no_pr, text} ->
+        Logger.warning("Execution completed without PR for task #{task_id}")
 
-      true ->
-        maybe_create_pr(state, task, result.text, task_id)
+        # Preserve the agent's final response in the conversation even
+        # though the run ends in error — it usually explains why no PR
+        # was opened (e.g. a checks-only task with nothing to submit).
+        record_assistant_message(task_id, text)
+
+        mark_error_with_reason(
+          state,
+          task,
+          "Agent finished executing without opening a PR. " <>
+            "No PR URL was found in the agent's final output."
+        )
     end
   end
 
@@ -849,26 +859,42 @@ defmodule Camelot.Runtime.AgentProcess do
 
   defp structured_questions(_), do: nil
 
-  defp maybe_create_pr(state, task, text, task_id) do
-    {pr_url, pr_number} = extract_pr_info(state, text)
+  @doc """
+  Decides the executing-stage outcome from a parsed runner result.
 
-    if pr_url do
-      case Ash.update(task, %{pr_url: pr_url, pr_number: pr_number}, action: :pr_created) do
-        {:ok, updated} ->
-          broadcast_task_update(updated)
+  Pure (no DB writes) so the routing can be unit-tested. A structured
+  or `AskUserQuestion` question routes back to the user; otherwise a PR
+  URL in the output opens the PR, and its absence is an error.
+  """
+  @spec executing_action(t(), map()) ::
+          {:request_input, String.t()}
+          | {:create_pr, String.t(), integer()}
+          | {:error_no_pr, String.t()}
+  def executing_action(state, result) do
+    real_denials = reject_internal_denials(state, result.denials)
 
-        {:error, error} ->
-          Logger.warning("Failed to mark PR created for task #{task_id}: #{inspect(error)}")
-      end
-    else
-      Logger.warning("Execution completed without PR for task #{task_id}")
+    cond do
+      questions = structured_questions(result.structured) ->
+        {:request_input, questions}
 
-      mark_error_with_reason(
-        state,
-        task,
-        "Agent finished executing without opening a PR. " <>
-          "No PR URL was found in the agent's final output."
-      )
+      has_questions?(real_denials) or real_denials != [] ->
+        {:request_input, result.text}
+
+      true ->
+        case extract_pr_info(state, result.text) do
+          {nil, _} -> {:error_no_pr, result.text}
+          {url, number} -> {:create_pr, url, number}
+        end
+    end
+  end
+
+  defp create_pr(task, pr_url, pr_number, task_id) do
+    case Ash.update(task, %{pr_url: pr_url, pr_number: pr_number}, action: :pr_created) do
+      {:ok, updated} ->
+        broadcast_task_update(updated)
+
+      {:error, error} ->
+        Logger.warning("Failed to mark PR created for task #{task_id}: #{inspect(error)}")
     end
   end
 
@@ -919,13 +945,21 @@ defmodule Camelot.Runtime.AgentProcess do
   end
 
   defp request_user_input(task, text, task_id) do
+    record_assistant_message(task_id, text)
+    transition(task, :request_input)
+  end
+
+  # Persists the agent's response as an assistant message so it is
+  # always visible in the task conversation, on both the input-request
+  # and error paths. Skips truly empty output.
+  defp record_assistant_message(_task_id, text) when text in [nil, ""], do: :ok
+
+  defp record_assistant_message(task_id, text) do
     Ash.create!(TaskMessage, %{
       role: :assistant,
       content: text,
       task_id: task_id
     })
-
-    transition(task, :request_input)
   end
 
   defp transition(task, action) do

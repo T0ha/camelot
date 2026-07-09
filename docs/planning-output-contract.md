@@ -62,6 +62,11 @@ top-level assistant turn — as a fallback source of truth.
 
 - A question path always persists a `TaskMessage` with the real text.
 - A plan path always stores the full plan, never a trailing sentence.
+- The agent's response is always recorded in the conversation. When an
+  executing run ends without a PR (e.g. a checks-only task with nothing
+  to submit), the task still transitions to `error`, but the agent's
+  final response is persisted as an assistant `TaskMessage` first — so
+  the conversation explains why, rather than showing a bare error.
 
 ## Scope
 

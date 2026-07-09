@@ -279,4 +279,50 @@ defmodule Camelot.Runtime.AgentProcessTest do
                AgentProcess.planning_action(planning_state(), res)
     end
   end
+
+  describe "executing_action/2" do
+    defp executing_state do
+      %AgentProcess{
+        agent_id: "a",
+        config: %AgentConfig{
+          parser: :claude_code_json,
+          executable: "claude",
+          internal_tools: ["ExitPlanMode", "EnterPlanMode"],
+          pr_url_pattern: "https://github\\.com/[^\\s]+/pull/(\\d+)"
+        }
+      }
+    end
+
+    test "no PR URL in output errors but preserves the response" do
+      res = result(text: "All checks passed. Nothing to open a PR for.")
+
+      assert {:error_no_pr, "All checks passed. Nothing to open a PR for."} =
+               AgentProcess.executing_action(executing_state(), res)
+    end
+
+    test "a PR URL in output opens the PR" do
+      res = result(text: "Opened https://github.com/o/r/pull/42 for review")
+
+      assert {:create_pr, "https://github.com/o/r/pull/42", 42} =
+               AgentProcess.executing_action(executing_state(), res)
+    end
+
+    test "a structured question routes back to the user" do
+      res = result(structured: %{"decision" => "question", "questions" => ["Confirm DB?"]})
+
+      assert {:request_input, "- Confirm DB?"} =
+               AgentProcess.executing_action(executing_state(), res)
+    end
+
+    test "an AskUserQuestion denial routes back to the user" do
+      res =
+        result(
+          text: "need input",
+          denials: [%{"tool_name" => "AskUserQuestion", "tool_input" => %{}}]
+        )
+
+      assert {:request_input, "need input"} =
+               AgentProcess.executing_action(executing_state(), res)
+    end
+  end
 end
