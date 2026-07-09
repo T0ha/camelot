@@ -2,10 +2,7 @@ import Config
 
 # Configure your database
 config :camelot, Camelot.Repo,
-  username: "postgres",
-  password: "postgres",
-  hostname: "localhost",
-  database: "camelot_dev",
+  url: System.get_env("DATABASE_URL", "ecto://postgres:postgres@localhost/camelot_dev"),
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,
   pool_size: 10
