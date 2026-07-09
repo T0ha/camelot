@@ -687,37 +687,46 @@ defmodule Camelot.Runtime.AgentProcess do
          true <- exit_code == 0 and state.output_buffer != "",
          task = Ash.get!(Task, task_id),
          :in_progress <- task.state do
-      denials = extract_denials(parsed)
-
-      result_text =
-        case parsed do
-          {:ok, %{result_text: text}} -> text
-          {:error, _} -> state.output_buffer
-        end
-
-      handle_task_result(state, task, result_text, denials, task.id)
+      handle_task_result(state, task, build_result(state, parsed), task.id)
     else
       _ -> :ok
     end
   end
 
-  defp handle_task_result(state, %{stage: :planning} = task, text, denials, task_id) do
-    plan_from_exit = extract_exit_plan(denials)
-    real_denials = reject_internal_denials(state, denials)
-    trimmed = String.trim(text || "")
+  # Normalises the parser output into the shape the stage handlers
+  # consume. `text` is the final result field (used for PR-URL scraping);
+  # `assistant_texts` is every top-level assistant turn (used when the
+  # plan/question lives in an earlier turn); `structured` is the
+  # `--json-schema` payload; `denials` the permission denials.
+  defp build_result(_state, {:ok, parsed}) do
+    %{
+      text: parsed.result_text,
+      structured: parsed.structured,
+      assistant_texts: parsed.assistant_texts,
+      denials: parsed.permission_denials
+    }
+  end
 
-    cond do
-      plan_from_exit != nil ->
-        submit_plan(task, plan_from_exit, task_id)
+  defp build_result(state, {:error, _}) do
+    %{text: state.output_buffer, structured: nil, assistant_texts: [], denials: []}
+  end
 
-      has_questions?(real_denials) or real_denials != [] ->
-        input = if trimmed == "", do: "Agent needs tool permissions", else: trimmed
-        request_user_input(task, input, task_id)
+  # Planning routes on the `--json-schema` decision first (the reliable
+  # path: the agent emits `StructuredOutput` with {decision, plan,
+  # questions}). Everything below is a fallback for runs without a
+  # structured payload — legacy ExitPlanMode, tool-permission denials, or
+  # free text — and reads the FULL assistant transcript so a plan or
+  # question raised in an earlier turn is never lost to the trailing
+  # result sentence.
+  defp handle_task_result(state, %{stage: :planning} = task, result, task_id) do
+    case planning_action(state, result) do
+      {:submit_plan, plan} ->
+        submit_plan(task, plan, task_id)
 
-      question?(state, trimmed) ->
-        request_user_input(task, trimmed, task_id)
+      {:request_input, text} ->
+        request_user_input(task, text, task_id)
 
-      trimmed == "" ->
+      :empty ->
         Logger.warning("Empty plan for task #{task_id}, marking error")
 
         mark_error_with_reason(
@@ -725,33 +734,120 @@ defmodule Camelot.Runtime.AgentProcess do
           task,
           "Agent finished planning without producing a plan."
         )
+    end
+  end
+
+  defp handle_task_result(state, %{stage: :executing} = task, result, task_id) do
+    real_denials = reject_internal_denials(state, result.denials)
+
+    cond do
+      questions = structured_questions(result.structured) ->
+        request_user_input(task, questions, task_id)
+
+      has_questions?(real_denials) or real_denials != [] ->
+        request_user_input(task, result.text, task_id)
 
       true ->
-        submit_plan(task, text, task_id)
+        maybe_create_pr(state, task, result.text, task_id)
     end
   end
 
-  defp handle_task_result(state, %{stage: :executing} = task, text, denials, task_id) do
-    real_denials = reject_internal_denials(state, denials)
+  defp handle_task_result(state, %{stage: :pr} = task, result, task_id) do
+    real_denials = reject_internal_denials(state, result.denials)
 
-    if has_questions?(real_denials) or real_denials != [] do
-      request_user_input(task, text, task_id)
-    else
-      maybe_create_pr(state, task, text, task_id)
+    cond do
+      questions = structured_questions(result.structured) ->
+        request_user_input(task, questions, task_id)
+
+      has_questions?(real_denials) or real_denials != [] ->
+        request_user_input(task, result.text, task_id)
+
+      true ->
+        transition(task, :request_input)
     end
   end
 
-  defp handle_task_result(state, %{stage: :pr} = task, text, denials, task_id) do
-    real_denials = reject_internal_denials(state, denials)
+  defp handle_task_result(_state, _task, _result, _task_id), do: :ok
 
-    if has_questions?(real_denials) or real_denials != [] do
-      request_user_input(task, text, task_id)
-    else
-      transition(task, :request_input)
+  @doc """
+  Decides the planning-stage outcome from a parsed runner result.
+
+  Pure (no DB writes) so the routing can be unit-tested. Precedence:
+  the `--json-schema` structured decision, then legacy ExitPlanMode,
+  then tool-permission denials, then a free-text question, then a
+  plain plan; an empty result yields `:empty`.
+  """
+  @spec planning_action(t(), map()) ::
+          {:submit_plan, String.t()}
+          | {:request_input, String.t()}
+          | :empty
+  def planning_action(state, result) do
+    structured_action(result.structured) ||
+      fallback_action(state, result)
+  end
+
+  # The reliable path: a `--json-schema` decision.
+  defp structured_action(structured) do
+    cond do
+      plan = structured_plan(structured) -> {:submit_plan, plan}
+      questions = structured_questions(structured) -> {:request_input, questions}
+      true -> nil
     end
   end
 
-  defp handle_task_result(_state, _task, _text, _denials, _task_id), do: :ok
+  # No structured payload: recover from a legacy ExitPlanMode denial,
+  # tool-permission denials, or the free-text transcript.
+  defp fallback_action(state, result) do
+    real_denials = reject_internal_denials(state, result.denials)
+    full_text = planning_text(result)
+    plan_from_exit = extract_exit_plan(result.denials)
+
+    cond do
+      plan_from_exit != nil ->
+        {:submit_plan, plan_from_exit}
+
+      has_questions?(real_denials) or real_denials != [] ->
+        {:request_input, if(full_text == "", do: "Agent needs tool permissions", else: full_text)}
+
+      question?(state, full_text) ->
+        {:request_input, full_text}
+
+      full_text == "" ->
+        :empty
+
+      true ->
+        {:submit_plan, full_text}
+    end
+  end
+
+  # Prefer the full assistant transcript (all top-level turns) over the
+  # trailing result field, which is only the last turn.
+  defp planning_text(%{assistant_texts: [_ | _] = texts}) do
+    texts |> Enum.join("\n\n") |> String.trim()
+  end
+
+  defp planning_text(%{text: text}), do: String.trim(text || "")
+
+  # A structured "plan" decision carries the full plan text; return it
+  # only when non-empty so the caller can fall through otherwise.
+  defp structured_plan(%{"decision" => "plan", "plan" => plan}) when is_binary(plan) do
+    case String.trim(plan) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp structured_plan(_), do: nil
+
+  # A structured "question" decision carries a list of questions; render
+  # them as a single message for the TaskMessage / UI.
+  defp structured_questions(%{"decision" => "question", "questions" => qs}) when is_list(qs) and qs != [] do
+    qs
+    |> Enum.map(&to_string/1)
+    |> Enum.map_join("\n", &("- " <> &1))
+  end
+
+  defp structured_questions(_), do: nil
 
   defp maybe_create_pr(state, task, text, task_id) do
     {pr_url, pr_number} = extract_pr_info(state, text)
