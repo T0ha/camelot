@@ -7,6 +7,7 @@ defmodule Camelot.Runtime.AgentConfigTest do
   """
   use Camelot.DataCase, async: true
 
+  alias Camelot.Agents.ClaudeCodeDefaults
   alias Camelot.Projects.Project
   alias Camelot.Runtime.AgentConfig
 
@@ -18,7 +19,7 @@ defmodule Camelot.Runtime.AgentConfigTest do
   end
 
   describe "build_cli_args/4 — claude_code parity with hardcoded logic" do
-    test "planning stage emits --permission-mode plan", ctx do
+    test "planning stage emits the structured-output contract", ctx do
       args =
         AgentConfig.build_cli_args(
           ctx.claude,
@@ -27,17 +28,17 @@ defmodule Camelot.Runtime.AgentConfigTest do
           :planning
         )
 
-      assert args == [
-               "--output-format",
-               "stream-json",
-               "--verbose",
-               "--permission-mode",
-               "plan",
-               "--allowedTools",
-               "Read,Write",
-               "-p",
-               "do the thing"
-             ]
+      planning_args = ClaudeCodeDefaults.permission_args_by_stage()["planning"]
+
+      assert args ==
+               ["--output-format", "stream-json", "--verbose"] ++
+                 planning_args ++
+                 ["--allowedTools", "Read,Write", "-p", "do the thing"]
+
+      # Guard the contract shape explicitly.
+      assert "--permission-mode" in args
+      assert "plan" in args
+      assert "--json-schema" in args
     end
 
     test "executing stage emits --permission-mode acceptEdits", ctx do

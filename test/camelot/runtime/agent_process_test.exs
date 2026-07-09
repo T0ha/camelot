@@ -182,4 +182,101 @@ defmodule Camelot.Runtime.AgentProcessTest do
       assert msg =~ "ehostunreach"
     end
   end
+
+  describe "planning_action/2" do
+    defp planning_state do
+      %AgentProcess{
+        agent_id: "a",
+        config: %AgentConfig{
+          parser: :claude_code_json,
+          executable: "claude",
+          internal_tools: ["ExitPlanMode", "EnterPlanMode"],
+          question_phrases: ["waiting for", "could you"]
+        }
+      }
+    end
+
+    defp result(overrides) do
+      Map.merge(
+        %{text: "", structured: nil, assistant_texts: [], denials: []},
+        Map.new(overrides)
+      )
+    end
+
+    test "structured decision=plan submits the plan text" do
+      structured = %{"decision" => "plan", "plan" => "Step 1\nStep 2"}
+
+      assert {:submit_plan, "Step 1\nStep 2"} =
+               AgentProcess.planning_action(
+                 planning_state(),
+                 result(structured: structured)
+               )
+    end
+
+    test "structured decision=question routes to input with rendered questions" do
+      structured = %{
+        "decision" => "question",
+        "questions" => ["Which DB?", "Which env?"]
+      }
+
+      assert {:request_input, text} =
+               AgentProcess.planning_action(
+                 planning_state(),
+                 result(structured: structured)
+               )
+
+      assert text == "- Which DB?\n- Which env?"
+    end
+
+    test "structured takes precedence over a trailing result sentence" do
+      # Reproduces the original bug: the trailing turn is a throwaway
+      # sentence, but the structured payload carries the real question.
+      structured = %{"decision" => "question", "questions" => ["Which DB?"]}
+
+      res =
+        result(
+          structured: structured,
+          text: "I'll wait for your decision before finalizing.",
+          assistant_texts: ["...long question...", "I'll wait for your decision."]
+        )
+
+      assert {:request_input, "- Which DB?"} =
+               AgentProcess.planning_action(planning_state(), res)
+    end
+
+    test "without structured output, a free-text question routes to input" do
+      res =
+        result(
+          text: "Short trailing note.",
+          assistant_texts: [
+            "I need input: could you confirm the database name?",
+            "Short trailing note."
+          ]
+        )
+
+      assert {:request_input, text} =
+               AgentProcess.planning_action(planning_state(), res)
+
+      # Uses the FULL transcript, not just the trailing sentence.
+      assert text =~ "could you confirm the database name"
+    end
+
+    test "without structured output, plain text becomes the plan" do
+      res = result(assistant_texts: ["Here is the concrete implementation plan."])
+
+      assert {:submit_plan, "Here is the concrete implementation plan."} =
+               AgentProcess.planning_action(planning_state(), res)
+    end
+
+    test "empty output yields :empty" do
+      assert :empty = AgentProcess.planning_action(planning_state(), result([]))
+    end
+
+    test "a non-internal permission denial routes to input" do
+      res = result(denials: [%{"tool_name" => "Bash", "tool_input" => %{}}])
+
+      assert {:request_input, _} =
+               AgentProcess.planning_action(planning_state(), res)
+    end
+  end
 end

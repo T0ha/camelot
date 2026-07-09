@@ -66,6 +66,28 @@ defmodule Camelot.Runtime.OutputParserTest do
       assert {:error, "unexpected JSON structure"} =
                OutputParser.parse(:claude_code_json, buffer)
     end
+
+    test "surfaces structured_output from a --json-schema result" do
+      buffer =
+        Jason.encode!(%{
+          "result" => ~s({"decision":"plan","plan":"Do the thing"}),
+          "structured_output" => %{
+            "decision" => "plan",
+            "plan" => "Do the thing"
+          },
+          "is_error" => false
+        })
+
+      assert {:ok, parsed} = OutputParser.parse(:claude_code_json, buffer)
+      assert parsed.structured == %{"decision" => "plan", "plan" => "Do the thing"}
+    end
+
+    test "structured is nil when absent" do
+      buffer = Jason.encode!(%{"result" => "plain text"})
+
+      assert {:ok, %{structured: nil}} =
+               OutputParser.parse(:claude_code_json, buffer)
+    end
   end
 
   describe "parse/2 with :claude_code_json — stream-json (NDJSON)" do
@@ -184,6 +206,70 @@ defmodule Camelot.Runtime.OutputParserTest do
       assert {:ok, %{result_text: "session result"}} =
                OutputParser.parse(:claude_code_json, buffer)
     end
+
+    test "collects all top-level assistant text blocks" do
+      buffer =
+        Enum.map_join(
+          [
+            %{"type" => "system", "subtype" => "init"},
+            %{
+              "type" => "assistant",
+              "parent_tool_use_id" => nil,
+              "message" => %{"content" => [%{"type" => "text", "text" => "Here is my question with options."}]}
+            },
+            %{
+              "type" => "assistant",
+              "parent_tool_use_id" => "toolu_sub",
+              "message" => %{"content" => [%{"type" => "text", "text" => "sub-agent chatter"}]}
+            },
+            %{
+              "type" => "assistant",
+              "parent_tool_use_id" => nil,
+              "message" => %{"content" => [%{"type" => "text", "text" => "I'll wait for your decision."}]}
+            },
+            %{"type" => "result", "is_error" => false, "result" => "I'll wait for your decision."}
+          ],
+          "\n",
+          &Jason.encode!/1
+        )
+
+      assert {:ok, parsed} = OutputParser.parse(:claude_code_json, buffer)
+      # Sub-agent text (non-nil parent_tool_use_id) is excluded; order preserved.
+      assert parsed.assistant_texts == [
+               "Here is my question with options.",
+               "I'll wait for your decision."
+             ]
+    end
+
+    test "surfaces structured_output from a stream-json result event" do
+      buffer =
+        Enum.map_join(
+          [
+            %{"type" => "system", "subtype" => "init", "tools" => ["StructuredOutput"]},
+            %{
+              "type" => "assistant",
+              "parent_tool_use_id" => nil,
+              "message" => %{
+                "content" => [
+                  %{"type" => "tool_use", "name" => "StructuredOutput", "input" => %{"decision" => "question"}}
+                ]
+              }
+            },
+            %{
+              "type" => "result",
+              "subtype" => "success",
+              "is_error" => false,
+              "result" => ~s({"decision":"question","questions":["Which DB?"]}),
+              "structured_output" => %{"decision" => "question", "questions" => ["Which DB?"]}
+            }
+          ],
+          "\n",
+          &Jason.encode!/1
+        )
+
+      assert {:ok, parsed} = OutputParser.parse(:claude_code_json, buffer)
+      assert parsed.structured == %{"decision" => "question", "questions" => ["Which DB?"]}
+    end
   end
 
   describe "parse/2 with :raw_text" do
@@ -194,6 +280,8 @@ defmodule Camelot.Runtime.OutputParserTest do
       assert parsed.result_text == buffer
       assert is_nil(parsed.cost_usd)
       assert is_nil(parsed.duration_ms)
+      assert is_nil(parsed.structured)
+      assert parsed.assistant_texts == []
     end
   end
 end

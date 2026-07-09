@@ -11,6 +11,7 @@
 # and so on) as they will fail if something goes wrong.
 
 alias Camelot.Agents.AgentTemplate
+alias Camelot.Agents.ClaudeCodeDefaults
 alias Camelot.Prompts.PromptTemplate
 
 pr_url_pattern = "https://github\\.com/[^\\s]+/pull/(\\d+)"
@@ -32,26 +33,36 @@ question_phrases = [
 
 existing_templates = Ash.read!(AgentTemplate)
 
-if !Enum.any?(existing_templates, &(&1.slug == "claude_code")) do
-  Ash.create!(AgentTemplate, %{
-    slug: "claude_code",
-    name: "Claude Code",
-    executable: "claude",
-    base_args: ["--output-format", "stream-json", "--verbose"],
-    prompt_flag: "-p",
-    tools_flag: "--allowedTools",
-    tools_separator: ",",
-    permission_args_by_stage: %{
-      "planning" => ["--permission-mode", "plan"],
-      "executing" => ["--permission-mode", "acceptEdits"]
-    },
-    internal_tools: ["EnterPlanMode", "ExitPlanMode"],
-    env_vars: %{"CLAUDECODE" => "false"},
-    parser: :claude_code_json,
-    pr_url_pattern: pr_url_pattern,
-    question_phrases: question_phrases,
-    base_retry_delay_ms: 5_000
-  })
+# Planning delivers a machine-readable decision via the CLI's
+# `--json-schema` structured-output contract (see
+# `Camelot.Agents.ClaudeCodeDefaults` and
+# docs/planning-output-contract.md). The runner's Claude Code
+# (ToolSearch build) does NOT expose ExitPlanMode in the headless tool
+# registry, so the plan/question can't be recovered from a tool denial;
+# instead the agent emits it via the injected `StructuredOutput` tool.
+claude_code_attrs = %{
+  name: "Claude Code",
+  executable: "claude",
+  base_args: ["--output-format", "stream-json", "--verbose"],
+  prompt_flag: "-p",
+  tools_flag: "--allowedTools",
+  tools_separator: ",",
+  permission_args_by_stage: ClaudeCodeDefaults.permission_args_by_stage(),
+  internal_tools: ["EnterPlanMode", "ExitPlanMode"],
+  env_vars: %{"CLAUDECODE" => "false"},
+  parser: :claude_code_json,
+  pr_url_pattern: pr_url_pattern,
+  question_phrases: question_phrases,
+  base_retry_delay_ms: 5_000
+}
+
+case Enum.find(existing_templates, &(&1.slug == "claude_code")) do
+  nil ->
+    Ash.create!(AgentTemplate, Map.put(claude_code_attrs, :slug, "claude_code"))
+
+  template ->
+    # Reconcile existing installs onto the structured-output contract.
+    Ash.update!(template, claude_code_attrs)
 end
 
 if !Enum.any?(existing_templates, &(&1.slug == "codex")) do
