@@ -97,7 +97,7 @@ Key environment variables (see `config/runtime.exs` for full details):
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `DATABASE_URL` | PostgreSQL connection string | Production |
+| `DATABASE_URL` | PostgreSQL connection string | Production (optional override in dev/test) |
 | `SECRET_KEY_BASE` | Cookie signing secret (`mix phx.gen.secret`) | Production |
 | `PHX_HOST` | Application hostname | Production |
 | `PORT` | HTTP port (default: 4000) | No |

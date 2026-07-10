@@ -70,6 +70,16 @@ if backend_env = System.get_env("RUNNER_BACKEND") do
     networks: runner_networks
 end
 
+# DATABASE_URL is required in prod (below) but only an optional override
+# in dev/test, where config/dev.exs and config/test.exs already set up a
+# working default. When set, the parsed URL fields take precedence over
+# those defaults (see Ecto.Repo.Supervisor.compile_config/2).
+if config_env() in [:dev, :test] do
+  if database_url = System.get_env("DATABASE_URL") do
+    config :camelot, Camelot.Repo, url: database_url
+  end
+end
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||
