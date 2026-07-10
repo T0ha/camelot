@@ -63,14 +63,14 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
         transition(task, :cancel)
 
       task.state == :waiting_for_input ->
-        apply_waiting_for_input(task, pr, reviews, comments, commits)
+        apply_waiting_for_input(task, reviews, comments, commits)
 
       true ->
         :ok
     end
   end
 
-  defp apply_waiting_for_input(task, pr, reviews, comments, commits) do
+  defp apply_waiting_for_input(task, reviews, comments, commits) do
     cond do
       has_review_state?(reviews, "CHANGES_REQUESTED") ->
         transition_with_seen_at(task, comments)
@@ -78,7 +78,7 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
       has_review_state?(reviews, "APPROVED") ->
         transition(task, :complete)
 
-      has_new_comments?(task, pr, comments, commits) ->
+      has_new_comments?(task, comments, commits) ->
         transition_with_seen_at(task, comments)
 
       true ->
@@ -90,36 +90,36 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
     Enum.any?(reviews, &(&1["state"] == state))
   end
 
-  defp has_new_comments?(task, pr, comments, commits) do
-    pr_author = get_in(pr, ["user", "login"])
-    last_commit_date = last_commit_date(commits)
-    seen_at = task.pr_comments_seen_at
+  defp has_new_comments?(task, comments, commits) do
+    new_comments?(comments, last_commit_date(commits), task.pr_comments_seen_at)
+  end
 
-    comments
-    |> Enum.reject(&(get_in(&1, ["user", "login"]) == pr_author))
-    |> Enum.any?(fn comment ->
+  @doc """
+  True if any comment is newer than the last commit AND unseen.
+
+  Deliberately does NOT filter by author. Runners open PRs with the
+  user's own GitHub token, so the PR author and the human reviewer are
+  the same account — an author-based filter would silently drop the
+  reviewer's feedback (which is exactly the comment we must react to).
+  Nothing in the app posts PR comments, so there is no bot chatter to
+  exclude; re-trigger loops are prevented by `pr_comments_seen_at` and
+  the newer-than-last-commit guard.
+  """
+  @spec new_comments?([map()], String.t() | nil, DateTime.t() | nil) :: boolean()
+  def new_comments?(comments, last_commit_date, seen_at) do
+    Enum.any?(comments, fn comment ->
       created = comment["created_at"]
-
-      newer_than_commit? =
-        case {last_commit_date, created} do
-          {nil, _} -> true
-          {_, nil} -> false
-          {cd, cr} -> cr > cd
-        end
-
-      not_seen? =
-        case seen_at do
-          nil ->
-            true
-
-          dt ->
-            created >
-              DateTime.to_iso8601(dt)
-        end
-
-      newer_than_commit? and not_seen?
+      newer_than_commit?(created, last_commit_date) and unseen?(created, seen_at)
     end)
   end
+
+  defp newer_than_commit?(_created, nil), do: true
+  defp newer_than_commit?(nil, _commit_date), do: false
+  defp newer_than_commit?(created, commit_date), do: created > commit_date
+
+  defp unseen?(_created, nil), do: true
+  defp unseen?(nil, _seen_at), do: false
+  defp unseen?(created, seen_at), do: created > DateTime.to_iso8601(seen_at)
 
   defp last_commit_date(commits) do
     case List.last(commits) do
