@@ -16,6 +16,7 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   """
   use GenServer, restart: :temporary
 
+  alias Camelot.Runtime.Runner.AdoptMarker
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.DockerStreamDemux
   alias Camelot.Runtime.Runner.Spec
@@ -38,6 +39,7 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   # the budget expires we give up and surface the transport error.
   @ready_poll_ms 500
   @exit_poll_ms 1_000
+  @adopt_poll_ms 2_000
   @transport_budget_ms 60_000
 
   defstruct [
@@ -84,6 +86,13 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   end
 
   @impl GenServer
+  def handle_continue(:start_exec, %__MODULE__{spec: %Spec{adopt?: true}} = state) do
+    case start_adopt(state) do
+      {:ok, state} -> {:noreply, state}
+      {:error, reason} -> {:stop, reason, state}
+    end
+  end
+
   def handle_continue(:start_exec, state) do
     case start_exec(state) do
       {:ok, state} -> {:noreply, state}
@@ -154,6 +163,67 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
       {:ok, kick_off_streams(state)}
     end
   end
+
+  # Adoption: the runner container/service is already up and the agent
+  # is (or was) running inside it. Don't create a new exec — resolve the
+  # existing container and poll for the wrapper's completion marker,
+  # then reuse the {:exit_code, _} path to read the tee'd output and
+  # finalise exactly as a live run would.
+  defp start_adopt(%__MODULE__{spec: spec} = state) do
+    with {:ok, ts_pid} <- TaskService.ensure_started(spec),
+         {:ok, service_id} <- TaskService.get_service_id(ts_pid),
+         {:ok, container_id, node_id} <-
+           resolve_container(service_id, @transport_budget_ms),
+         {:ok, node_req} <- ProxyRouter.request_for_node(node_id) do
+      state = %{
+        state
+        | service_id: service_id,
+          container_id: container_id,
+          node_id: node_id,
+          node_req: node_req
+      }
+
+      parent = self()
+      poll_task = Task.async(fn -> poll_adopt_exit(state, parent) end)
+      {:ok, %{state | poll_task: poll_task}}
+    end
+  end
+
+  defp poll_adopt_exit(%__MODULE__{} = state, parent) do
+    case read_marker(state) do
+      {:ok, code} ->
+        send(parent, {:exit_code, code})
+
+      :none ->
+        Process.sleep(@adopt_poll_ms)
+        poll_adopt_exit(state, parent)
+    end
+  end
+
+  defp read_marker(%__MODULE__{session_id: sid, container_id: cid, node_req: req})
+       when is_binary(sid) and is_binary(cid) and not is_nil(req) do
+    payload = %{
+      "AttachStdout" => true,
+      "AttachStderr" => false,
+      "Tty" => false,
+      "Cmd" => ["cat", AdoptMarker.path(sid)]
+    }
+
+    with {:ok, %Req.Response{status: 201, body: %{"Id" => exec_id}}} <-
+           Req.post(req, url: "/containers/#{cid}/exec", json: payload),
+         {:ok, %Req.Response{status: 200, body: body}} when is_binary(body) <-
+           Req.post(req, url: "/exec/#{exec_id}/start", json: %{"Detach" => false, "Tty" => false}) do
+      {payloads, _rest} = DockerStreamDemux.drain(<<>>, body)
+
+      payloads
+      |> IO.iodata_to_binary()
+      |> AdoptMarker.parse()
+    else
+      _ -> :none
+    end
+  end
+
+  defp read_marker(_), do: :none
 
   defp resolve_container(service_id, transport_budget_ms) do
     case list_service_tasks(service_id) do

@@ -95,6 +95,20 @@ defmodule Camelot.Runtime.AgentProcess do
     end
   end
 
+  @doc """
+  Re-attach to a `:running` session whose runner container survived a
+  Camelot restart, instead of failing it. Reads the durable tee'd
+  output on completion and finalises normally. The caller must have
+  ensured the AgentProcess is started (see `Reconciler`).
+  """
+  @spec adopt(String.t(), String.t()) :: :ok | {:error, :busy | :not_found}
+  def adopt(agent_id, session_id) do
+    case AgentRegistry.lookup(agent_id) do
+      nil -> {:error, :not_found}
+      pid -> GenServer.call(pid, {:adopt, session_id})
+    end
+  end
+
   @spec retry(String.t()) :: :ok | {:error, :not_found | :no_task}
   def retry(agent_id) do
     case AgentRegistry.lookup(agent_id) do
@@ -146,6 +160,21 @@ defmodule Camelot.Runtime.AgentProcess do
           {:error, reason} ->
             {:reply, {:error, reason}, state}
         end
+    end
+  end
+
+  def handle_call({:adopt, session_id}, _from, state) do
+    if state.runner || state.current_session_id do
+      {:reply, {:error, :busy}, state}
+    else
+      case start_adoption(state, session_id) do
+        {:ok, new_state} ->
+          mark_agent_busy(state.agent_id)
+          {:reply, :ok, new_state}
+
+        {:error, reason} ->
+          {:reply, {:error, reason}, state}
+      end
     end
   end
 
@@ -442,6 +471,53 @@ defmodule Camelot.Runtime.AgentProcess do
 
   defp agent_user_id(%Agent{user_id: nil}), do: @unscoped_user
   defp agent_user_id(%Agent{user_id: id}), do: id
+
+  # Re-attach to an already-running session after a restart. Rebuilds
+  # the minimal state finalisation needs (config, task, output so far)
+  # and starts the runner in adopt mode — no pool slot, no new exec.
+  defp start_adoption(state, session_id) do
+    session = Ash.get!(Session, session_id)
+    agent = Ash.get!(Agent, session.agent_id, load: [:project, :template, :user])
+    task = session.task_id && Ash.get!(Task, session.task_id)
+    config = AgentConfig.resolve(agent)
+
+    state = %{
+      state
+      | current_task_id: session.task_id,
+        current_session_id: session.id,
+        current_prompt: "",
+        allowed_tools: (task && task.allowed_tools) || [],
+        config: config,
+        user_id: agent_user_id(agent),
+        max_retries: agent.max_retries,
+        retry_count: session.retry_number,
+        output_buffer: session.output_log || ""
+    }
+
+    spec = %{build_spec(state, agent, task, config, []) | adopt?: true}
+
+    case Runner.start(spec) do
+      {:ok, runner_pid} ->
+        mark_session_adopted(session_id, runner_pid)
+        SessionRegistry.register(session_id)
+        Process.monitor(runner_pid)
+        broadcast_agent_update(state.agent_id)
+        state = subscribe_task(state, session.task_id)
+        {:ok, %{state | runner: runner_pid, config: config}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  rescue
+    e ->
+      Logger.error("AgentProcess adopt failed: #{inspect(e)}")
+      {:error, e}
+  end
+
+  defp mark_session_adopted(session_id, runner_pid) do
+    session = Ash.get!(Session, session_id)
+    Ash.update(session, %{service_id: inspect(runner_pid)}, action: :mark_adopted)
+  end
 
   defp start_runner(state) do
     agent = Ash.get!(Agent, state.agent_id, load: [:project, :template, :user])

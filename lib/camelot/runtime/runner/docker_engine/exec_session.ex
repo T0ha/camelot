@@ -11,6 +11,7 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
   """
   use GenServer, restart: :temporary
 
+  alias Camelot.Runtime.Runner.AdoptMarker
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.DockerEngine.TaskContainer
   alias Camelot.Runtime.Runner.DockerStreamDemux
@@ -25,6 +26,7 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
   # failure. Real upstream failures break the loop via {:error, _}.
   @ready_poll_ms 500
   @exit_poll_ms 1_000
+  @adopt_poll_ms 2_000
 
   defstruct [
     :owner,
@@ -61,6 +63,13 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
   end
 
   @impl GenServer
+  def handle_continue(:start_exec, %__MODULE__{spec: %Spec{adopt?: true}} = state) do
+    case start_adopt(state) do
+      {:ok, state} -> {:noreply, state}
+      {:error, reason} -> {:stop, reason, state}
+    end
+  end
+
   def handle_continue(:start_exec, state) do
     case start_exec(state) do
       {:ok, state} -> {:noreply, state}
@@ -113,6 +122,58 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
       {:ok, kick_off_streams(state)}
     end
   end
+
+  # Adoption: reconnect to an already-running task container after a
+  # Camelot restart. Resolve the container and poll for the wrapper's
+  # completion marker, then reuse the {:exit_code, _} path to read the
+  # tee'd output and finalise as a live run would.
+  defp start_adopt(%__MODULE__{spec: spec} = state) do
+    with {:ok, tc_pid} <- TaskContainer.ensure_started(spec),
+         {:ok, container_id} <- TaskContainer.get_container_id(tc_pid) do
+      state = %{state | container_id: container_id}
+      parent = self()
+      poll_task = Task.async(fn -> poll_adopt_exit(state, parent) end)
+      {:ok, %{state | poll_task: poll_task}}
+    end
+  end
+
+  defp poll_adopt_exit(%__MODULE__{} = state, parent) do
+    case read_marker(state) do
+      {:ok, code} ->
+        send(parent, {:exit_code, code})
+
+      :none ->
+        Process.sleep(@adopt_poll_ms)
+        poll_adopt_exit(state, parent)
+    end
+  end
+
+  defp read_marker(%__MODULE__{session_id: sid, container_id: cid}) when is_binary(sid) and is_binary(cid) do
+    payload = %{
+      "AttachStdout" => true,
+      "AttachStderr" => false,
+      "Tty" => false,
+      "Cmd" => ["cat", AdoptMarker.path(sid)]
+    }
+
+    with {:ok, %Req.Response{status: 201, body: %{"Id" => exec_id}}} <-
+           Req.post(DockerApi.request(), url: "/containers/#{cid}/exec", json: payload),
+         {:ok, %Req.Response{status: 200, body: body}} when is_binary(body) <-
+           Req.post(DockerApi.request(),
+             url: "/exec/#{exec_id}/start",
+             json: %{"Detach" => false, "Tty" => false}
+           ) do
+      {payloads, _rest} = DockerStreamDemux.drain(<<>>, body)
+
+      payloads
+      |> IO.iodata_to_binary()
+      |> AdoptMarker.parse()
+    else
+      _ -> :none
+    end
+  end
+
+  defp read_marker(_), do: :none
 
   defp wait_for_ready(container_id) do
     case ready_check(container_id) do
