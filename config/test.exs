@@ -1,24 +1,22 @@
 import Config
 
-# Configure your database
-#
-# The MIX_TEST_PARTITION environment variable can be used
-# to provide built-in test partitioning in CI environment.
-# Run `mix help test` for more information.
-default_database_url =
-  "ecto://#{System.get_env("DATABASE_USER", "postgres")}:" <>
-    "#{System.get_env("DATABASE_PASSWORD", "postgres")}@" <>
-    "#{System.get_env("DATABASE_HOST", "localhost")}:" <>
-    "#{System.get_env("DATABASE_PORT", "5432")}/camelot_test#{System.get_env("MIX_TEST_PARTITION")}"
-
 # Faster bcrypt for tests
 config :bcrypt_elixir, log_rounds: 1
 
 # In test we don't send emails
 config :camelot, Camelot.Mailer, adapter: Swoosh.Adapters.Test
 
+# Configure your database
+#
+# The MIX_TEST_PARTITION environment variable can be used
+# to provide built-in test partitioning in CI environment.
+# Run `mix help test` for more information.
 config :camelot, Camelot.Repo,
-  url: System.get_env("DATABASE_URL", default_database_url),
+  username: System.get_env("DATABASE_USER", "postgres"),
+  password: System.get_env("DATABASE_PASSWORD", "postgres"),
+  hostname: System.get_env("DATABASE_HOST", "localhost"),
+  port: String.to_integer(System.get_env("DATABASE_PORT", "5432")),
+  database: "camelot_test#{System.get_env("MIX_TEST_PARTITION")}",
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2
 
