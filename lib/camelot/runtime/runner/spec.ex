@@ -30,7 +30,8 @@ defmodule Camelot.Runtime.Runner.Spec do
             node_label: nil,
             resources: %{},
             service_name: nil,
-            task_id: nil
+            task_id: nil,
+            adopt?: false
 
   @type secret :: %{kind: atom(), name: String.t(), value: String.t()}
 
@@ -50,7 +51,8 @@ defmodule Camelot.Runtime.Runner.Spec do
           node_label: String.t() | nil,
           resources: %{optional(String.t()) => String.t()},
           service_name: String.t() | nil,
-          task_id: String.t() | nil
+          task_id: String.t() | nil,
+          adopt?: boolean()
         }
 
   @doc """

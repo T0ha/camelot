@@ -6,12 +6,15 @@ defmodule Camelot.Runtime.Reconciler do
 
   On boot:
 
-    1. Marks any `Session{status: :running}` rows as
-       failed — the AgentProcess that owned the
-       container is gone, and re-attaching a log stream
-       safely is left for a follow-up. The session can
-       be retried by the user. The `was_adopted` flag on
-       Session is reserved for that future watcher.
+    1. Recovers any `Session{status: :running}` rows whose
+       owning AgentProcess is gone (e.g. after a redeploy).
+       If the session's task runner container is still
+       alive, it is **adopted** — a fresh AgentProcess
+       re-attaches and finalises from the durable tee'd
+       output (`was_adopted` is set). Only when there is no
+       live container to re-attach to (bootstrap sessions,
+       the LocalPort backend, or a truly gone runner) is the
+       session marked failed for the user to retry.
     2. Queued sessions are *not* touched — their DB rows
        survive untouched, and the next call to
        `RunnerPool.tick/0` (after AgentProcess
@@ -42,8 +45,12 @@ defmodule Camelot.Runtime.Reconciler do
 
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
+  alias Camelot.Runtime.AgentProcess
+  alias Camelot.Runtime.AgentRegistry
+  alias Camelot.Runtime.AgentSupervisor
   alias Camelot.Runtime.Runner
   alias Camelot.Runtime.Runner.DockerApi
+  alias Camelot.Runtime.Runner.LocalPort
   alias Camelot.Runtime.Runner.Swarm
   alias Camelot.Runtime.RunnerPool
   alias Camelot.Runtime.SessionRegistry
@@ -134,29 +141,100 @@ defmodule Camelot.Runtime.Reconciler do
     Session
     |> Ash.Query.filter(status == :running)
     |> Ash.read!()
-    |> Enum.each(fn session ->
-      if alive_owner?(session) do
-        :ok
-      else
-        Logger.info(
-          "Reconciler: failing stale running session #{session.id} " <>
-            "(owning AgentProcess not registered)"
+    |> Enum.each(&recover_stale_session/1)
+  end
+
+  # A `:running` session whose owning AgentProcess is gone (typically
+  # after a redeploy). If its task runner container is still alive we
+  # adopt it — re-attach and finalise from the durable tee'd output —
+  # instead of discarding in-flight work. Only when the container is
+  # truly gone (or this is a bootstrap/LocalPort session with nothing
+  # to re-attach to) do we fail it so the user can retry.
+  defp recover_stale_session(session) do
+    if alive_owner?(session) do
+      :ok
+    else
+      handle = session.task_id && task_runner_handle(session.task_id)
+      presence = if handle, do: probe_runner(handle), else: :gone
+
+      case recovery_action(Runner.backend(), session.kind, handle, presence) do
+        :adopt -> adopt_stale_session(session)
+        :fail -> fail_stale_session(session)
+      end
+    end
+  end
+
+  @doc """
+  Pure decision for a stale `:running` session: `:adopt` only when a
+  task session's runner container is actually running; otherwise
+  `:fail`. Bootstrap sessions and the LocalPort backend have no
+  re-attachable container.
+  """
+  @spec recovery_action(module(), atom(), String.t() | nil, atom()) :: :adopt | :fail
+  def recovery_action(LocalPort, _kind, _handle, _presence), do: :fail
+  def recovery_action(_backend, :bootstrap, _handle, _presence), do: :fail
+  def recovery_action(_backend, _kind, nil, _presence), do: :fail
+  def recovery_action(_backend, _kind, _handle, :present), do: :adopt
+  def recovery_action(_backend, _kind, _handle, _presence), do: :fail
+
+  defp adopt_stale_session(%Session{} = session) do
+    Logger.info(
+      "Reconciler: adopting running session #{session.id} " <>
+        "(runner container still alive)"
+    )
+
+    with :ok <- ensure_agent_process(session.agent_id),
+         :ok <- AgentProcess.adopt(session.agent_id, session.id) do
+      :ok
+    else
+      other ->
+        Logger.warning(
+          "Reconciler: adopt failed for session #{session.id} " <>
+            "(#{inspect(other)}); failing it instead"
         )
 
-        Ash.update!(
-          session,
-          %{
-            error_message:
-              "AgentProcess unregistered without finalising this session " <>
-                "(likely a crash in finish_session/4). Inspect the runner " <>
-                "service `camelot-runner-#{session.id}` for container logs " <>
-                "within the retention window.",
-            exit_code: 1
-          },
-          action: :fail
-        )
-      end
-    end)
+        fail_stale_session(session)
+    end
+  end
+
+  defp ensure_agent_process(agent_id) do
+    case AgentRegistry.lookup(agent_id) do
+      nil ->
+        case AgentSupervisor.start_agent(agent_id) do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+          {:error, _} = err -> err
+        end
+
+      _pid ->
+        :ok
+    end
+  end
+
+  defp fail_stale_session(%Session{} = session) do
+    Logger.info(
+      "Reconciler: failing stale running session #{session.id} " <>
+        "(owning AgentProcess not registered, no adoptable runner)"
+    )
+
+    Ash.update!(
+      session,
+      %{
+        error_message:
+          "AgentProcess unregistered without finalising this session " <>
+            "and no live runner container was available to adopt. " <>
+            "The session can be retried.",
+        exit_code: 1
+      },
+      action: :fail
+    )
+  end
+
+  defp task_runner_handle(task_id) do
+    case Ash.get(Task, task_id) do
+      {:ok, %Task{runner_handle: handle}} -> handle
+      _ -> nil
+    end
   end
 
   defp alive_owner?(%Session{id: id}) do
@@ -169,7 +247,7 @@ defmodule Camelot.Runtime.Reconciler do
   defp backend_available? do
     backend = Runner.backend()
 
-    if backend == Camelot.Runtime.Runner.LocalPort do
+    if backend == LocalPort do
       true
     else
       case DockerApi.ping() do

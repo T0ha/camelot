@@ -44,4 +44,12 @@ set +e
 "$@" 2>&1 | tee "$out"
 code=${PIPESTATUS[0]}
 set -e
+
+# Completion marker: the exit code in its own file. After a Camelot
+# restart the original `docker exec` id is lost, so the BEAM can't poll
+# the exec for its exit status. An adopting session instead polls for
+# this marker to learn the run finished (and with what code), then reads
+# the tee'd output file above. Written last so its presence strictly
+# implies the output file is complete.
+echo "$code" > "/tmp/camelot-exit-${CAMELOT_SESSION_ID:-session}"
 exit "$code"
