@@ -92,6 +92,68 @@ defmodule CamelotWeb.TaskLiveTest do
     end
   end
 
+  describe "agent updates" do
+    test "survives an {:agent_updated, agent} broadcast and reflects new status",
+         %{conn: conn, project: project, user: user} do
+      {:ok, agent} =
+        Ash.create(Agent, %{
+          name: "live-agent",
+          template_id: agent_template!("claude_code").id,
+          project_id: project.id,
+          user_id: user.id
+        })
+
+      {:ok, task} =
+        Ash.create(Task, %{
+          title: "Agent-bound task",
+          project_id: project.id,
+          creator_id: user.id
+        })
+
+      {:ok, _task} = Ash.update(task, %{agent_id: agent.id}, action: :begin_work)
+
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      {:ok, busy_agent} = Ash.update(agent, %{}, action: :mark_busy)
+
+      Phoenix.PubSub.broadcast(
+        Camelot.PubSub,
+        "agent:#{agent.id}",
+        {:agent_updated, busy_agent}
+      )
+
+      # Before the fix this crashed the LiveView with a FunctionClauseError;
+      # render/1 forces a round-trip so a dead process would raise here.
+      assert render(view) =~ "Agent-bound task"
+    end
+
+    test "ignores unrelated PubSub messages without crashing",
+         %{conn: conn, project: project, user: user} do
+      {:ok, agent} =
+        Ash.create(Agent, %{
+          name: "live-agent-2",
+          template_id: agent_template!("claude_code").id,
+          project_id: project.id,
+          user_id: user.id
+        })
+
+      {:ok, task} =
+        Ash.create(Task, %{
+          title: "Catch-all task",
+          project_id: project.id,
+          creator_id: user.id
+        })
+
+      {:ok, _task} = Ash.update(task, %{agent_id: agent.id}, action: :begin_work)
+
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      send(view.pid, {:some_unexpected_message, :payload})
+
+      assert render(view) =~ "Catch-all task"
+    end
+  end
+
   describe "scoping" do
     test "redirects non-member from another user's task", %{conn: conn} do
       other = Ash.Seed.seed!(Camelot.Accounts.User, %{email: "to-#{System.unique_integer()}@x.com"})
