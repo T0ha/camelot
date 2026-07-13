@@ -58,6 +58,52 @@ defmodule CamelotWeb.UserProfileLiveTest do
     end
   end
 
+  describe "notification preferences section" do
+    test "renders the section heading", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/profile")
+      assert html =~ "Email notifications"
+    end
+
+    test "toggling a checkbox off and submitting persists the change", %{
+      conn: conn,
+      user: user
+    } do
+      {:ok, view, _html} = live(conn, ~p"/profile")
+
+      view
+      |> form("#notification-prefs-form", %{
+        "prefs" => %{
+          "notify_on_waiting_for_input" => "true",
+          "notify_on_error" => "false",
+          "notify_on_done" => "true"
+        }
+      })
+      |> render_submit()
+
+      updated = Ash.get!(Camelot.Accounts.User, user.id)
+      refute updated.notify_on_error
+      assert updated.notify_on_waiting_for_input
+      assert updated.notify_on_done
+    end
+
+    test "shows a confirmation flash after saving", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/profile")
+
+      html =
+        view
+        |> form("#notification-prefs-form", %{
+          "prefs" => %{
+            "notify_on_waiting_for_input" => "true",
+            "notify_on_error" => "true",
+            "notify_on_done" => "true"
+          }
+        })
+        |> render_submit()
+
+      assert html =~ "Preferences saved"
+    end
+  end
+
   defp ssh_credentials_for(user_id) do
     Credential
     |> Ash.Query.filter(user_id == ^user_id and kind == :ssh_private_key)

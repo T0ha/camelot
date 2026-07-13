@@ -88,6 +88,30 @@ defmodule CamelotWeb.UserProfileLive do
     end
   end
 
+  def handle_event("update_notification_prefs", %{"prefs" => params}, socket) do
+    attrs =
+      Map.take(params, [
+        "notify_on_waiting_for_input",
+        "notify_on_error",
+        "notify_on_done"
+      ])
+
+    case Ash.update(socket.assigns.current_user, attrs,
+           action: :update_notification_preferences,
+           actor: socket.assigns.current_user
+         ) do
+      {:ok, user} ->
+        {:noreply,
+         socket
+         |> assign(:current_user, user)
+         |> put_flash(:info, "Preferences saved")
+         |> load_state()}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Failed to save preferences")}
+    end
+  end
+
   def handle_event("open_rotate_modal", _params, socket) do
     {:noreply, assign(socket, :show_rotate_modal, true)}
   end
@@ -126,7 +150,8 @@ defmodule CamelotWeb.UserProfileLive do
       bootstrap_history: history,
       kinds: @credential_kinds,
       pool: pool_for(user),
-      credential_form: empty_credential_form()
+      credential_form: empty_credential_form(),
+      notification_prefs_form: notification_prefs_form(user)
     )
   end
 
@@ -180,6 +205,17 @@ defmodule CamelotWeb.UserProfileLive do
   defp empty_credential_form do
     to_form(%{"kind" => "claude_api_key", "name" => "", "value" => ""},
       as: "credential"
+    )
+  end
+
+  defp notification_prefs_form(user) do
+    to_form(
+      %{
+        "notify_on_waiting_for_input" => user.notify_on_waiting_for_input,
+        "notify_on_error" => user.notify_on_error,
+        "notify_on_done" => user.notify_on_done
+      },
+      as: "prefs"
     )
   end
 
@@ -389,6 +425,40 @@ defmodule CamelotWeb.UserProfileLive do
           />
           <:actions>
             <.button>Add credential</.button>
+          </:actions>
+        </.simple_form>
+      </section>
+
+      <section class="rounded border p-4 space-y-3">
+        <h2 class="text-lg font-semibold">Email notifications</h2>
+
+        <p class="text-sm text-base-content/60">
+          Get notified by email when one of your task cards needs
+          attention.
+        </p>
+
+        <.simple_form
+          for={@notification_prefs_form}
+          phx-submit="update_notification_prefs"
+          id="notification-prefs-form"
+        >
+          <.input
+            field={@notification_prefs_form[:notify_on_waiting_for_input]}
+            type="checkbox"
+            label="Email me when a task needs input"
+          />
+          <.input
+            field={@notification_prefs_form[:notify_on_error]}
+            type="checkbox"
+            label="Email me when a task errors"
+          />
+          <.input
+            field={@notification_prefs_form[:notify_on_done]}
+            type="checkbox"
+            label="Email me when a task is done"
+          />
+          <:actions>
+            <.button>Save preferences</.button>
           </:actions>
         </.simple_form>
       </section>
