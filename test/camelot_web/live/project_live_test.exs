@@ -143,6 +143,36 @@ defmodule CamelotWeb.ProjectLiveTest do
     end
   end
 
+  describe "admin swarm node pin" do
+    setup :register_and_log_in_admin
+
+    test "admin can pin a project to a swarm node", %{conn: conn, user: admin} do
+      {:ok, project} =
+        Ash.create(Project, %{name: "pin-#{System.unique_integer()}", path: "/tmp/pin"}, actor: admin)
+
+      {:ok, view, html} = live(conn, ~p"/projects/#{project.id}")
+      assert html =~ "Swarm node pin"
+
+      html =
+        view
+        |> form("#project-node-label-form", %{"swarm_node_label" => "gpu-1"})
+        |> render_change()
+
+      assert html =~ "gpu-1"
+      assert Ash.get!(Project, project.id).swarm_node_label == "gpu-1"
+    end
+  end
+
+  describe "non-admin cannot see the swarm node pin control" do
+    test "hidden for a regular member", %{conn: conn, user: user} do
+      {:ok, project} =
+        Ash.create(Project, %{name: "nopin-#{System.unique_integer()}", path: "/tmp/nopin"}, actor: user)
+
+      {:ok, _view, html} = live(conn, ~p"/projects/#{project.id}")
+      refute html =~ "Swarm node pin"
+    end
+  end
+
   describe "admin toggle" do
     setup :register_and_log_in_admin
 

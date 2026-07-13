@@ -65,6 +65,32 @@ defmodule CamelotWeb.AdminLive.Users do
     end
   end
 
+  def handle_event("set_node_label", %{"node" => %{"id" => id, "swarm_node_label" => label}}, socket) do
+    actor = socket.assigns.current_user
+
+    User
+    |> Ash.get!(id, actor: actor)
+    |> Ash.Changeset.for_update(
+      :set_swarm_node_label,
+      %{swarm_node_label: blank_to_nil(label)},
+      actor: actor
+    )
+    |> Ash.update()
+    |> case do
+      {:ok, user} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "#{user.email} pinned to #{user.swarm_node_label || "no node"}")
+         |> load()}
+
+      {:error, error} ->
+        {:noreply, put_flash(socket, :error, format_error(error))}
+    end
+  end
+
+  defp blank_to_nil(""), do: nil
+  defp blank_to_nil(value), do: value
+
   defp load(socket) do
     users =
       User
@@ -140,6 +166,7 @@ defmodule CamelotWeb.AdminLive.Users do
             <tr class="text-left">
               <th class="py-1">Email</th>
               <th class="py-1">Role</th>
+              <th class="py-1">Node pin</th>
               <th class="py-1">Confirmed</th>
               <th class="py-1">Added</th>
             </tr>
@@ -161,6 +188,18 @@ defmodule CamelotWeb.AdminLive.Users do
                       {r}
                     </option>
                   </select>
+                </form>
+              </td>
+              <td class="py-2">
+                <form phx-change="set_node_label">
+                  <input type="hidden" name="node[id]" value={u.id} />
+                  <input
+                    type="text"
+                    name="node[swarm_node_label]"
+                    value={u.swarm_node_label}
+                    placeholder="none"
+                    class="input input-bordered input-sm w-32"
+                  />
                 </form>
               </td>
               <td class="py-2">

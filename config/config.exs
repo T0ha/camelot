@@ -63,7 +63,8 @@ config :camelot,
     Camelot.Projects,
     Camelot.Agents,
     Camelot.Board,
-    Camelot.Prompts
+    Camelot.Prompts,
+    Camelot.Settings
   ]
 
 # Configure esbuild (the version is required)

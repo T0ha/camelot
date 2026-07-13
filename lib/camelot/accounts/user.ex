@@ -151,6 +151,7 @@ defmodule Camelot.Accounts.User do
 
     policy action(:set_swarm_node_label) do
       authorize_if(expr(id == ^actor(:id)))
+      authorize_if(actor_attribute_equals(:role, :admin))
     end
   end
 end

@@ -436,7 +436,7 @@ defmodule Camelot.Runtime.AgentProcess do
   # and updates AgentProcess state. The actual runner starts
   # later, when the pool sends {:runner_slot, session_id}.
   defp enqueue_session(state, task_id, prompt, allowed_tools, retry_number) do
-    agent = Ash.get!(Agent, state.agent_id, load: [:project, :template, :user])
+    agent = Ash.get!(Agent, state.agent_id, load: [:template, :user, project: [owner_membership: [:user]]])
     config = AgentConfig.resolve(agent)
     user_id = agent_user_id(agent)
 
@@ -477,7 +477,7 @@ defmodule Camelot.Runtime.AgentProcess do
   # and starts the runner in adopt mode — no pool slot, no new exec.
   defp start_adoption(state, session_id) do
     session = Ash.get!(Session, session_id)
-    agent = Ash.get!(Agent, session.agent_id, load: [:project, :template, :user])
+    agent = Ash.get!(Agent, session.agent_id, load: [:template, :user, project: [owner_membership: [:user]]])
     task = session.task_id && Ash.get!(Task, session.task_id)
     config = AgentConfig.resolve(agent)
 
@@ -520,7 +520,7 @@ defmodule Camelot.Runtime.AgentProcess do
   end
 
   defp start_runner(state) do
-    agent = Ash.get!(Agent, state.agent_id, load: [:project, :template, :user])
+    agent = Ash.get!(Agent, state.agent_id, load: [:template, :user, project: [owner_membership: [:user]]])
     task = state.current_task_id && Ash.get!(Task, state.current_task_id)
     config = AgentConfig.resolve(agent)
 
@@ -596,8 +596,17 @@ defmodule Camelot.Runtime.AgentProcess do
   defp repo_url_for(LocalPort, _agent), do: nil
   defp repo_url_for(_backend, agent), do: project_repo_url(agent)
 
-  defp node_label_for(%Agent{user: %{swarm_node_label: l}}) when is_binary(l), do: l
-  defp node_label_for(_), do: nil
+  @doc false
+  # Precedence: a project's own pin wins, then its owner's
+  # personal pin, then the instance-wide default. Public (with
+  # @doc false) so the precedence table can be unit-tested
+  # directly instead of only through build_spec/5.
+  @spec node_label_for(Agent.t()) :: String.t() | nil
+  def node_label_for(%Agent{project: %{swarm_node_label: p}}) when is_binary(p), do: p
+
+  def node_label_for(%Agent{project: %{owner_membership: %{user: %{swarm_node_label: u}}}}) when is_binary(u), do: u
+
+  def node_label_for(_agent), do: Camelot.Settings.default_swarm_node_label()
 
   @doc false
   # Builds the secrets list mounted into the runner.
