@@ -15,6 +15,14 @@ defmodule CamelotWeb.UserProfileLiveTest do
       assert html =~ "SSH key"
     end
 
+    test "ignores unrelated PubSub messages without crashing", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/profile")
+
+      send(view.pid, {:some_unexpected_message, :payload})
+
+      assert render(view) =~ "SSH key"
+    end
+
     test "auto-backfills a default key for a legacy user on first mount",
          %{conn: conn, user: user} do
       # `register_and_log_in_user` uses `Ash.Seed.seed!`, which skips

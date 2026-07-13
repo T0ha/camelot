@@ -50,6 +50,9 @@ defmodule CamelotWeb.UserProfileLive do
     {:noreply, assign(socket, :pool, pool_for(socket.assigns.current_user))}
   end
 
+  # Never crash the profile page on an unexpected PubSub message.
+  def handle_info(_msg, socket), do: {:noreply, socket}
+
   @impl true
   def handle_event("create_credential", %{"credential" => params}, socket) do
     attrs = %{
