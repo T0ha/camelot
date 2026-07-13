@@ -97,6 +97,7 @@ defmodule CamelotWeb.Router do
       pipe_through :browser
 
       live "/users", AdminLive.Users, :index
+      live "/settings", AdminLive.Settings, :index
     end
 
     scope "/", CamelotWeb do

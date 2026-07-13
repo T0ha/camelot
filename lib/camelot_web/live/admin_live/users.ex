@@ -6,6 +6,7 @@ defmodule CamelotWeb.AdminLive.Users do
   use CamelotWeb, :live_view
 
   alias Camelot.Accounts.User
+  alias Camelot.Runtime.Runner.DockerApi
   alias Phoenix.LiveView.Socket
 
   require Ash.Query
@@ -15,7 +16,7 @@ defmodule CamelotWeb.AdminLive.Users do
   @impl true
   @spec mount(map(), map(), Socket.t()) :: {:ok, Socket.t()}
   def mount(_params, _session, socket) do
-    {:ok, load(socket)}
+    {:ok, socket |> assign(node_labels: DockerApi.list_node_labels_or_empty()) |> load()}
   end
 
   @impl true
@@ -64,6 +65,35 @@ defmodule CamelotWeb.AdminLive.Users do
       end
     end
   end
+
+  def handle_event("set_node_label", %{"node" => %{"id" => id, "swarm_node_label" => label}}, socket) do
+    actor = socket.assigns.current_user
+
+    User
+    |> Ash.get!(id, actor: actor)
+    |> Ash.Changeset.for_update(
+      :set_swarm_node_label,
+      %{swarm_node_label: blank_to_nil(label)},
+      actor: actor
+    )
+    |> Ash.update()
+    |> case do
+      {:ok, user} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "#{user.email} pinned to #{user.swarm_node_label || "no node"}")
+         |> load()}
+
+      {:error, error} ->
+        {:noreply, put_flash(socket, :error, format_error(error))}
+    end
+  end
+
+  defp blank_to_nil(""), do: nil
+  defp blank_to_nil(value), do: value
+
+  defp node_pin_class([]), do: "input input-bordered input-sm w-32"
+  defp node_pin_class(_node_labels), do: "select select-bordered select-sm w-32"
 
   defp load(socket) do
     users =
@@ -140,6 +170,7 @@ defmodule CamelotWeb.AdminLive.Users do
             <tr class="text-left">
               <th class="py-1">Email</th>
               <th class="py-1">Role</th>
+              <th class="py-1">Node pin</th>
               <th class="py-1">Confirmed</th>
               <th class="py-1">Added</th>
             </tr>
@@ -161,6 +192,17 @@ defmodule CamelotWeb.AdminLive.Users do
                       {r}
                     </option>
                   </select>
+                </form>
+              </td>
+              <td class="py-2">
+                <form phx-change="set_node_label">
+                  <input type="hidden" name="node[id]" value={u.id} />
+                  <.node_label_pin
+                    name="node[swarm_node_label]"
+                    value={u.swarm_node_label}
+                    node_labels={@node_labels}
+                    class={node_pin_class(@node_labels)}
+                  />
                 </form>
               </td>
               <td class="py-2">

@@ -59,7 +59,7 @@ defmodule CamelotWeb.AdminLive.UsersTest do
 
       html =
         view
-        |> form("#user-#{target.id} form", %{
+        |> form("#user-#{target.id} form[phx-change=set_role]", %{
           "user" => %{"id" => target.id, "role" => "admin"}
         })
         |> render_change()
@@ -67,13 +67,29 @@ defmodule CamelotWeb.AdminLive.UsersTest do
       assert html =~ "promote-me@example.com is now admin"
     end
 
-    test "cannot change own role", %{conn: conn, user: admin} do
-      {:ok, view, html} = live(conn, ~p"/admin/users")
+    test "pins another user's runners to a swarm node", %{conn: conn} do
+      target = Ash.Seed.seed!(User, %{email: "pin-target-#{System.unique_integer()}@example.com"})
 
-      # the admin's own row has no select form
-      refute html =~ ~s|form phx-change="set_role"| <> "\n"
+      {:ok, view, _html} = live(conn, ~p"/admin/users")
+
+      html =
+        view
+        |> form("#user-#{target.id} form[phx-change=set_node_label]", %{
+          "node" => %{"id" => target.id, "swarm_node_label" => "gpu-9"}
+        })
+        |> render_change()
+
+      assert html =~ "gpu-9"
+      assert Ash.get!(User, target.id, authorize?: false).swarm_node_label == "gpu-9"
+    end
+
+    test "cannot change own role", %{conn: conn, user: admin} do
+      {:ok, view, _html} = live(conn, ~p"/admin/users")
+
+      # the admin's own row has no role-select form (the node pin
+      # form is still present — admins may pin their own runners)
       assert has_element?(view, "#user-#{admin.id}")
-      refute has_element?(view, "#user-#{admin.id} form")
+      refute has_element?(view, "#user-#{admin.id} form[phx-change=set_role]")
     end
   end
 

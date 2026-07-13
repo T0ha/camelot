@@ -40,4 +40,39 @@ defmodule Camelot.Accounts.UserTest do
       end
     end
   end
+
+  describe "set_swarm_node_label policy" do
+    test "a user can set their own label" do
+      user = Ash.Seed.seed!(User, %{email: "self-#{System.unique_integer()}@example.com"})
+
+      assert {:ok, updated} =
+               user
+               |> Ash.Changeset.for_update(:set_swarm_node_label, %{swarm_node_label: "gpu-1"}, actor: user)
+               |> Ash.update()
+
+      assert updated.swarm_node_label == "gpu-1"
+    end
+
+    test "an admin can set another user's label" do
+      admin = Ash.Seed.seed!(User, %{email: "admin-#{System.unique_integer()}@example.com", role: :admin})
+      user = Ash.Seed.seed!(User, %{email: "target-#{System.unique_integer()}@example.com"})
+
+      assert {:ok, updated} =
+               user
+               |> Ash.Changeset.for_update(:set_swarm_node_label, %{swarm_node_label: "gpu-2"}, actor: admin)
+               |> Ash.update()
+
+      assert updated.swarm_node_label == "gpu-2"
+    end
+
+    test "a non-admin cannot set another user's label" do
+      user = Ash.Seed.seed!(User, %{email: "self-#{System.unique_integer()}@example.com"})
+      other = Ash.Seed.seed!(User, %{email: "other-#{System.unique_integer()}@example.com"})
+
+      assert {:error, _} =
+               other
+               |> Ash.Changeset.for_update(:set_swarm_node_label, %{swarm_node_label: "gpu-3"}, actor: user)
+               |> Ash.update()
+    end
+  end
 end

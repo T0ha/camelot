@@ -79,6 +79,17 @@ defmodule Camelot.Projects.Project do
       constraints(one_of: [:active, :archived])
     end
 
+    attribute :swarm_node_label, :string do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Swarm node label pinning this project's runners. " <>
+          "Containers run only on nodes matching " <>
+          "`node.labels.camelot-home == <value>`."
+      )
+    end
+
     timestamps()
   end
 
@@ -91,6 +102,10 @@ defmodule Camelot.Projects.Project do
 
     has_many :memberships, Membership do
       destination_attribute(:project_id)
+    end
+
+    has_one :owner_membership, Membership do
+      filter(expr(role == :owner))
     end
 
     has_many :mcps, Camelot.Projects.Mcp do
@@ -132,6 +147,10 @@ defmodule Camelot.Projects.Project do
         :github_repo,
         :status
       ])
+    end
+
+    update :set_swarm_node_label do
+      accept([:swarm_node_label])
     end
 
     update :archive do
