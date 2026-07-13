@@ -93,7 +93,10 @@ docker node update --label-add camelot-home=node-b worker-2
 ```
 
 Then set the same label string as a pin, at whichever level fits
-(admin-only, in Camelot's UI):
+(admin-only, in Camelot's UI). Each pin control shows a dropdown of
+labels discovered live from `GET /nodes` when the Docker/Swarm API
+is reachable, falling back to a free-text field otherwise (e.g. a
+non-Swarm `RUNNER_BACKEND`, or no node labelled yet):
 
 - **Project** — `/projects/:id`, applies to that project only.
 - **User** — `/admin/users`, applies to all of that user's projects.

@@ -6,6 +6,7 @@ defmodule CamelotWeb.ProjectLive.Show do
 
   alias Camelot.Accounts.User
   alias Camelot.Projects.Project
+  alias Camelot.Runtime.Runner.DockerApi
   alias CamelotWeb.Components.EnvVarEditor
   alias CamelotWeb.Scope
   alias Phoenix.LiveView.Socket
@@ -21,7 +22,8 @@ defmodule CamelotWeb.ProjectLive.Show do
         {:ok,
          assign(socket,
            page_title: project.name,
-           project: project
+           project: project,
+           node_labels: node_labels(socket.assigns.current_user)
          )}
 
       :forbidden ->
@@ -66,6 +68,9 @@ defmodule CamelotWeb.ProjectLive.Show do
 
   defp blank_to_nil(""), do: nil
   defp blank_to_nil(value), do: value
+
+  defp node_labels(%User{role: :admin}), do: DockerApi.list_node_labels_or_empty()
+  defp node_labels(%User{}), do: []
 
   @impl true
   def render(assigns) do
@@ -124,12 +129,11 @@ defmodule CamelotWeb.ProjectLive.Show do
         </p>
 
         <form id="project-node-label-form" phx-change="set_node_label">
-          <input
-            type="text"
+          <.node_label_pin
             name="swarm_node_label"
             value={@project.swarm_node_label}
+            node_labels={@node_labels}
             placeholder="e.g. gpu-1"
-            class="input input-bordered input-sm"
           />
         </form>
       </div>

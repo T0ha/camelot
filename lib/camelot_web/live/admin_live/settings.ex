@@ -5,6 +5,7 @@ defmodule CamelotWeb.AdminLive.Settings do
   """
   use CamelotWeb, :live_view
 
+  alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Settings
   alias Camelot.Settings.SystemSetting
   alias Phoenix.LiveView.Socket
@@ -15,7 +16,8 @@ defmodule CamelotWeb.AdminLive.Settings do
     {:ok,
      assign(socket,
        page_title: "Settings",
-       default_swarm_node_label: Settings.default_swarm_node_label()
+       default_swarm_node_label: Settings.default_swarm_node_label(),
+       node_labels: DockerApi.list_node_labels_or_empty()
      )}
   end
 
@@ -64,12 +66,11 @@ defmodule CamelotWeb.AdminLive.Settings do
         </p>
 
         <form id="system-settings-form" phx-change="set_default_node_label">
-          <input
-            type="text"
+          <.node_label_pin
             name="default_swarm_node_label"
             value={@default_swarm_node_label}
+            node_labels={@node_labels}
             placeholder="e.g. gpu-1"
-            class="input input-bordered input-sm"
           />
         </form>
       </section>

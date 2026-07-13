@@ -6,6 +6,7 @@ defmodule CamelotWeb.AdminLive.Users do
   use CamelotWeb, :live_view
 
   alias Camelot.Accounts.User
+  alias Camelot.Runtime.Runner.DockerApi
   alias Phoenix.LiveView.Socket
 
   require Ash.Query
@@ -15,7 +16,7 @@ defmodule CamelotWeb.AdminLive.Users do
   @impl true
   @spec mount(map(), map(), Socket.t()) :: {:ok, Socket.t()}
   def mount(_params, _session, socket) do
-    {:ok, load(socket)}
+    {:ok, socket |> assign(node_labels: DockerApi.list_node_labels_or_empty()) |> load()}
   end
 
   @impl true
@@ -90,6 +91,9 @@ defmodule CamelotWeb.AdminLive.Users do
 
   defp blank_to_nil(""), do: nil
   defp blank_to_nil(value), do: value
+
+  defp node_pin_class([]), do: "input input-bordered input-sm w-32"
+  defp node_pin_class(_node_labels), do: "select select-bordered select-sm w-32"
 
   defp load(socket) do
     users =
@@ -193,12 +197,11 @@ defmodule CamelotWeb.AdminLive.Users do
               <td class="py-2">
                 <form phx-change="set_node_label">
                   <input type="hidden" name="node[id]" value={u.id} />
-                  <input
-                    type="text"
+                  <.node_label_pin
                     name="node[swarm_node_label]"
                     value={u.swarm_node_label}
-                    placeholder="none"
-                    class="input input-bordered input-sm w-32"
+                    node_labels={@node_labels}
+                    class={node_pin_class(@node_labels)}
                   />
                 </form>
               </td>
