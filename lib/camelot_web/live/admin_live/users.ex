@@ -130,8 +130,8 @@ defmodule CamelotWeb.AdminLive.Users do
         <h2 class="text-lg font-semibold">Add user</h2>
 
         <p class="text-sm text-base-content/60">
-          The new user can sign in immediately with a magic link sent to this
-          email address.
+          The new user gets an invitation email at this address and can
+          sign in themselves with a magic link whenever they're ready.
         </p>
 
         <.form

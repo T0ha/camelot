@@ -2,14 +2,14 @@ defmodule Mix.Tasks.Camelot.CreateUser do
   @shortdoc "Create a confirmed user account by email"
 
   @moduledoc """
-  Creates a confirmed user account so they can sign in immediately via
-  magic link.
+  Creates a confirmed user account and sends them an invitation email
+  so they can sign in themselves via magic link.
 
       mix camelot.create_user EMAIL [--role admin|user]
 
   Defaults to `--role admin` so the first invocation on a fresh install
-  bootstraps an operator account. Subsequent users can be added from
-  `/admin/users` once an admin is signed in.
+  bootstraps an operator account. Subsequent users can also be added
+  from `/admin/users` once an admin is signed in.
 
   Works in a release as:
 
