@@ -31,6 +31,16 @@ defmodule Camelot.Accounts.UserTest do
     end
   end
 
+  describe "notification preferences" do
+    test "default to enabled" do
+      user = Ash.Seed.seed!(User, %{email: "notify-defaults@example.com"})
+
+      assert user.notify_on_waiting_for_input
+      assert user.notify_on_error
+      assert user.notify_on_done
+    end
+  end
+
   describe "unique email" do
     test "enforces unique email identity" do
       Ash.Seed.seed!(User, %{email: "dup@example.com"})

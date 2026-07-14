@@ -4,6 +4,7 @@ defmodule Camelot.Board.TaskTest do
   alias Camelot.Accounts.User
   alias Camelot.Agents.Agent
   alias Camelot.Board.Task
+  alias Camelot.Board.Workers.SendTaskStateEmail
   alias Camelot.Projects.Project
 
   setup do
@@ -388,6 +389,125 @@ defmodule Camelot.Board.TaskTest do
       {:ok, done} = Ash.update(task, %{}, action: :cancel)
 
       assert {:error, _} = Ash.update(done, %{}, action: :reset)
+    end
+  end
+
+  describe "state-change email notifications" do
+    test "submit_plan enqueues a waiting_for_input notification", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      {:ok, task} =
+        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+
+      {:ok, task} = Ash.update(task, %{plan: "plan"}, action: :submit_plan)
+
+      assert_enqueued(
+        worker: SendTaskStateEmail,
+        args: %{"task_id" => task.id, "kind" => "waiting_for_input"}
+      )
+    end
+
+    test "request_input enqueues a waiting_for_input notification", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      {:ok, task} =
+        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+
+      {:ok, task} = Ash.update(task, %{}, action: :request_input)
+
+      assert_enqueued(
+        worker: SendTaskStateEmail,
+        args: %{"task_id" => task.id, "kind" => "waiting_for_input"}
+      )
+    end
+
+    test "pr_created enqueues a waiting_for_input notification", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      {:ok, task} =
+        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+
+      {:ok, task} = Ash.update(task, %{plan: "plan"}, action: :submit_plan)
+      {:ok, task} = Ash.update(task, %{}, action: :approve_plan)
+
+      {:ok, task} =
+        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+
+      {:ok, task} =
+        Ash.update(
+          task,
+          %{pr_url: "https://github.com/o/r/pull/1", pr_number: 1},
+          action: :pr_created
+        )
+
+      assert_enqueued(
+        worker: SendTaskStateEmail,
+        args: %{"task_id" => task.id, "kind" => "waiting_for_input"}
+      )
+    end
+
+    test "mark_error enqueues an error notification", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      {:ok, task} =
+        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+
+      {:ok, task} = Ash.update(task, %{}, action: :mark_error)
+
+      assert_enqueued(
+        worker: SendTaskStateEmail,
+        args: %{"task_id" => task.id, "kind" => "error"}
+      )
+    end
+
+    test "mark_runner_lost enqueues an error notification", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      {:ok, task} =
+        Ash.update(task, %{runner_handle: "svc-1"}, action: :set_runner_handle)
+
+      {:ok, task} = Ash.update(task, %{}, action: :mark_runner_lost)
+
+      assert_enqueued(
+        worker: SendTaskStateEmail,
+        args: %{"task_id" => task.id, "kind" => "error"}
+      )
+    end
+
+    test "complete enqueues a done notification", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      {:ok, task} =
+        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+
+      {:ok, task} = Ash.update(task, %{plan: "plan"}, action: :submit_plan)
+      {:ok, task} = Ash.update(task, %{}, action: :approve_plan)
+
+      {:ok, task} =
+        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+
+      {:ok, task} =
+        Ash.update(
+          task,
+          %{pr_url: "https://github.com/o/r/pull/1", pr_number: 1},
+          action: :pr_created
+        )
+
+      {:ok, task} = Ash.update(task, %{}, action: :complete)
+
+      assert_enqueued(
+        worker: SendTaskStateEmail,
+        args: %{"task_id" => task.id, "kind" => "done"}
+      )
+    end
+
+    test "an update that stays in_progress does not enqueue a notification", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      {:ok, _task} =
+        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+
+      refute_enqueued(worker: SendTaskStateEmail)
     end
   end
 

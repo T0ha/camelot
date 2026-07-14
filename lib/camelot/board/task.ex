@@ -16,6 +16,8 @@ defmodule Camelot.Board.Task do
     extensions: [AshOban],
     authorizers: []
 
+  alias Camelot.Board.Notifiers.NotifyTaskStateEmail
+
   @stages [
     :draft,
     :todo,
@@ -236,6 +238,7 @@ defmodule Camelot.Board.Task do
 
     update :submit_plan do
       accept([:plan])
+      notifiers([NotifyTaskStateEmail])
 
       validate(attribute_equals(:stage, :planning))
       validate(attribute_equals(:state, :in_progress))
@@ -263,6 +266,7 @@ defmodule Camelot.Board.Task do
 
     update :request_input do
       accept([])
+      notifiers([NotifyTaskStateEmail])
 
       validate(attribute_equals(:state, :in_progress))
       change(set_attribute(:state, :waiting_for_input))
@@ -277,12 +281,14 @@ defmodule Camelot.Board.Task do
 
     update :mark_error do
       accept([])
+      notifiers([NotifyTaskStateEmail])
 
       change(set_attribute(:state, :error))
     end
 
     update :mark_runner_lost do
       accept([])
+      notifiers([NotifyTaskStateEmail])
 
       change(set_attribute(:state, :error))
       change(set_attribute(:runner_handle, nil))
@@ -320,6 +326,7 @@ defmodule Camelot.Board.Task do
 
     update :pr_created do
       accept([:pr_url, :pr_number])
+      notifiers([NotifyTaskStateEmail])
 
       validate(attribute_equals(:stage, :executing))
       validate(attribute_equals(:state, :in_progress))
@@ -337,6 +344,7 @@ defmodule Camelot.Board.Task do
 
     update :complete do
       accept([])
+      notifiers([NotifyTaskStateEmail])
 
       validate(attribute_equals(:stage, :pr))
       validate(attribute_equals(:state, :waiting_for_input))

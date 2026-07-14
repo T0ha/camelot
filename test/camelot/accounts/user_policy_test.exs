@@ -63,4 +63,33 @@ defmodule Camelot.Accounts.UserPolicyTest do
                |> Ash.update()
     end
   end
+
+  describe ":update_notification_preferences policy" do
+    test "a user can update their own notification preferences", %{user: user} do
+      assert {:ok, updated} =
+               user
+               |> Ash.Changeset.for_update(
+                 :update_notification_preferences,
+                 %{notify_on_error: false},
+                 actor: user
+               )
+               |> Ash.update()
+
+      refute updated.notify_on_error
+    end
+
+    test "a user cannot update another user's notification preferences", %{
+      user: user,
+      other: other
+    } do
+      assert {:error, %Forbidden{}} =
+               other
+               |> Ash.Changeset.for_update(
+                 :update_notification_preferences,
+                 %{notify_on_error: false},
+                 actor: user
+               )
+               |> Ash.update()
+    end
+  end
 end
