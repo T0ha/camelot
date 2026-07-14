@@ -135,6 +135,7 @@ defmodule Camelot.Accounts.User do
     create :create_user do
       accept([:email, :role])
       change(set_attribute(:confirmed_at, &DateTime.utc_now/0))
+      change(Camelot.Accounts.User.Changes.SendInvitationEmail)
     end
 
     update :set_swarm_node_label do
