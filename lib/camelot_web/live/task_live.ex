@@ -456,16 +456,6 @@ defmodule CamelotWeb.TaskLive do
           </form>
         </div>
 
-        <div
-          :if={@task.state == :in_progress && @live_output != ""}
-          class="space-y-2"
-        >
-          <h3 class="font-semibold flex items-center gap-2">
-            Live output <span class="loading loading-dots loading-xs"></span>
-          </h3>
-          <pre class="text-xs overflow-auto max-h-96 bg-base-300 p-2 rounded whitespace-pre-wrap">{humanize_stream(@live_output)}</pre>
-        </div>
-
         <div class="space-y-4">
           <h3 class="font-semibold">Sessions</h3>
           <div
@@ -593,6 +583,15 @@ defmodule CamelotWeb.TaskLive do
                   Approve &amp; Retry
                 </button>
               </form>
+              <div
+                :if={session.status == :running && @live_output != ""}
+                class="mt-2 space-y-1"
+              >
+                <h4 class="text-xs font-semibold flex items-center gap-2">
+                  Live output <span class="loading loading-dots loading-xs"></span>
+                </h4>
+                <pre class="text-xs overflow-auto max-h-40 bg-base-300 p-2 rounded whitespace-pre-wrap">{humanize_stream(@live_output)}</pre>
+              </div>
               <pre
                 :if={session.output_log}
                 class="mt-2 text-xs overflow-auto max-h-40 bg-base-300 p-2 rounded"
