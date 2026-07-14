@@ -89,6 +89,9 @@ defmodule CamelotWeb.ProjectLive.Show do
         <:item :if={@project.github_repo_url} title="GitHub">
           {@project.github_repo_url}
         </:item>
+        <:item :if={@project.runner_image_override} title="Runner Image Override">
+          <code>{@project.runner_image_override}</code>
+        </:item>
       </.list>
 
       <.live_component

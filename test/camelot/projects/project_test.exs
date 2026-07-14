@@ -64,6 +64,18 @@ defmodule Camelot.Projects.ProjectTest do
       assert project.github_owner == "org"
     end
 
+    test "defaults runner_image_override to nil" do
+      assert {:ok, project} = Ash.create(Project, @valid_attrs)
+      assert project.runner_image_override == nil
+    end
+
+    test "accepts a runner_image_override" do
+      attrs = Map.put(@valid_attrs, :runner_image_override, "ghcr.io/org/runner:1.0")
+
+      assert {:ok, project} = Ash.create(Project, attrs)
+      assert project.runner_image_override == "ghcr.io/org/runner:1.0"
+    end
+
     test "fails without required name" do
       assert {:error, _} =
                Ash.create(Project, %{path: "/tmp/test"})
@@ -101,6 +113,20 @@ defmodule Camelot.Projects.ProjectTest do
                })
 
       assert updated.description == "Updated"
+    end
+
+    test "sets and clears runner_image_override" do
+      {:ok, project} = Ash.create(Project, @valid_attrs)
+
+      assert {:ok, with_override} =
+               Ash.update(project, %{runner_image_override: "ghcr.io/org/runner:2.0"})
+
+      assert with_override.runner_image_override == "ghcr.io/org/runner:2.0"
+
+      assert {:ok, cleared} =
+               Ash.update(with_override, %{runner_image_override: nil})
+
+      assert cleared.runner_image_override == nil
     end
   end
 

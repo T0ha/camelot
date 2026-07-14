@@ -9,6 +9,10 @@ defmodule Camelot.Runtime.AgentConfig do
   Override fields on the Agent win over the template iff
   they are non-nil. Parser choice cannot be overridden
   per agent (it implies a code-level contract).
+
+  `runner_image` also accepts a project-level override via
+  `agent.project.runner_image_override`, taking precedence
+  over the template default.
   """
 
   alias Camelot.Agents.Agent
@@ -74,7 +78,7 @@ defmodule Camelot.Runtime.AgentConfig do
           agent.base_retry_delay_ms_override,
           template.base_retry_delay_ms
         ),
-      runner_image: template.runner_image,
+      runner_image: override(agent.project.runner_image_override, template.runner_image),
       runner_resources: template.runner_resources,
       required_credential_kinds: template.required_credential_kinds
     }
