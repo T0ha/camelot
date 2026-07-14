@@ -315,4 +315,54 @@ defmodule Camelot.Runtime.AgentProcessTest do
                AgentProcess.planning_action(planning_state(), res)
     end
   end
+
+  describe "execution_pr_outcome/3" do
+    defp exec_state do
+      %AgentProcess{
+        agent_id: "a",
+        config: %AgentConfig{
+          parser: :claude_code_json,
+          executable: "claude",
+          pr_url_pattern: "https://github\\.com/[^\\s]+/pull/(\\d+)"
+        }
+      }
+    end
+
+    test "extracts a PR URL from the final output", ctx do
+      text = "All done. Opened https://github.com/T0ha/camelot/pull/42 for review."
+
+      assert {:pr, "https://github.com/T0ha/camelot/pull/42", 42} =
+               AgentProcess.execution_pr_outcome(exec_state(), ctx.task, text)
+    end
+
+    test "returns :no_pr when no URL and the project has no GitHub repo", ctx do
+      # setup project is created without github_owner/repo, so the
+      # GitHub fallback short-circuits without a network call.
+      assert :no_pr =
+               AgentProcess.execution_pr_outcome(
+                 exec_state(),
+                 ctx.task,
+                 "Finished, but I did not open a PR."
+               )
+    end
+  end
+
+  describe "finish_session/4" do
+    test "is a no-op when there is no current session" do
+      state = %AgentProcess{agent_id: "a", current_session_id: nil, output_buffer: ""}
+      assert :ok = AgentProcess.finish_session(state, 0, nil, [])
+    end
+
+    test "does not crash when the session row is missing" do
+      state = %AgentProcess{
+        agent_id: "a",
+        current_session_id: Ecto.UUID.generate(),
+        output_buffer: "some output"
+      }
+
+      # Ash.get! raises for the missing row; the rescue must swallow it
+      # so AgentProcess survives instead of stranding the session.
+      assert :ok = AgentProcess.finish_session(state, 1, {:error, "boom"}, [])
+    end
+  end
 end

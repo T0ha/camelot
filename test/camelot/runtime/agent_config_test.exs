@@ -41,7 +41,7 @@ defmodule Camelot.Runtime.AgentConfigTest do
       assert "--json-schema" in args
     end
 
-    test "executing stage emits --permission-mode acceptEdits", ctx do
+    test "executing stage emits acceptEdits + the execution system prompt", ctx do
       args =
         AgentConfig.build_cli_args(
           ctx.claude,
@@ -50,17 +50,17 @@ defmodule Camelot.Runtime.AgentConfigTest do
           :executing
         )
 
-      assert args == [
-               "--output-format",
-               "stream-json",
-               "--verbose",
-               "--permission-mode",
-               "acceptEdits",
-               "--allowedTools",
-               "Read",
-               "-p",
-               "do it"
-             ]
+      executing_args = ClaudeCodeDefaults.permission_args_by_stage()["executing"]
+
+      assert args ==
+               ["--output-format", "stream-json", "--verbose"] ++
+                 executing_args ++
+                 ["--allowedTools", "Read", "-p", "do it"]
+
+      # Guard the contract shape explicitly.
+      assert "--permission-mode" in args
+      assert "acceptEdits" in args
+      assert "--append-system-prompt" in args
     end
 
     test "filters EnterPlanMode / ExitPlanMode from allowed_tools", ctx do
@@ -137,6 +137,16 @@ defmodule Camelot.Runtime.AgentConfigTest do
                "/w",
                "img"
              ]
+    end
+  end
+
+  describe "ClaudeCodeDefaults.execution_system_prompt/0" do
+    test "forbids background tasks and mandates opening a PR" do
+      prompt = ClaudeCodeDefaults.execution_system_prompt()
+
+      assert prompt =~ "background task"
+      assert prompt =~ "gh pr create"
+      assert prompt =~ "PR URL"
     end
   end
 
