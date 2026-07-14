@@ -21,6 +21,25 @@ defmodule Camelot.Agents.ClaudeCodeDefaults do
   @spec planning_system_prompt() :: String.t()
   def planning_system_prompt, do: @planning_system_prompt
 
+  @execution_system_prompt "You are running fully autonomously in a " <>
+                             "headless, single-turn session: there is no " <>
+                             "interactive user to answer you and no follow-up " <>
+                             "turn, so you must complete the whole task before " <>
+                             "your turn ends. Do NOT use background tasks or " <>
+                             "run any command in the background; run every " <>
+                             "command (tests, builds, git) synchronously and " <>
+                             "wait for it to finish inline. Do NOT stop to " <>
+                             "wait for a notification, approval, or " <>
+                             "confirmation — the plan is already approved. " <>
+                             "Finish the task by opening a pull request with " <>
+                             "`gh pr create`, and print the resulting PR URL " <>
+                             "as the last line of your final message so it is " <>
+                             "captured."
+
+  @doc "System prompt appended to the execution run."
+  @spec execution_system_prompt() :: String.t()
+  def execution_system_prompt, do: @execution_system_prompt
+
   @doc """
   JSON Schema (encoded string) passed as `--json-schema` for planning.
 
@@ -72,7 +91,12 @@ defmodule Camelot.Agents.ClaudeCodeDefaults do
         "--json-schema",
         planning_json_schema()
       ],
-      "executing" => ["--permission-mode", "acceptEdits"]
+      "executing" => [
+        "--permission-mode",
+        "acceptEdits",
+        "--append-system-prompt",
+        execution_system_prompt()
+      ]
     }
   end
 end

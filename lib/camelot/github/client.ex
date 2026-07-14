@@ -62,6 +62,20 @@ defmodule Camelot.Github.Client do
     )
   end
 
+  @spec find_open_pr_by_head(String.t(), String.t(), String.t()) ::
+          {:ok, map()} | :none | {:error, term()}
+  def find_open_pr_by_head(owner, repo, branch) do
+    case request(
+           :get,
+           "/repos/#{owner}/#{repo}/pulls" <>
+             "?state=open&head=#{owner}:#{branch}"
+         ) do
+      {:ok, [pr | _]} -> {:ok, pr}
+      {:ok, _} -> :none
+      error -> error
+    end
+  end
+
   defp request(method, path) do
     url = @base_url <> path
 
