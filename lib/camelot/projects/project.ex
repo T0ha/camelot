@@ -72,6 +72,18 @@ defmodule Camelot.Projects.Project do
       public?(true)
     end
 
+    attribute :runner_image_override, :string do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Per-project override of the runner OCI image, e.g. " <>
+          "`ghcr.io/t0ha/camelot-runner-elixir:1.19`. Wins over the " <>
+          "agent type's `AgentTemplate.runner_image` when non-nil; " <>
+          "nil falls back to the template default."
+      )
+    end
+
     attribute :status, :atom do
       allow_nil?(false)
       public?(true)
@@ -129,7 +141,8 @@ defmodule Camelot.Projects.Project do
         :description,
         :github_repo_url,
         :github_owner,
-        :github_repo
+        :github_repo,
+        :runner_image_override
       ])
 
       change(Camelot.Projects.Project.Changes.AddActorAsMember)
@@ -145,6 +158,7 @@ defmodule Camelot.Projects.Project do
         :github_repo_url,
         :github_owner,
         :github_repo,
+        :runner_image_override,
         :status
       ])
     end

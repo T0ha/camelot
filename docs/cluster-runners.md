@@ -21,7 +21,10 @@ For a hosted CapRover deployment:
      networking*). Set `none` to keep runners isolated.
 4. Build and push the runner images
    (`.github/workflows/runner-images.yml`). Reference them from
-   `AgentTemplate.runner_image`.
+   `AgentTemplate.runner_image`. A single project can pin a different
+   image via its `runner_image_override` field (set in the project's
+   edit form) — when non-nil, it wins over the agent type's
+   `AgentTemplate.runner_image` for every agent in that project.
 5. For each user, in Camelot's profile UI:
    - Add their API keys / GitHub PAT as Credentials. `SecretSync`
      will populate `camelot_user_<id>_<kind>` Swarm secrets

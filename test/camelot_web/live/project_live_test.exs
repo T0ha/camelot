@@ -66,6 +66,33 @@ defmodule CamelotWeb.ProjectLiveTest do
     end
   end
 
+  describe "runner image override" do
+    test "sets the override via the edit form and shows it on the show page", %{
+      conn: conn,
+      user: user
+    } do
+      {:ok, project} =
+        Ash.create(
+          Project,
+          %{name: "runner-image-#{System.unique_integer()}", path: "/tmp/runner"},
+          actor: user
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}/edit")
+
+      view
+      |> form("#project-form", %{
+        "name" => project.name,
+        "runner_image_override" => "ghcr.io/t0ha/camelot-runner-elixir:1.19"
+      })
+      |> render_submit()
+
+      {:ok, _view, html} = live(conn, ~p"/projects/#{project.id}")
+
+      assert html =~ "ghcr.io/t0ha/camelot-runner-elixir:1.19"
+    end
+  end
+
   describe "environment variables" do
     setup %{user: user} do
       {:ok, project} =

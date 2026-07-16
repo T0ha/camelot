@@ -135,7 +135,8 @@ defmodule CamelotWeb.ProjectLive.Index do
       "description" => "",
       "github_repo_url" => "",
       "github_owner" => "",
-      "github_repo" => ""
+      "github_repo" => "",
+      "runner_image_override" => ""
     }
   end
 
@@ -146,6 +147,7 @@ defmodule CamelotWeb.ProjectLive.Index do
       "github_repo_url" => project.github_repo_url || "",
       "github_owner" => project.github_owner || "",
       "github_repo" => project.github_repo || "",
+      "runner_image_override" => project.runner_image_override || "",
       "status" => to_string(project.status)
     }
   end
@@ -155,7 +157,7 @@ defmodule CamelotWeb.ProjectLive.Index do
   end
 
   @project_fields ~w(name path description github_repo_url
-                     github_owner github_repo status)
+                     github_owner github_repo runner_image_override status)
 
   defp extract_project_params(params) do
     Map.take(params, @project_fields)
@@ -351,6 +353,11 @@ defmodule CamelotWeb.ProjectLive.Index do
               field={@form[:github_repo]}
               type="text"
               label="GitHub Repo"
+            />
+            <.input
+              field={@form[:runner_image_override]}
+              type="text"
+              label="Runner Image Override"
             />
             <%= if @live_action == :edit do %>
               <.input

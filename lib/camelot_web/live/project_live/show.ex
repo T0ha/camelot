@@ -117,6 +117,9 @@ defmodule CamelotWeb.ProjectLive.Show do
         <:item :if={@project.github_repo_url} title="GitHub">
           {@project.github_repo_url}
         </:item>
+        <:item :if={@project.runner_image_override} title="Runner Image Override">
+          <code>{@project.runner_image_override}</code>
+        </:item>
       </.list>
 
       <div :if={@current_user.role == :admin} class="rounded border p-4 space-y-2">

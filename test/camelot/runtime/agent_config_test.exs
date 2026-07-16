@@ -185,6 +185,34 @@ defmodule Camelot.Runtime.AgentConfigTest do
     end
   end
 
+  describe "resolve/1 — project-level runner_image override" do
+    test "project override wins over template default" do
+      project = %Project{path: "/p", runner_image_override: "ghcr.io/org/canary:1.0"}
+
+      agent = %Camelot.Agents.Agent{
+        project: project,
+        template: %{template_struct() | runner_image: "ghcr.io/org/default:1.0"}
+      }
+
+      resolved = AgentConfig.resolve(agent)
+
+      assert resolved.runner_image == "ghcr.io/org/canary:1.0"
+    end
+
+    test "nil project override falls back to template's runner_image" do
+      project = %Project{path: "/p", runner_image_override: nil}
+
+      agent = %Camelot.Agents.Agent{
+        project: project,
+        template: %{template_struct() | runner_image: "ghcr.io/org/default:1.0"}
+      }
+
+      resolved = AgentConfig.resolve(agent)
+
+      assert resolved.runner_image == "ghcr.io/org/default:1.0"
+    end
+  end
+
   describe "env_for_port/1" do
     test "renders env_vars as charlist tuples for Port", ctx do
       env = AgentConfig.env_for_port(ctx.claude)
