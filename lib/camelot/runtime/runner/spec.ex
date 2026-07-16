@@ -31,7 +31,8 @@ defmodule Camelot.Runtime.Runner.Spec do
             resources: %{},
             service_name: nil,
             task_id: nil,
-            adopt?: false
+            adopt?: false,
+            adopt_since: nil
 
   @type secret :: %{kind: atom(), name: String.t(), value: String.t()}
 
@@ -52,7 +53,8 @@ defmodule Camelot.Runtime.Runner.Spec do
           resources: %{optional(String.t()) => String.t()},
           service_name: String.t() | nil,
           task_id: String.t() | nil,
-          adopt?: boolean()
+          adopt?: boolean(),
+          adopt_since: DateTime.t() | nil
         }
 
   @doc """

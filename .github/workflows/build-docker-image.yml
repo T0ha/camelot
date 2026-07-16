@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - main
+      - develop
 
 defaults:
   run:
@@ -17,7 +18,7 @@ jobs:
   build_docker_image:
     name: Build Image
     runs-on: ubuntu-24.04
-    environment: test
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'test' }}
     permissions:
       contents: read
       packages: write
