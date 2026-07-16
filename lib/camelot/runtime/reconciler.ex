@@ -11,10 +11,16 @@ defmodule Camelot.Runtime.Reconciler do
        If the session's task runner container is still
        alive, it is **adopted** — a fresh AgentProcess
        re-attaches and finalises from the durable tee'd
-       output (`was_adopted` is set). Only when there is no
-       live container to re-attach to (bootstrap sessions,
-       the LocalPort backend, or a truly gone runner) is the
-       session marked failed for the user to retry.
+       output (`was_adopted` is set). Adoption is refused
+       when the live container was *replaced* after the
+       session's exec began (Swarm reschedule / OOM): the
+       tee'd output and completion marker lived in the prior
+       container's `/tmp` and can never reappear, so polling
+       for them would hang forever — such a session is
+       failed instead. When there is no live container to
+       re-attach to (bootstrap sessions, the LocalPort
+       backend, or a truly gone runner) the session is
+       likewise marked failed for the user to retry.
     2. Queued sessions are *not* touched — their DB rows
        survive untouched, and the next call to
        `RunnerPool.tick/0` (after AgentProcess
@@ -52,6 +58,7 @@ defmodule Camelot.Runtime.Reconciler do
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.LocalPort
   alias Camelot.Runtime.Runner.Swarm
+  alias Camelot.Runtime.Runner.Swarm.ExecSession
   alias Camelot.Runtime.RunnerPool
   alias Camelot.Runtime.SessionRegistry
 
@@ -158,11 +165,76 @@ defmodule Camelot.Runtime.Reconciler do
       presence = if handle, do: probe_runner(handle), else: :gone
 
       case recovery_action(Runner.backend(), session.kind, handle, presence) do
-        :adopt -> adopt_stale_session(session)
+        :adopt -> adopt_or_fail(session, handle)
         :fail -> fail_stale_session(session)
       end
     end
   end
+
+  # Even when the runner container is still alive, adopting is pointless
+  # if that container was *replaced* since the session's exec began: the
+  # completion marker the adoption would poll for lived in the prior
+  # container's /tmp and can never appear. Fail such a session (it stays
+  # user-recoverable) instead of handing it to an unbounded poll. This is
+  # race-free — we are in the branch where the owning AgentProcess is
+  # already gone.
+  defp adopt_or_fail(%Session{} = session, handle) do
+    if doomed_adoption?(container_started_for(handle), session.started_at) do
+      Logger.info(
+        "Reconciler: not adopting session #{session.id} — runner " <>
+          "container was replaced after the exec began; failing it so " <>
+          "it can be retried"
+      )
+
+      fail_stale_session(session)
+    else
+      adopt_stale_session(session)
+    end
+  end
+
+  @doc """
+  Whether a would-be adoption is doomed: the runner container was
+  replaced after the session's exec began, so the completion marker the
+  adoption polls for is gone.
+  """
+  @spec doomed_adoption?(DateTime.t() | nil, DateTime.t() | nil) :: boolean()
+  def doomed_adoption?(container_started_at, session_started_at) do
+    ExecSession.container_replaced?(container_started_at, session_started_at)
+  end
+
+  # Best-effort start time of the service's live replica, read from the
+  # manager task list (no node proxy needed). `nil` on any Swarm error or
+  # non-Swarm backend, in which case adoption proceeds and ExecSession's
+  # own budget bounds the poll.
+  defp container_started_for(handle) when is_binary(handle) do
+    if Runner.backend() == Swarm, do: swarm_task_created_at(handle)
+  end
+
+  defp container_started_for(_handle), do: nil
+
+  defp swarm_task_created_at(service_id) do
+    case list_runnable_swarm_tasks(service_id) do
+      {:ok, [_ | _] = tasks} ->
+        tasks
+        |> Enum.map(&Map.get(&1, "CreatedAt"))
+        |> Enum.reject(&is_nil/1)
+        |> Enum.flat_map(&parse_datetime/1)
+        |> latest_datetime()
+
+      _ ->
+        nil
+    end
+  end
+
+  defp parse_datetime(iso) do
+    case DateTime.from_iso8601(iso) do
+      {:ok, dt, _offset} -> [dt]
+      _ -> []
+    end
+  end
+
+  defp latest_datetime([]), do: nil
+  defp latest_datetime([_ | _] = dts), do: Enum.max(dts, DateTime)
 
   @doc """
   Pure decision for a stale `:running` session: `:adopt` only when a

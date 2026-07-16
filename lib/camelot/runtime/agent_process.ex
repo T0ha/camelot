@@ -495,7 +495,11 @@ defmodule Camelot.Runtime.AgentProcess do
         output_buffer: session.output_log || ""
     }
 
-    spec = %{build_spec(state, agent, task, config, []) | adopt?: true}
+    spec = %{
+      build_spec(state, agent, task, config, [])
+      | adopt?: true,
+        adopt_since: session.started_at
+    }
 
     case Runner.start(spec) do
       {:ok, runner_pid} ->
