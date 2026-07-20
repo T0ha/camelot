@@ -95,7 +95,8 @@ if config_env() == :prod do
       ""
       |> URI.decode_query()
       |> case do
-        %{"ssl" => "true"} -> [ssl: true, ssl_opts: [verify: :verify_none]]
+        %{"sslmode" => "none"} -> false
+        %{"sslmode" => _} -> [ssl: true, ssl_opts: [verify: :verify_none]]
         _ -> false
       end
 
