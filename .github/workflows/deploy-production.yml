@@ -1,0 +1,62 @@
+name: Deploy to Production
+on:
+  push:
+    branches:
+      - main
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  IMAGE: ghcr.io/t0ha/camelotai
+
+jobs:
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-24.04
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Resolve merged develop commit
+        id: image
+        run: |
+          # main is updated via merge-commit PRs from develop, so the second
+          # parent (HEAD^2) is the develop tip whose image was built & tested.
+          sha=$(git rev-parse HEAD^2 2>/dev/null) || {
+            echo "::error::HEAD has no second parent - main must be updated" \
+                 "via a merge commit from develop (no rebuild happens here)."
+            exit 1
+          }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Deploying image built for develop commit $sha"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify image exists
+        run: |
+          ref="${{ env.IMAGE }}:${{ steps.image.outputs.sha }}"
+          docker buildx imagetools inspect "$ref" >/dev/null || {
+            echo "::error::$ref not found in registry - was develop built?"
+            exit 1
+          }
+
+      - name: Deploy Image to CapRover (production)
+        uses: caprover/deploy-from-github@v1.1.2
+        with:
+          server: "${{ vars.CAPROVER_SERVER }}"
+          app: "${{ vars.APP_NAME }}"
+          token: "${{ secrets.APP_TOKEN }}"
+          image: "${{ env.IMAGE }}:${{ steps.image.outputs.sha }}"
