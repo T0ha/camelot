@@ -88,17 +88,20 @@ if config_env() == :prod do
       For example: ecto://USER:PASS@HOST/DATABASE
       """
 
-  ssl_options =
+  ssl_query =
     database_url
     |> URI.parse()
-    |> Map.get(:query, "") ||
-      ""
-      |> URI.decode_query()
-      |> case do
-        %{"sslmode" => "none"} -> false
-        %{"sslmode" => _} -> [ssl: true, ssl_opts: [verify: :verify_none]]
-        _ -> false
-      end
+    |> Map.get(:query)
+    |> Kernel.||("")
+    |> URI.decode_query()
+
+  ssl_options =
+    case ssl_query do
+      %{"sslmode" => "none"} -> false
+      %{"sslmode" => "disable"} -> false
+      %{"sslmode" => _} -> [verify: :verify_none]
+      _ -> false
+    end
 
   encryption_key =
     System.get_env("ENCRYPTION_KEY") ||
