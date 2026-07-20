@@ -35,9 +35,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Building and publishing an image
-        uses: docker/build-push-action@v3
+        uses: docker/build-push-action@v6
         with:
           push: true
+          platforms: linux/amd64,linux/arm64
           context: .
           tags: |
             ghcr.io/t0ha/camelotai:latest
