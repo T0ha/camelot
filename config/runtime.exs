@@ -91,12 +91,13 @@ if config_env() == :prod do
   ssl_options =
     database_url
     |> URI.parse()
-    |> Map.get(:query)
-    |> URI.decode_query()
-    |> case do
-      %{"ssl" => "true"} -> [ssl: true, ssl_opts: [verify: :verify_none]]
-      _ -> []
-    end
+    |> Map.get(:query, "") ||
+      ""
+      |> URI.decode_query()
+      |> case do
+        %{"ssl" => "true"} -> [ssl: true, ssl_opts: [verify: :verify_none]]
+        _ -> []
+      end
 
   encryption_key =
     System.get_env("ENCRYPTION_KEY") ||
