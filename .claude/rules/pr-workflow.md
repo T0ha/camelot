@@ -11,5 +11,5 @@
 - Run `mix format` to ensure code style compliance
 - Commit code
 - Push branch to remote
-- Create a pull request
+- Create a pull request to `develop` branch if it's not there yet.
 
