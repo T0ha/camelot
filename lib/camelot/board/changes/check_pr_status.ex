@@ -6,6 +6,8 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   Transitions:
   - merged → done (via complete)
   - closed → cancelled (via cancel)
+  - merge conflict → queued for agent fix (via request_pr_changes)
+  - failing CI checks → queued for agent fix (via request_pr_changes)
   - changes_requested → queued for agent fix (via request_pr_changes)
   - new comments after last commit → queued for agent fix
   - approved → done (via complete)
@@ -43,8 +45,10 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
          {:ok, comments} <-
            Client.list_pull_request_comments(owner, repo, pr),
          {:ok, commits} <-
-           Client.list_pull_request_commits(owner, repo, pr) do
-      apply_pr_state(task, pr_data, reviews, comments, commits)
+           Client.list_pull_request_commits(owner, repo, pr),
+         {:ok, check_runs} <-
+           fetch_check_runs(owner, repo, pr_data) do
+      apply_pr_state(task, pr_data, reviews, comments, commits, check_runs)
     else
       {:error, reason} ->
         Logger.warning(
@@ -54,7 +58,14 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
     end
   end
 
-  defp apply_pr_state(task, pr, reviews, comments, commits) do
+  defp fetch_check_runs(owner, repo, pr_data) do
+    case get_in(pr_data, ["head", "sha"]) do
+      nil -> {:ok, []}
+      sha -> Client.list_check_runs(owner, repo, sha)
+    end
+  end
+
+  defp apply_pr_state(task, pr, reviews, comments, commits, check_runs) do
     cond do
       pr["merged"] == true ->
         transition(task, :complete)
@@ -63,15 +74,21 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
         transition(task, :cancel)
 
       task.state == :waiting_for_input ->
-        apply_waiting_for_input(task, reviews, comments, commits)
+        apply_waiting_for_input(task, pr, reviews, comments, commits, check_runs)
 
       true ->
         :ok
     end
   end
 
-  defp apply_waiting_for_input(task, reviews, comments, commits) do
+  defp apply_waiting_for_input(task, pr, reviews, comments, commits, check_runs) do
     cond do
+      merge_conflict?(pr) ->
+        transition_with_seen_at(task, comments)
+
+      ci_failing?(check_runs) ->
+        transition_with_seen_at(task, comments)
+
       has_review_state?(reviews, "CHANGES_REQUESTED") ->
         transition_with_seen_at(task, comments)
 
@@ -84,6 +101,36 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
       true ->
         :ok
     end
+  end
+
+  @doc """
+  True if GitHub reports an unresolved merge conflict.
+
+  `mergeable` is `nil` while GitHub is still computing the merge —
+  must not trigger. `mergeable_state == "blocked"` is a branch
+  protection gate, not a git conflict, so only `"dirty"` counts.
+  """
+  @spec merge_conflict?(map()) :: boolean()
+  def merge_conflict?(pr) do
+    pr["mergeable"] == false and pr["mergeable_state"] == "dirty"
+  end
+
+  @failing_conclusions ~w(failure timed_out action_required cancelled)
+
+  @doc """
+  True if any completed check run failed.
+
+  Only `status == "completed"` runs are considered — `in_progress`/
+  `queued` runs have `conclusion == nil` and must not trigger, since
+  CI still running isn't CI failing. `cancelled` is included because a
+  cancelled run at a fixed head sha never reruns on its own.
+  """
+  @spec ci_failing?([map()]) :: boolean()
+  def ci_failing?(check_runs) do
+    Enum.any?(check_runs, fn run ->
+      run["status"] == "completed" and
+        run["conclusion"] in @failing_conclusions
+    end)
   end
 
   defp has_review_state?(reviews, state) do
