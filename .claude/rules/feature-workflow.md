@@ -1,6 +1,6 @@
 # Feature Implementation Flow
 
-- Create a new branch from `main` for the feature
+- Create a new branch from `develop` for the feature
 - Implement tests first (TDD)
 - Implement the feature code
 - Make sure code is compilable by `mix compile` and has no warnings
@@ -11,5 +11,5 @@
 - Run `mix format` to ensure code style compliance
 - Commit code
 - Push branch to remote
-- Create a pull request
+- Create a pull request to `develop` branch
 
