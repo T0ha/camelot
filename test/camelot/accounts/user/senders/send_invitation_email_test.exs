@@ -18,6 +18,8 @@ defmodule Camelot.Accounts.User.Senders.SendInvitationEmailTest do
       assert email.html_body =~ "utm_source=email"
       assert email.html_body =~ "utm_medium=invitation"
       assert email.html_body =~ "utm_campaign=admin_invite"
+      assert email.html_body =~ "Camelot AI"
+      assert email.html_body =~ "MedievalSharp"
       assert email.text_body =~ "/sign-in?"
     end)
   end
