@@ -20,6 +20,8 @@ defmodule Camelot.DataCase do
 
   using do
     quote do
+      use Oban.Testing, repo: Camelot.Repo
+
       import Camelot.DataCase
       import Ecto
       import Ecto.Changeset

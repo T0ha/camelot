@@ -72,11 +72,34 @@ defmodule Camelot.Projects.Project do
       public?(true)
     end
 
+    attribute :runner_image_override, :string do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Per-project override of the runner OCI image, e.g. " <>
+          "`ghcr.io/t0ha/camelot-runner-elixir:1.19`. Wins over the " <>
+          "agent type's `AgentTemplate.runner_image` when non-nil; " <>
+          "nil falls back to the template default."
+      )
+    end
+
     attribute :status, :atom do
       allow_nil?(false)
       public?(true)
       default(:active)
       constraints(one_of: [:active, :archived])
+    end
+
+    attribute :swarm_node_label, :string do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Swarm node label pinning this project's runners. " <>
+          "Containers run only on nodes matching " <>
+          "`node.labels.camelot-home == <value>`."
+      )
     end
 
     timestamps()
@@ -91,6 +114,10 @@ defmodule Camelot.Projects.Project do
 
     has_many :memberships, Membership do
       destination_attribute(:project_id)
+    end
+
+    has_one :owner_membership, Membership do
+      filter(expr(role == :owner))
     end
 
     has_many :mcps, Camelot.Projects.Mcp do
@@ -114,7 +141,8 @@ defmodule Camelot.Projects.Project do
         :description,
         :github_repo_url,
         :github_owner,
-        :github_repo
+        :github_repo,
+        :runner_image_override
       ])
 
       change(Camelot.Projects.Project.Changes.AddActorAsMember)
@@ -130,8 +158,13 @@ defmodule Camelot.Projects.Project do
         :github_repo_url,
         :github_owner,
         :github_repo,
+        :runner_image_override,
         :status
       ])
+    end
+
+    update :set_swarm_node_label do
+      accept([:swarm_node_label])
     end
 
     update :archive do

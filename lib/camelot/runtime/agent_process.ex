@@ -29,6 +29,7 @@ defmodule Camelot.Runtime.AgentProcess do
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
   alias Camelot.Board.TaskMessage
+  alias Camelot.Github.Client
   alias Camelot.Runtime.AgentConfig
   alias Camelot.Runtime.AgentRegistry
   alias Camelot.Runtime.EnvVarResolver
@@ -436,7 +437,7 @@ defmodule Camelot.Runtime.AgentProcess do
   # and updates AgentProcess state. The actual runner starts
   # later, when the pool sends {:runner_slot, session_id}.
   defp enqueue_session(state, task_id, prompt, allowed_tools, retry_number) do
-    agent = Ash.get!(Agent, state.agent_id, load: [:project, :template, :user])
+    agent = Ash.get!(Agent, state.agent_id, load: [:template, :user, project: [owner_membership: [:user]]])
     config = AgentConfig.resolve(agent)
     user_id = agent_user_id(agent)
 
@@ -477,7 +478,7 @@ defmodule Camelot.Runtime.AgentProcess do
   # and starts the runner in adopt mode — no pool slot, no new exec.
   defp start_adoption(state, session_id) do
     session = Ash.get!(Session, session_id)
-    agent = Ash.get!(Agent, session.agent_id, load: [:project, :template, :user])
+    agent = Ash.get!(Agent, session.agent_id, load: [:template, :user, project: [owner_membership: [:user]]])
     task = session.task_id && Ash.get!(Task, session.task_id)
     config = AgentConfig.resolve(agent)
 
@@ -494,7 +495,11 @@ defmodule Camelot.Runtime.AgentProcess do
         output_buffer: session.output_log || ""
     }
 
-    spec = %{build_spec(state, agent, task, config, []) | adopt?: true}
+    spec = %{
+      build_spec(state, agent, task, config, [])
+      | adopt?: true,
+        adopt_since: session.started_at
+    }
 
     case Runner.start(spec) do
       {:ok, runner_pid} ->
@@ -520,7 +525,7 @@ defmodule Camelot.Runtime.AgentProcess do
   end
 
   defp start_runner(state) do
-    agent = Ash.get!(Agent, state.agent_id, load: [:project, :template, :user])
+    agent = Ash.get!(Agent, state.agent_id, load: [:template, :user, project: [owner_membership: [:user]]])
     task = state.current_task_id && Ash.get!(Task, state.current_task_id)
     config = AgentConfig.resolve(agent)
 
@@ -596,8 +601,17 @@ defmodule Camelot.Runtime.AgentProcess do
   defp repo_url_for(LocalPort, _agent), do: nil
   defp repo_url_for(_backend, agent), do: project_repo_url(agent)
 
-  defp node_label_for(%Agent{user: %{swarm_node_label: l}}) when is_binary(l), do: l
-  defp node_label_for(_), do: nil
+  @doc false
+  # Precedence: a project's own pin wins, then its owner's
+  # personal pin, then the instance-wide default. Public (with
+  # @doc false) so the precedence table can be unit-tested
+  # directly instead of only through build_spec/5.
+  @spec node_label_for(Agent.t()) :: String.t() | nil
+  def node_label_for(%Agent{project: %{swarm_node_label: p}}) when is_binary(p), do: p
+
+  def node_label_for(%Agent{project: %{owner_membership: %{user: %{swarm_node_label: u}}}}) when is_binary(u), do: u
+
+  def node_label_for(_agent), do: Camelot.Settings.default_swarm_node_label()
 
   @doc false
   # Builds the secrets list mounted into the runner.
@@ -926,26 +940,71 @@ defmodule Camelot.Runtime.AgentProcess do
   defp structured_questions(_), do: nil
 
   defp maybe_create_pr(state, task, text, task_id) do
-    {pr_url, pr_number} = extract_pr_info(state, text)
+    case execution_pr_outcome(state, task, text) do
+      {:pr, pr_url, pr_number} ->
+        record_pr(task, pr_url, pr_number, task_id)
 
-    if pr_url do
-      case Ash.update(task, %{pr_url: pr_url, pr_number: pr_number}, action: :pr_created) do
-        {:ok, updated} ->
-          broadcast_task_update(updated)
-
-        {:error, error} ->
-          Logger.warning("Failed to mark PR created for task #{task_id}: #{inspect(error)}")
-      end
-    else
-      Logger.warning("Execution completed without PR for task #{task_id}")
-
-      mark_error_with_reason(
-        state,
-        task,
-        "Agent finished executing without opening a PR. " <>
-          "No PR URL was found in the agent's final output."
-      )
+      :no_pr ->
+        Logger.warning("Execution completed without PR for task #{task_id}")
+        request_no_pr_input(state, task, task_id)
     end
+  end
+
+  @doc """
+  Decides whether an execution run produced a PR.
+
+  Prefers a URL scraped from the agent's final output; failing that,
+  falls back to querying GitHub for an open PR on the task's dedicated
+  `camelot/task-<id>` branch (guards a real PR whose URL never reached
+  stdout). Returns `:no_pr` when neither yields one.
+  """
+  @spec execution_pr_outcome(t(), Task.t(), String.t()) ::
+          {:pr, String.t(), pos_integer()} | :no_pr
+  def execution_pr_outcome(state, task, text) do
+    case extract_pr_info(state, text) do
+      {nil, _} -> github_pr_fallback(task)
+      {url, number} -> {:pr, url, number}
+    end
+  end
+
+  defp github_pr_fallback(task) do
+    task = Ash.load!(task, :project)
+    find_pr_on_github(task.project, task.id)
+  end
+
+  defp find_pr_on_github(%{github_owner: nil}, _task_id), do: :no_pr
+  defp find_pr_on_github(%{github_repo: nil}, _task_id), do: :no_pr
+
+  defp find_pr_on_github(%{github_owner: owner, github_repo: repo}, task_id) do
+    case Client.find_open_pr_by_head(owner, repo, "camelot/task-#{task_id}") do
+      {:ok, %{"html_url" => url, "number" => number}} ->
+        {:pr, url, number}
+
+      _ ->
+        :no_pr
+    end
+  end
+
+  defp record_pr(task, pr_url, pr_number, task_id) do
+    case Ash.update(task, %{pr_url: pr_url, pr_number: pr_number}, action: :pr_created) do
+      {:ok, updated} ->
+        broadcast_task_update(updated)
+
+      {:error, error} ->
+        Logger.warning("Failed to mark PR created for task #{task_id}: #{inspect(error)}")
+    end
+  end
+
+  # Clean exit but no PR: keep the task recoverable instead of dead
+  # (:error). Route it to waiting_for_input with an explanation; a reply
+  # re-queues the executing stage with the conversation appended.
+  defp request_no_pr_input(state, task, task_id) do
+    reason =
+      "Finished executing but no pull request was opened. Reply to have " <>
+        "me open the PR, or give further guidance."
+
+    annotate_session_error(state.current_session_id, reason)
+    request_user_input(task, reason, task_id)
   end
 
   defp has_questions?(denials) do
@@ -1034,38 +1093,54 @@ defmodule Camelot.Runtime.AgentProcess do
     Phoenix.PubSub.broadcast(Camelot.PubSub, "board", {:task_updated, task})
   end
 
-  defp finish_session(state, exit_code, parsed, denials) do
-    if state.current_session_id do
-      session = Ash.get!(Session, state.current_session_id)
-      action = if exit_code == 0, do: :complete, else: :fail
-
-      error_message =
-        case parsed do
-          {:error, msg} -> msg
-          _ -> nil
-        end
-
-      case Ash.update(
-             session,
-             %{
-               output_log: state.output_buffer,
-               exit_code: exit_code,
-               error_message: error_message,
-               permission_denials: denials
-             },
-             action: action
-           ) do
-        {:ok, _} ->
-          :ok
-
-        {:error, reason} ->
-          Logger.error(
-            "AgentProcess #{state.agent_id} failed to mark session " <>
-              "#{state.current_session_id} as #{action}: #{inspect(reason)}"
-          )
-      end
-    end
+  @doc false
+  # Finalise the current session row. Wrapped in a rescue so a transient
+  # DB error (or a session deleted out from under us) logs and returns
+  # instead of crashing AgentProcess mid-finalisation — which would
+  # strand the session as :running until the Reconciler swept it.
+  @spec finish_session(t(), integer(), term(), [map()]) :: :ok
+  def finish_session(%__MODULE__{current_session_id: nil}, _exit_code, _parsed, _denials) do
+    :ok
   end
+
+  def finish_session(state, exit_code, parsed, denials) do
+    session = Ash.get!(Session, state.current_session_id)
+    action = session_action(exit_code)
+
+    case Ash.update(
+           session,
+           %{
+             output_log: state.output_buffer,
+             exit_code: exit_code,
+             error_message: parsed_error(parsed),
+             permission_denials: denials
+           },
+           action: action
+         ) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "AgentProcess #{state.agent_id} failed to mark session " <>
+            "#{state.current_session_id} as #{action}: #{inspect(reason)}"
+        )
+    end
+  rescue
+    error ->
+      Logger.error(
+        "AgentProcess #{state.agent_id} crashed finalising session " <>
+          "#{state.current_session_id}: #{Exception.message(error)}"
+      )
+
+      :ok
+  end
+
+  defp session_action(0), do: :complete
+  defp session_action(_exit_code), do: :fail
+
+  defp parsed_error({:error, msg}), do: msg
+  defp parsed_error(_parsed), do: nil
 
   defp extract_denials({:ok, %{permission_denials: d}}), do: d
   defp extract_denials(_), do: []

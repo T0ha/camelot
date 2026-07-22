@@ -125,8 +125,21 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
         {:error, :template_not_found} -> fallback_prompt(task)
       end
 
-    append_conversation(base, task.messages)
+    base
+    |> append_branch_directive(task, slug)
+    |> append_conversation(task.messages)
   end
+
+  # Pin the working branch to a deterministic, task-scoped name so a
+  # PR that the agent opens can be recovered from GitHub even when its
+  # URL is missing from the final output (see AgentProcess fallback).
+  defp append_branch_directive(prompt, task, "execution") do
+    prompt <>
+      "\n\nWork on a git branch named exactly `camelot/task-#{task.id}` " <>
+      "and open the pull request from that branch."
+  end
+
+  defp append_branch_directive(prompt, _task, _slug), do: prompt
 
   defp prompt_slug(%{stage: :pr}), do: "pr_review"
 

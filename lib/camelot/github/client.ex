@@ -49,6 +49,21 @@ defmodule Camelot.Github.Client do
     )
   end
 
+  @spec list_check_runs(String.t(), String.t(), String.t() | nil) ::
+          {:ok, [map()]} | {:error, term()}
+  def list_check_runs(_owner, _repo, nil), do: {:error, :missing_sha}
+
+  def list_check_runs(owner, repo, sha) when is_binary(sha) do
+    case request(
+           :get,
+           "/repos/#{owner}/#{repo}/commits/#{sha}/check-runs"
+         ) do
+      {:ok, %{"check_runs" => runs}} when is_list(runs) -> {:ok, runs}
+      {:ok, _other} -> {:ok, []}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   @spec list_issues(String.t(), String.t(), keyword()) ::
           {:ok, [map()]} | {:error, term()}
   def list_issues(owner, repo, opts \\ []) do
@@ -60,6 +75,20 @@ defmodule Camelot.Github.Client do
       "/repos/#{owner}/#{repo}/issues" <>
         "?state=#{state}&labels=#{labels}"
     )
+  end
+
+  @spec find_open_pr_by_head(String.t(), String.t(), String.t()) ::
+          {:ok, map()} | :none | {:error, term()}
+  def find_open_pr_by_head(owner, repo, branch) do
+    case request(
+           :get,
+           "/repos/#{owner}/#{repo}/pulls" <>
+             "?state=open&head=#{owner}:#{branch}"
+         ) do
+      {:ok, [pr | _]} -> {:ok, pr}
+      {:ok, _} -> :none
+      error -> error
+    end
   end
 
   defp request(method, path) do

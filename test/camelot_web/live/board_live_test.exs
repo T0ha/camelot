@@ -17,6 +17,14 @@ defmodule CamelotWeb.BoardLiveTest do
     assert html =~ "Done"
   end
 
+  test "ignores unrelated PubSub messages without crashing", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    send(view.pid, {:some_unexpected_message, :payload})
+
+    assert render(view) =~ "Board"
+  end
+
   describe "scoping" do
     test "non-admin sees only tasks from member projects", %{conn: conn, user: user} do
       {:ok, mine} =

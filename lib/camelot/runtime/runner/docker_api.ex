@@ -74,6 +74,60 @@ defmodule Camelot.Runtime.Runner.DockerApi do
     :ok
   end
 
+  @doc """
+  Lists the distinct `camelot-home` label values currently set
+  on live Swarm nodes, sorted. Only nodes an operator has
+  already labelled via `docker node update --label-add
+  camelot-home=<value>` (see `docs/cluster-runners.md`) are
+  valid `Spec.node_label` targets, so this powers the node-pin
+  dropdowns in the admin UI. Fails fast (rather than hanging a
+  page load) when the daemon isn't reachable or isn't a Swarm
+  manager — callers should fall back to free-text entry on
+  `{:error, _}`.
+  """
+  @spec list_node_labels() :: {:ok, [String.t()]} | {:error, term()}
+  def list_node_labels do
+    case Req.get(request(), url: "/nodes", receive_timeout: @probe_timeout_ms) do
+      {:ok, %Req.Response{status: 200, body: nodes}} when is_list(nodes) ->
+        {:ok, extract_node_labels(nodes)}
+
+      {:ok, resp} ->
+        {:error, {:list_nodes_failed, resp.status, resp.body}}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  @doc """
+  Same as `list_node_labels/0`, but collapses any error into an
+  empty list — the form admin LiveViews call directly to decide
+  between the node-label dropdown and the free-text fallback.
+  """
+  @spec list_node_labels_or_empty() :: [String.t()]
+  def list_node_labels_or_empty do
+    case list_node_labels() do
+      {:ok, labels} -> labels
+      {:error, _} -> []
+    end
+  end
+
+  @doc false
+  # Public only so parsing can be asserted on in tests.
+  @spec extract_node_labels([map()]) :: [String.t()]
+  def extract_node_labels(nodes) do
+    nodes
+    |> Enum.flat_map(&node_label/1)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp node_label(%{"Spec" => %{"Labels" => %{"camelot-home" => label}}}) when is_binary(label) and label != "" do
+    [label]
+  end
+
+  defp node_label(_node), do: []
+
   defp docker_host do
     :camelot
     |> Application.fetch_env!(:runner)

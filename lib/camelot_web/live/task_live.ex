@@ -83,6 +83,16 @@ defmodule CamelotWeb.TaskLive do
     {:noreply, assign(socket, live_output: cap_tail(combined, 20_000))}
   end
 
+  # The assigned agent changed status (e.g. :idle <-> :busy). We
+  # subscribe to its topic, so refresh the copy embedded in the task
+  # to keep the card in sync (input controls key off agent.status).
+  def handle_info({:agent_updated, agent}, socket) do
+    {:noreply, assign(socket, task: %{socket.assigns.task | agent: agent})}
+  end
+
+  # Never crash the card on an unexpected PubSub message.
+  def handle_info(_msg, socket), do: {:noreply, socket}
+
   @impl true
   def handle_event("transition", %{"action" => action}, socket) do
     task = socket.assigns.task

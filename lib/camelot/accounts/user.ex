@@ -77,6 +77,27 @@ defmodule Camelot.Accounts.User do
       )
     end
 
+    attribute :notify_on_waiting_for_input, :boolean do
+      allow_nil?(false)
+      public?(true)
+      default(true)
+      description("Email this user when one of their task cards needs input.")
+    end
+
+    attribute :notify_on_error, :boolean do
+      allow_nil?(false)
+      public?(true)
+      default(true)
+      description("Email this user when one of their task cards errors.")
+    end
+
+    attribute :notify_on_done, :boolean do
+      allow_nil?(false)
+      public?(true)
+      default(true)
+      description("Email this user when one of their task cards is done.")
+    end
+
     timestamps()
   end
 
@@ -114,10 +135,19 @@ defmodule Camelot.Accounts.User do
     create :create_user do
       accept([:email, :role])
       change(set_attribute(:confirmed_at, &DateTime.utc_now/0))
+      change(Camelot.Accounts.User.Changes.SendInvitationEmail)
     end
 
     update :set_swarm_node_label do
       accept([:swarm_node_label])
+    end
+
+    update :update_notification_preferences do
+      accept([
+        :notify_on_waiting_for_input,
+        :notify_on_error,
+        :notify_on_done
+      ])
     end
 
     update :set_role do
@@ -150,6 +180,11 @@ defmodule Camelot.Accounts.User do
     end
 
     policy action(:set_swarm_node_label) do
+      authorize_if(expr(id == ^actor(:id)))
+      authorize_if(actor_attribute_equals(:role, :admin))
+    end
+
+    policy action(:update_notification_preferences) do
       authorize_if(expr(id == ^actor(:id)))
     end
   end

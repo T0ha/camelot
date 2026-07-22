@@ -133,6 +133,12 @@ iex> Ash.create!(Camelot.Agents.AgentTemplate, %{
 (Or use the existing `/agent-templates/new` UI, then set
 `runner_image` etc. via the form.)
 
+To pin a single project to a different image without touching the
+shared template, set that project's `runner_image_override` (via the
+project's edit form, or `Ash.update!/2`). It takes precedence over
+`AgentTemplate.runner_image` for every agent in that project; leaving
+it blank falls back to the template default.
+
 ## 6. Create a Project
 
 Visit `/projects/new`. The DockerEngine backend reproduces the Swarm

@@ -88,6 +88,21 @@ if config_env() == :prod do
       For example: ecto://USER:PASS@HOST/DATABASE
       """
 
+  ssl_query =
+    database_url
+    |> URI.parse()
+    |> Map.get(:query)
+    |> Kernel.||("")
+    |> URI.decode_query()
+
+  ssl_options =
+    case ssl_query do
+      %{"sslmode" => "none"} -> false
+      %{"sslmode" => "disable"} -> false
+      %{"sslmode" => _} -> [verify: :verify_none]
+      _ -> false
+    end
+
   encryption_key =
     System.get_env("ENCRYPTION_KEY") ||
       raise """
@@ -189,7 +204,8 @@ if config_env() == :prod do
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
     # For machines with several cores, consider starting multiple pools of `pool_size`
     # pool_count: 4,
-    socket_options: maybe_ipv6
+    socket_options: maybe_ipv6,
+    ssl: ssl_options
 
   config :camelot, Camelot.Vault,
     ciphers: [

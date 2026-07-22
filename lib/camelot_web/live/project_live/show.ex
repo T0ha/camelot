@@ -6,6 +6,7 @@ defmodule CamelotWeb.ProjectLive.Show do
 
   alias Camelot.Accounts.User
   alias Camelot.Projects.Project
+  alias Camelot.Runtime.Runner.DockerApi
   alias CamelotWeb.Components.EnvVarEditor
   alias CamelotWeb.Scope
   alias Phoenix.LiveView.Socket
@@ -21,7 +22,8 @@ defmodule CamelotWeb.ProjectLive.Show do
         {:ok,
          assign(socket,
            page_title: project.name,
-           project: project
+           project: project,
+           node_labels: node_labels(socket.assigns.current_user)
          )}
 
       :forbidden ->
@@ -43,6 +45,32 @@ defmodule CamelotWeb.ProjectLive.Show do
       _ -> :forbidden
     end
   end
+
+  @impl true
+  def handle_event(
+        "set_node_label",
+        %{"swarm_node_label" => label},
+        %Socket{assigns: %{current_user: %User{role: :admin} = actor}} = socket
+      ) do
+    socket.assigns.project
+    |> Ash.Changeset.for_update(:set_swarm_node_label, %{swarm_node_label: blank_to_nil(label)}, actor: actor)
+    |> Ash.update()
+    |> case do
+      {:ok, updated} ->
+        {:noreply, assign(socket, project: updated)}
+
+      {:error, _error} ->
+        {:noreply, put_flash(socket, :error, "Could not save the node pin.")}
+    end
+  end
+
+  def handle_event("set_node_label", _params, socket), do: {:noreply, socket}
+
+  defp blank_to_nil(""), do: nil
+  defp blank_to_nil(value), do: value
+
+  defp node_labels(%User{role: :admin}), do: DockerApi.list_node_labels_or_empty()
+  defp node_labels(%User{}), do: []
 
   @impl true
   def render(assigns) do
@@ -89,7 +117,29 @@ defmodule CamelotWeb.ProjectLive.Show do
         <:item :if={@project.github_repo_url} title="GitHub">
           {@project.github_repo_url}
         </:item>
+        <:item :if={@project.runner_image_override} title="Runner Image Override">
+          <code>{@project.runner_image_override}</code>
+        </:item>
       </.list>
+
+      <div :if={@current_user.role == :admin} class="rounded border p-4 space-y-2">
+        <h2 class="text-lg font-semibold">Swarm node pin</h2>
+
+        <p class="text-sm text-base-content/60">
+          Pins this project's runners to a Swarm node label. Overrides the
+          owner's personal pin and the instance-wide default. Leave blank
+          to fall back to them.
+        </p>
+
+        <form id="project-node-label-form" phx-change="set_node_label">
+          <.node_label_pin
+            name="swarm_node_label"
+            value={@project.swarm_node_label}
+            node_labels={@node_labels}
+            placeholder="e.g. gpu-1"
+          />
+        </form>
+      </div>
 
       <.live_component
         module={EnvVarEditor}

@@ -66,6 +66,33 @@ defmodule CamelotWeb.ProjectLiveTest do
     end
   end
 
+  describe "runner image override" do
+    test "sets the override via the edit form and shows it on the show page", %{
+      conn: conn,
+      user: user
+    } do
+      {:ok, project} =
+        Ash.create(
+          Project,
+          %{name: "runner-image-#{System.unique_integer()}", path: "/tmp/runner"},
+          actor: user
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}/edit")
+
+      view
+      |> form("#project-form", %{
+        "name" => project.name,
+        "runner_image_override" => "ghcr.io/t0ha/camelot-runner-elixir:1.19"
+      })
+      |> render_submit()
+
+      {:ok, _view, html} = live(conn, ~p"/projects/#{project.id}")
+
+      assert html =~ "ghcr.io/t0ha/camelot-runner-elixir:1.19"
+    end
+  end
+
   describe "environment variables" do
     setup %{user: user} do
       {:ok, project} =
@@ -140,6 +167,36 @@ defmodule CamelotWeb.ProjectLiveTest do
       {:ok, _view, html} = live(conn, ~p"/projects")
       assert html =~ "mine-"
       refute html =~ "theirs-"
+    end
+  end
+
+  describe "admin swarm node pin" do
+    setup :register_and_log_in_admin
+
+    test "admin can pin a project to a swarm node", %{conn: conn, user: admin} do
+      {:ok, project} =
+        Ash.create(Project, %{name: "pin-#{System.unique_integer()}", path: "/tmp/pin"}, actor: admin)
+
+      {:ok, view, html} = live(conn, ~p"/projects/#{project.id}")
+      assert html =~ "Swarm node pin"
+
+      html =
+        view
+        |> form("#project-node-label-form", %{"swarm_node_label" => "gpu-1"})
+        |> render_change()
+
+      assert html =~ "gpu-1"
+      assert Ash.get!(Project, project.id).swarm_node_label == "gpu-1"
+    end
+  end
+
+  describe "non-admin cannot see the swarm node pin control" do
+    test "hidden for a regular member", %{conn: conn, user: user} do
+      {:ok, project} =
+        Ash.create(Project, %{name: "nopin-#{System.unique_integer()}", path: "/tmp/nopin"}, actor: user)
+
+      {:ok, _view, html} = live(conn, ~p"/projects/#{project.id}")
+      refute html =~ "Swarm node pin"
     end
   end
 

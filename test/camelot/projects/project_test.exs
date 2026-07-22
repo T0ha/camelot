@@ -1,6 +1,7 @@
 defmodule Camelot.Projects.ProjectTest do
   use Camelot.DataCase, async: true
 
+  alias Camelot.Accounts.User
   alias Camelot.Projects.Membership
   alias Camelot.Projects.Project
 
@@ -19,10 +20,10 @@ defmodule Camelot.Projects.ProjectTest do
       assert project.status == :active
     end
 
-    test "auto-adds the actor as a member" do
+    test "auto-adds the actor as an owner member" do
       require Ash.Query
 
-      user = Ash.Seed.seed!(Camelot.Accounts.User, %{email: "member-#{System.unique_integer()}@x.com"})
+      user = Ash.Seed.seed!(User, %{email: "member-#{System.unique_integer()}@x.com"})
 
       {:ok, project} =
         Ash.create(Project, %{name: "auto-mem-#{System.unique_integer()}", path: "/tmp/x"}, actor: user)
@@ -32,7 +33,7 @@ defmodule Camelot.Projects.ProjectTest do
         |> Ash.Query.filter(project_id == ^project.id)
         |> Ash.read!(authorize?: false)
 
-      assert [%{user_id: uid, role: :member}] = memberships
+      assert [%{user_id: uid, role: :owner}] = memberships
       assert uid == user.id
     end
 
@@ -62,6 +63,18 @@ defmodule Camelot.Projects.ProjectTest do
       assert {:ok, project} = Ash.create(Project, attrs)
       assert project.description == "A test project"
       assert project.github_owner == "org"
+    end
+
+    test "defaults runner_image_override to nil" do
+      assert {:ok, project} = Ash.create(Project, @valid_attrs)
+      assert project.runner_image_override == nil
+    end
+
+    test "accepts a runner_image_override" do
+      attrs = Map.put(@valid_attrs, :runner_image_override, "ghcr.io/org/runner:1.0")
+
+      assert {:ok, project} = Ash.create(Project, attrs)
+      assert project.runner_image_override == "ghcr.io/org/runner:1.0"
     end
 
     test "fails without required name" do
@@ -101,6 +114,64 @@ defmodule Camelot.Projects.ProjectTest do
                })
 
       assert updated.description == "Updated"
+    end
+
+    test "sets and clears runner_image_override" do
+      {:ok, project} = Ash.create(Project, @valid_attrs)
+
+      assert {:ok, with_override} =
+               Ash.update(project, %{runner_image_override: "ghcr.io/org/runner:2.0"})
+
+      assert with_override.runner_image_override == "ghcr.io/org/runner:2.0"
+
+      assert {:ok, cleared} =
+               Ash.update(with_override, %{runner_image_override: nil})
+
+      assert cleared.runner_image_override == nil
+    end
+  end
+
+  describe "owner_membership" do
+    test "loads the owning user through the filtered relationship" do
+      user = Ash.Seed.seed!(User, %{email: "owner-#{System.unique_integer()}@x.com"})
+
+      {:ok, project} =
+        Ash.create(Project, %{name: "owned-#{System.unique_integer()}", path: "/tmp/owned"}, actor: user)
+
+      loaded = Ash.load!(project, [owner_membership: [:user]], authorize?: false)
+
+      assert loaded.owner_membership.user.id == user.id
+    end
+
+    test "is nil for legacy projects without an owner membership" do
+      {:ok, project} = Ash.create(Project, @valid_attrs)
+
+      loaded = Ash.load!(project, [owner_membership: [:user]], authorize?: false)
+
+      assert loaded.owner_membership == nil
+    end
+  end
+
+  describe "set_swarm_node_label" do
+    test "pins a project to a swarm node label" do
+      {:ok, project} = Ash.create(Project, @valid_attrs)
+
+      assert {:ok, updated} =
+               Ash.update(project, %{swarm_node_label: "gpu-1"}, action: :set_swarm_node_label)
+
+      assert updated.swarm_node_label == "gpu-1"
+    end
+
+    test "clears a project's pin by setting it back to nil" do
+      {:ok, project} = Ash.create(Project, @valid_attrs)
+
+      {:ok, pinned} =
+        Ash.update(project, %{swarm_node_label: "gpu-1"}, action: :set_swarm_node_label)
+
+      assert {:ok, cleared} =
+               Ash.update(pinned, %{swarm_node_label: nil}, action: :set_swarm_node_label)
+
+      assert cleared.swarm_node_label == nil
     end
   end
 

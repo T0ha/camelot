@@ -21,12 +21,15 @@ For a hosted CapRover deployment:
      networking*). Set `none` to keep runners isolated.
 4. Build and push the runner images
    (`.github/workflows/runner-images.yml`). Reference them from
-   `AgentTemplate.runner_image`.
+   `AgentTemplate.runner_image`. A single project can pin a different
+   image via its `runner_image_override` field (set in the project's
+   edit form) — when non-nil, it wins over the agent type's
+   `AgentTemplate.runner_image` for every agent in that project.
 5. For each user, in Camelot's profile UI:
-   - Add their API keys / GitHub PAT as Credentials.
-   - Set their `swarm_node_label` (admin-only) to the node label you
-     want their runners pinned to. `SecretSync` will populate
-     `camelot_user_<id>_<kind>` Swarm secrets automatically.
+   - Add their API keys / GitHub PAT as Credentials. `SecretSync`
+     will populate `camelot_user_<id>_<kind>` Swarm secrets
+     automatically.
+6. Optionally pin runners to a node label (see *Node labels* below).
 
 ## Deployment topologies
 
@@ -84,16 +87,29 @@ Camelot env: `DOCKER_HOST=tcp://docker-socket-proxy:2375`.
 
 ## Node labels
 
-User runners are scheduled with a placement constraint so a user's
-volume stays local (no NFS required). Label each candidate worker:
+Runners can be pinned to a node so a user's profile volume stays
+local (no NFS required). Label each candidate worker:
 
 ```
 docker node update --label-add camelot-home=node-a worker-1
 docker node update --label-add camelot-home=node-b worker-2
 ```
 
-Then set the same label string on each User row (`swarm_node_label`)
-through Camelot's admin UI.
+Then set the same label string as a pin, at whichever level fits
+(admin-only, in Camelot's UI). Each pin control shows a dropdown of
+labels discovered live from `GET /nodes` when the Docker/Swarm API
+is reachable, falling back to a free-text field otherwise (e.g. a
+non-Swarm `RUNNER_BACKEND`, or no node labelled yet):
+
+- **Project** — `/projects/:id`, applies to that project only.
+- **User** — `/admin/users`, applies to all of that user's projects.
+- **Instance default** — `/admin/settings`, used when neither of the
+  above is set.
+
+Precedence when more than one applies to a runner: project pin >
+project owner's user pin > instance default. Changing a pin does not
+restart already-running containers — it takes effect for runners
+started or adopted from that point forward.
 
 ## Pool capacity
 

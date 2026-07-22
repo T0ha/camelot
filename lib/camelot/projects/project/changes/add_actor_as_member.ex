@@ -23,7 +23,7 @@ defmodule Camelot.Projects.Project.Changes.AddActorAsMember do
         Membership
         |> Ash.Changeset.for_create(
           :create,
-          %{project_id: project.id, user_id: user_id},
+          %{project_id: project.id, user_id: user_id, role: :owner},
           authorize?: false
         )
         |> Ash.create!()

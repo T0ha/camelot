@@ -35,6 +35,9 @@ defmodule CamelotWeb.BoardLive do
     {:noreply, socket}
   end
 
+  # Never crash the board on an unexpected PubSub message.
+  def handle_info(_msg, socket), do: {:noreply, socket}
+
   @impl true
   @task_fields ~w(title description priority project_id)
 

@@ -41,7 +41,7 @@ defmodule Camelot.Runtime.AgentConfigTest do
       assert "--json-schema" in args
     end
 
-    test "executing stage emits --permission-mode acceptEdits", ctx do
+    test "executing stage emits acceptEdits + the execution system prompt", ctx do
       args =
         AgentConfig.build_cli_args(
           ctx.claude,
@@ -50,17 +50,17 @@ defmodule Camelot.Runtime.AgentConfigTest do
           :executing
         )
 
-      assert args == [
-               "--output-format",
-               "stream-json",
-               "--verbose",
-               "--permission-mode",
-               "acceptEdits",
-               "--allowedTools",
-               "Read",
-               "-p",
-               "do it"
-             ]
+      executing_args = ClaudeCodeDefaults.permission_args_by_stage()["executing"]
+
+      assert args ==
+               ["--output-format", "stream-json", "--verbose"] ++
+                 executing_args ++
+                 ["--allowedTools", "Read", "-p", "do it"]
+
+      # Guard the contract shape explicitly.
+      assert "--permission-mode" in args
+      assert "acceptEdits" in args
+      assert "--append-system-prompt" in args
     end
 
     test "filters EnterPlanMode / ExitPlanMode from allowed_tools", ctx do
@@ -140,6 +140,16 @@ defmodule Camelot.Runtime.AgentConfigTest do
     end
   end
 
+  describe "ClaudeCodeDefaults.execution_system_prompt/0" do
+    test "forbids background tasks and mandates opening a PR" do
+      prompt = ClaudeCodeDefaults.execution_system_prompt()
+
+      assert prompt =~ "background task"
+      assert prompt =~ "gh pr create"
+      assert prompt =~ "PR URL"
+    end
+  end
+
   describe "resolve/1 — per-agent overrides" do
     test "non-nil override wins over template default", ctx do
       template = ctx.claude
@@ -172,6 +182,34 @@ defmodule Camelot.Runtime.AgentConfigTest do
       assert resolved.executable == "claude"
       assert resolved.base_retry_delay_ms == 5_000
       assert resolved.parser == :claude_code_json
+    end
+  end
+
+  describe "resolve/1 — project-level runner_image override" do
+    test "project override wins over template default" do
+      project = %Project{path: "/p", runner_image_override: "ghcr.io/org/canary:1.0"}
+
+      agent = %Camelot.Agents.Agent{
+        project: project,
+        template: %{template_struct() | runner_image: "ghcr.io/org/default:1.0"}
+      }
+
+      resolved = AgentConfig.resolve(agent)
+
+      assert resolved.runner_image == "ghcr.io/org/canary:1.0"
+    end
+
+    test "nil project override falls back to template's runner_image" do
+      project = %Project{path: "/p", runner_image_override: nil}
+
+      agent = %Camelot.Agents.Agent{
+        project: project,
+        template: %{template_struct() | runner_image: "ghcr.io/org/default:1.0"}
+      }
+
+      resolved = AgentConfig.resolve(agent)
+
+      assert resolved.runner_image == "ghcr.io/org/default:1.0"
     end
   end
 

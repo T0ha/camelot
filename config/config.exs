@@ -34,7 +34,7 @@ config :camelot, CamelotWeb.Endpoint,
 
 config :camelot, Oban,
   repo: Camelot.Repo,
-  queues: [default: 10, tasks: 5, github: 3],
+  queues: [default: 10, tasks: 5, github: 3, notifications: 5],
   plugins: [{Oban.Plugins.Cron, crontab: []}]
 
 config :camelot, :default_projects_dir, "~/projects"
@@ -63,7 +63,8 @@ config :camelot,
     Camelot.Projects,
     Camelot.Agents,
     Camelot.Board,
-    Camelot.Prompts
+    Camelot.Prompts,
+    Camelot.Settings
   ]
 
 # Configure esbuild (the version is required)

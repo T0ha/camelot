@@ -295,6 +295,48 @@ defmodule CamelotWeb.CoreComponents do
     """
   end
 
+  @doc """
+  Renders a Swarm node-pin control. Shows a `<select>` of the
+  given `node_labels` when any were discovered live from the
+  Swarm `/nodes` API, or a free-text input as a fallback when
+  none are available (Docker/Swarm unreachable, non-Swarm
+  backend, or no node has been labelled yet).
+  """
+  attr :id, :string, default: nil
+  attr :name, :string, required: true
+  attr :value, :string, default: nil
+  attr :node_labels, :list, default: []
+  attr :placeholder, :string, default: "e.g. gpu-1", doc: "hint shown in fallback text-input mode"
+  attr :prompt, :string, default: "none", doc: "label of the clear-pin option in select mode"
+  attr :class, :any, default: nil
+
+  def node_label_pin(%{node_labels: []} = assigns) do
+    ~H"""
+    <input
+      type="text"
+      id={@id}
+      name={@name}
+      value={@value}
+      placeholder={@placeholder}
+      class={@class || "input input-bordered input-sm"}
+    />
+    """
+  end
+
+  def node_label_pin(assigns) do
+    ~H"""
+    <select id={@id} name={@name} class={@class || "select select-bordered select-sm"}>
+      <option value="" selected={is_nil(@value)}>{@prompt}</option>
+      <option :for={label <- @node_labels} value={label} selected={@value == label}>
+        {label}
+      </option>
+      <option :if={@value && @value not in @node_labels} value={@value} selected>
+        {@value} (unlisted)
+      </option>
+    </select>
+    """
+  end
+
   # Helper used by inputs to generate form errors
   defp error(assigns) do
     ~H"""

@@ -36,4 +36,35 @@ defmodule Camelot.Github.ClientTest do
                )
     end
   end
+
+  describe "find_open_pr_by_head/3" do
+    test "handles API errors gracefully" do
+      assert {:error, _} =
+               Client.find_open_pr_by_head(
+                 "nonexistent-owner",
+                 "nonexistent-repo",
+                 "camelot/task-abc"
+               )
+    end
+  end
+
+  describe "list_check_runs/3" do
+    test "handles API errors gracefully" do
+      assert {:error, _} =
+               Client.list_check_runs(
+                 "nonexistent-owner",
+                 "nonexistent-repo",
+                 "deadbeef"
+               )
+    end
+
+    test "returns error without a network call when sha is nil" do
+      assert {:error, :missing_sha} =
+               Client.list_check_runs(
+                 "nonexistent-owner",
+                 "nonexistent-repo",
+                 nil
+               )
+    end
+  end
 end

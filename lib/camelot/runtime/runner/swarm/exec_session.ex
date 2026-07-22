@@ -42,6 +42,20 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   @adopt_poll_ms 2_000
   @transport_budget_ms 60_000
 
+  # Unlike the live-run loops above, adoption polling MUST be bounded:
+  # it waits for a completion marker written by the exec-wrapper, and if
+  # the runner container was replaced (Swarm reschedule / OOM) after the
+  # session's exec began, that marker lived in the prior container's
+  # /tmp and can never appear. An unbounded poll strands the session as
+  # `:running` and the task in `executing` forever. 15 min comfortably
+  # exceeds any real re-attach settle time.
+  @adopt_budget_ms 900_000
+
+  # Non-zero exit reported to the owner when an adoption is abandoned, so
+  # `AgentProcess` finalises the session as failed (recoverable) instead
+  # of leaving it stranded `:running`.
+  @adopt_giveup_exit_code 1
+
   defstruct [
     :owner,
     :session_id,
@@ -137,6 +151,21 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
     {:stop, :normal, state}
   end
 
+  # Adoption gave up (container replaced or budget exhausted): tell the
+  # owner the run is over with a non-zero code so it finalises the
+  # session, then stop. Normal stop so the owner's monitor DOWN is a
+  # no-op after the reset that {:runner_exit, ...} triggers.
+  def handle_info({:adopt_give_up, reason}, %__MODULE__{} = state) do
+    Logger.warning(
+      "Swarm.ExecSession: abandoning adoption of session " <>
+        "#{state.session_id} (#{reason}); finalising as failed so it " <>
+        "can be recovered"
+    )
+
+    send(state.owner, {:runner_exit, self(), @adopt_giveup_exit_code})
+    {:stop, :normal, state}
+  end
+
   def handle_info({ref, _}, state) when is_reference(ref), do: {:noreply, state}
   def handle_info({:DOWN, _, _, _, _}, state), do: {:noreply, state}
   def handle_info(_msg, state), do: {:noreply, state}
@@ -184,21 +213,60 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
       }
 
       parent = self()
-      poll_task = Task.async(fn -> poll_adopt_exit(state, parent) end)
+      container_started = container_started_at(state)
+      session_started = spec.adopt_since
+      started_mono = System.monotonic_time(:millisecond)
+
+      poll_task =
+        Task.async(fn ->
+          poll_adopt_exit(state, parent, started_mono, container_started, session_started)
+        end)
+
       {:ok, %{state | poll_task: poll_task}}
     end
   end
 
-  defp poll_adopt_exit(%__MODULE__{} = state, parent) do
-    case read_marker(state) do
-      {:ok, code} ->
-        send(parent, {:exit_code, code})
+  # Poll the wrapper's completion marker, but bounded: give up (and let
+  # the owner finalise the session as failed, so it can recover) once the
+  # runner container is known to have been replaced after the session's
+  # exec — its marker is gone — or the wall-clock budget is exhausted.
+  defp poll_adopt_exit(%__MODULE__{} = state, parent, started_mono, container_started, session_started) do
+    elapsed = System.monotonic_time(:millisecond) - started_mono
 
-      :none ->
-        Process.sleep(@adopt_poll_ms)
-        poll_adopt_exit(state, parent)
+    case adopt_action(container_started, session_started, elapsed, @adopt_budget_ms) do
+      {:give_up, reason} ->
+        send(parent, {:adopt_give_up, reason})
+
+      :poll ->
+        case read_marker(state) do
+          {:ok, code} ->
+            send(parent, {:exit_code, code})
+
+          :none ->
+            Process.sleep(@adopt_poll_ms)
+            poll_adopt_exit(state, parent, started_mono, container_started, session_started)
+        end
     end
   end
+
+  # StartedAt of the resolved runner container, parsed to a DateTime, so
+  # adoption can tell whether the container was replaced since the
+  # session's exec began. `nil` on any missing field or Docker error —
+  # the caller then falls back to the wall-clock budget alone.
+  defp container_started_at(%__MODULE__{container_id: cid, node_req: req}) when is_binary(cid) and not is_nil(req) do
+    with {:ok, %Req.Response{status: 200, body: %{"State" => %{"StartedAt" => started}}}} <-
+           Req.get(req, url: "/containers/#{cid}/json"),
+         true <- is_binary(started),
+         {:ok, dt, _offset} <- DateTime.from_iso8601(started) do
+      dt
+    else
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp container_started_at(_), do: nil
 
   defp read_marker(%__MODULE__{session_id: sid, container_id: cid, node_req: req})
        when is_binary(sid) and is_binary(cid) and not is_nil(req) do
@@ -259,6 +327,47 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
     Process.sleep(@ready_poll_ms)
     resolve_container(service_id, transport_budget_ms)
   end
+
+  @doc """
+  Decides whether an adoption should keep polling for the exec-wrapper's
+  completion marker or give up.
+
+  Gives up when the runner container was (re)started *after* the
+  session's exec began — the marker that exec would have written lived in
+  the prior container's `/tmp` and is unrecoverable, so polling can never
+  terminate. Also gives up once the wall-clock budget is exhausted, a
+  backstop for missing/skewed timestamps. Otherwise keeps polling.
+  """
+  @spec adopt_action(
+          DateTime.t() | nil,
+          DateTime.t() | nil,
+          non_neg_integer(),
+          non_neg_integer()
+        ) :: :poll | {:give_up, :container_replaced | :timeout}
+  def adopt_action(container_started_at, session_started_at, elapsed_ms, budget_ms) do
+    cond do
+      container_replaced?(container_started_at, session_started_at) ->
+        {:give_up, :container_replaced}
+
+      elapsed_ms >= budget_ms ->
+        {:give_up, :timeout}
+
+      true ->
+        :poll
+    end
+  end
+
+  @doc """
+  True when the runner container started strictly after the session's
+  exec did — proof that the completion marker (and tee'd output) the exec
+  wrote no longer exist, so an adoption polling for them would hang.
+  """
+  @spec container_replaced?(DateTime.t() | nil, DateTime.t() | nil) :: boolean()
+  def container_replaced?(%DateTime{} = container_started, %DateTime{} = session_started) do
+    DateTime.after?(container_started, session_started)
+  end
+
+  def container_replaced?(_container_started, _session_started), do: false
 
   @doc """
   Selects the container id + node id of the service's live
