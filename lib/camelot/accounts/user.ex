@@ -41,7 +41,7 @@ defmodule Camelot.Accounts.User do
     add_ons do
       confirmation :confirm_new_user do
         monitor_fields([:email])
-        confirm_on_create?(true)
+        confirm_on_create?(false)
         confirm_on_update?(false)
         require_interaction?(true)
         auto_confirm_actions([:sign_in_with_magic_link])

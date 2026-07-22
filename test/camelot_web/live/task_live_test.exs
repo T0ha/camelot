@@ -4,6 +4,7 @@ defmodule CamelotWeb.TaskLiveTest do
   import Phoenix.LiveViewTest
 
   alias Camelot.Agents.Agent
+  alias Camelot.Agents.Session
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
 
@@ -89,6 +90,59 @@ defmodule CamelotWeb.TaskLiveTest do
     test "button is hidden when no agent is assigned", %{conn: conn, task: task} do
       {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
       refute html =~ "Reset Task"
+    end
+  end
+
+  describe "live output" do
+    setup %{project: project, user: user} do
+      {:ok, agent} =
+        Ash.create(Agent, %{
+          name: "live-output-agent",
+          template_id: agent_template!("claude_code").id,
+          project_id: project.id,
+          user_id: user.id
+        })
+
+      {:ok, task} =
+        Ash.create(Task, %{
+          title: "Streaming task",
+          project_id: project.id,
+          creator_id: user.id
+        })
+
+      {:ok, task} = Ash.update(task, %{agent_id: agent.id}, action: :begin_work)
+
+      {:ok, session} =
+        Ash.create(Session, %{agent_id: agent.id, task_id: task.id})
+
+      {:ok, session} = Ash.update(session, %{}, action: :mark_running)
+
+      %{agent: agent, task: task, session: session}
+    end
+
+    test "streamed output renders inside the running session card", %{
+      conn: conn,
+      task: task,
+      agent: agent
+    } do
+      {:ok, view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      refute html =~ "Live output"
+
+      send(view.pid, {:agent_output, agent.id, ~s({"type":"result","result":"hello"}\n)})
+
+      html = render(view)
+
+      assert html =~ "Sessions"
+      assert html =~ "running"
+      assert html =~ "Live output"
+      assert html =~ "hello"
+    end
+
+    test "no Live output heading when buffer is empty", %{conn: conn, task: task} do
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      refute html =~ "Live output"
     end
   end
 

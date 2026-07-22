@@ -14,9 +14,14 @@ defmodule Camelot.Runtime.Runner.Swarm.ProxyRouter do
 
   Cache: results are stored in `:persistent_term` keyed
   by `node_id`. Each entry is the overlay IP of the
-  proxy task on that node. Writes happen on the first
-  lookup per node and on explicit `invalidate/1`. Reads
-  are zero-overhead.
+  proxy task on that node. Reads are zero-overhead.
+
+  The cache self-heals: the `Req` client handed back for a
+  node carries response/error steps that drop that node's
+  cached IP whenever a call returns `503` or fails with a
+  transport error such as `:ehostunreach`/`:timeout` — the
+  proxy task was rescheduled to a new overlay IP. The next
+  `request_for_node/1` then re-resolves via `GET /tasks`.
   """
 
   alias Camelot.Runtime.Runner.DockerApi
@@ -39,13 +44,13 @@ defmodule Camelot.Runtime.Runner.Swarm.ProxyRouter do
   def request_for_node(node_id) when is_binary(node_id) do
     case Map.fetch(get_cache(), node_id) do
       {:ok, ip} ->
-        {:ok, req_for_ip(ip)}
+        {:ok, req_for_ip(ip, node_id)}
 
       :error ->
         case resolve_ip(node_id) do
           {:ok, ip} ->
             put_cache(Map.put(get_cache(), node_id, ip))
-            {:ok, req_for_ip(ip)}
+            {:ok, req_for_ip(ip, node_id)}
 
           {:error, _} = err ->
             err
@@ -54,10 +59,12 @@ defmodule Camelot.Runtime.Runner.Swarm.ProxyRouter do
   end
 
   @doc """
-  Drop the cached proxy IP for `node_id`. Call when an
-  exec request returns `:econnrefused` / a 5xx — the
-  proxy task may have been rescheduled and its overlay
-  IP changed.
+  Drop the cached proxy IP for `node_id`. Happens
+  automatically via the request's self-healing steps when a
+  call returns `503` or fails with a transport error
+  (`:ehostunreach`, `:timeout`, `:econnrefused`, ...) — the
+  proxy task was rescheduled and its overlay IP changed.
+  Also safe to call directly.
   """
   @spec invalidate(String.t()) :: :ok
   def invalidate(node_id) do
@@ -65,11 +72,31 @@ defmodule Camelot.Runtime.Runner.Swarm.ProxyRouter do
     :ok
   end
 
+  @doc false
+  # Response/error step: drops this node's cached proxy IP
+  # when the result signals a stale proxy, then passes the
+  # result through unchanged. Public only so the wiring can
+  # be asserted on in tests.
+  @spec drop_stale_node_proxy(
+          {Req.Request.t(), Req.Response.t() | Exception.t()},
+          String.t()
+        ) :: {Req.Request.t(), Req.Response.t() | Exception.t()}
+  def drop_stale_node_proxy({_request, result} = acc, node_id) do
+    maybe_invalidate_node(DockerApi.stale_proxy?(result), node_id)
+    acc
+  end
+
+  defp maybe_invalidate_node(true, node_id), do: invalidate(node_id)
+  defp maybe_invalidate_node(false, _node_id), do: :ok
+
   defp get_cache, do: :persistent_term.get(@cache_key, %{})
   defp put_cache(map), do: :persistent_term.put(@cache_key, map)
 
-  defp req_for_ip(ip) do
-    Req.new(base_url: "http://#{ip}:2375/v1.43")
+  defp req_for_ip(ip, node_id) do
+    [base_url: "http://#{ip}:2375/v1.43"]
+    |> Req.new()
+    |> Req.Request.append_response_steps(camelot_stale_proxy: &drop_stale_node_proxy(&1, node_id))
+    |> Req.Request.append_error_steps(camelot_stale_proxy: &drop_stale_node_proxy(&1, node_id))
   end
 
   defp resolve_ip(node_id) do
