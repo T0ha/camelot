@@ -41,4 +41,41 @@ defmodule Camelot.Runtime.Runner.Swarm.ProxyRouterTest do
       assert ProxyRouter.proxy_ip_for_node(tasks, "node-a") == nil
     end
   end
+
+  describe "drop_stale_node_proxy/2 (self-healing step)" do
+    @cache_key {ProxyRouter, :proxy_ips}
+
+    setup do
+      on_exit(fn -> :persistent_term.erase(@cache_key) end)
+      :ok
+    end
+
+    test "drops only the failing node's cached IP on a transport error" do
+      :persistent_term.put(@cache_key, %{"node-a" => "10.0.1.19", "node-b" => "10.0.1.20"})
+      err = %Req.TransportError{reason: :ehostunreach}
+
+      assert ProxyRouter.drop_stale_node_proxy({%Req.Request{}, err}, "node-a") ==
+               {%Req.Request{}, err}
+
+      cache = :persistent_term.get(@cache_key)
+      refute Map.has_key?(cache, "node-a")
+      assert cache["node-b"] == "10.0.1.20"
+    end
+
+    test "drops the node's cached IP on a 503 response" do
+      :persistent_term.put(@cache_key, %{"node-a" => "10.0.1.19"})
+
+      ProxyRouter.drop_stale_node_proxy({%Req.Request{}, %Req.Response{status: 503}}, "node-a")
+
+      refute Map.has_key?(:persistent_term.get(@cache_key), "node-a")
+    end
+
+    test "keeps the node's cached IP on a healthy response" do
+      :persistent_term.put(@cache_key, %{"node-a" => "10.0.1.19"})
+
+      ProxyRouter.drop_stale_node_proxy({%Req.Request{}, %Req.Response{status: 200}}, "node-a")
+
+      assert :persistent_term.get(@cache_key)["node-a"] == "10.0.1.19"
+    end
+  end
 end
