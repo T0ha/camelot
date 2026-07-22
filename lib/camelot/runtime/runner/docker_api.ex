@@ -12,9 +12,17 @@ defmodule Camelot.Runtime.Runner.DockerApi do
   must reach a manager-hosted proxy task — workers'
   daemons 503 on cluster-state endpoints. We resolve a
   manager-hosted proxy task's overlay IP via Swarm's
-  embedded DNS at first use and cache it. Cache is
-  invalidated on a 503 response so we re-probe if the
-  cluster's manager set changes.
+  embedded DNS at first use and cache it.
+
+  The cache self-heals: every request built for the proxy
+  transport carries response/error steps that drop the
+  cached IP when a call comes back `503` (the cached IP is
+  a worker proxy) or fails with a transport error such as
+  `:ehostunreach`/`:timeout` (the proxy task was
+  rescheduled to a new overlay IP after a redeploy). The
+  next `request/0` then re-discovers a live manager proxy.
+  Without this, a proxy reschedule would strand every
+  management call on a dead IP until the app restarted.
   """
 
   require Logger
@@ -63,16 +71,46 @@ defmodule Camelot.Runtime.Runner.DockerApi do
   end
 
   @doc """
-  Drop the cached manager-proxy IP. Call after a 503
-  from a management endpoint so the next `request/0`
+  Drop the cached manager-proxy IP so the next `request/0`
   re-discovers — e.g. when a manager is demoted or its
-  proxy task is rescheduled.
+  proxy task is rescheduled. Called automatically by the
+  self-healing request steps (see `stale_proxy?/1`); also
+  safe to call directly.
   """
   @spec invalidate_manager_proxy() :: :ok
   def invalidate_manager_proxy do
     :persistent_term.erase(@manager_proxy_key)
     :ok
   end
+
+  @doc """
+  Returns `true` when a proxy response/error means the
+  cached proxy IP is stale and should be dropped so the
+  next call re-resolves: a transport failure (the proxy
+  task was rescheduled to a new overlay IP —
+  `:ehostunreach`, `:timeout`, `:econnrefused`, ...) or a
+  `503` (the cached IP is a worker proxy that can't serve
+  cluster-state endpoints).
+  """
+  @spec stale_proxy?(Req.Response.t() | Exception.t()) :: boolean()
+  def stale_proxy?(%Req.Response{status: 503}), do: true
+  def stale_proxy?(%Req.TransportError{}), do: true
+  def stale_proxy?(_other), do: false
+
+  @doc false
+  # Response/error step: drops the cached manager-proxy IP
+  # when the result signals a stale proxy, then passes the
+  # result through unchanged. Public only so the wiring can
+  # be asserted on in tests.
+  @spec drop_stale_manager_proxy({Req.Request.t(), Req.Response.t() | Exception.t()}) ::
+          {Req.Request.t(), Req.Response.t() | Exception.t()}
+  def drop_stale_manager_proxy({_request, result} = acc) do
+    maybe_invalidate_manager(stale_proxy?(result))
+    acc
+  end
+
+  defp maybe_invalidate_manager(true), do: invalidate_manager_proxy()
+  defp maybe_invalidate_manager(false), do: :ok
 
   @doc """
   Lists the distinct `camelot-home` label values currently set
@@ -135,7 +173,10 @@ defmodule Camelot.Runtime.Runner.DockerApi do
   end
 
   defp tcp_request(host_and_port) do
-    Req.new(base_url: "http://#{host_and_port}/#{@api_version}")
+    [base_url: "http://#{host_and_port}/#{@api_version}"]
+    |> Req.new()
+    |> Req.Request.append_response_steps(camelot_stale_proxy: &drop_stale_manager_proxy/1)
+    |> Req.Request.append_error_steps(camelot_stale_proxy: &drop_stale_manager_proxy/1)
   end
 
   # If the configured host is a Swarm service name on the
