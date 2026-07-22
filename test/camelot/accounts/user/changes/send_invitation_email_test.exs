@@ -22,6 +22,37 @@ defmodule Camelot.Accounts.User.Changes.SendInvitationEmailTest do
 
       assert_email_sent(to: [{"", to_string(user.email)}])
     end
+
+    test "sends only the invitation email, no confirmation email" do
+      admin = Ash.Seed.seed!(User, %{email: "admin2@e.com", role: :admin})
+
+      {:ok, _user} =
+        User
+        |> Ash.Changeset.for_create(
+          :create_user,
+          %{email: "new2@e.com", role: :user},
+          actor: admin
+        )
+        |> Ash.create()
+
+      assert_email_sent(subject: "You're invited to Camelot AI")
+      assert_no_email_sent()
+    end
+
+    test "confirms the invited user immediately, since the admin invite is trusted" do
+      admin = Ash.Seed.seed!(User, %{email: "admin3@e.com", role: :admin})
+
+      {:ok, user} =
+        User
+        |> Ash.Changeset.for_create(
+          :create_user,
+          %{email: "new3@e.com", role: :user},
+          actor: admin
+        )
+        |> Ash.create()
+
+      assert user.confirmed_at
+    end
   end
 
   describe "resource-level wiring" do
