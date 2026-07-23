@@ -154,6 +154,71 @@ defmodule CamelotWeb.ProjectLiveTest do
     end
   end
 
+  describe "team" do
+    setup %{user: user} do
+      {:ok, project} =
+        Ash.create(Project, %{name: "team-#{System.unique_integer()}", path: "/tmp/team"}, actor: user)
+
+      %{project: project}
+    end
+
+    test "the owner sees the invite form and can invite a new member by email", %{
+      conn: conn,
+      project: project
+    } do
+      {:ok, view, html} = live(conn, ~p"/projects/#{project.id}")
+      assert html =~ "invite-form-project-members"
+
+      html =
+        view
+        |> form("#invite-form-project-members", %{"email" => "teammate@e.com", "role" => "member"})
+        |> render_submit()
+
+      assert html =~ "teammate@e.com"
+    end
+
+    test "shows an error and does not add a duplicate row when inviting an existing member", %{
+      conn: conn,
+      project: project,
+      user: user
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}")
+
+      html =
+        view
+        |> form("#invite-form-project-members", %{
+          "email" => to_string(user.email),
+          "role" => "member"
+        })
+        |> render_submit()
+
+      assert html =~ "already a member"
+    end
+
+    test "invite form is hidden for a plain member", %{conn: conn} do
+      owner = Ash.Seed.seed!(User, %{email: "team-owner-#{System.unique_integer()}@x.com"})
+
+      {:ok, project} =
+        Ash.create(Project, %{name: "team-member-#{System.unique_integer()}", path: "/tmp/tm"}, actor: owner)
+
+      member = Ash.Seed.seed!(User, %{email: "team-plain-#{System.unique_integer()}@x.com"})
+
+      Camelot.Projects.Membership
+      |> Ash.Changeset.for_create(
+        :create,
+        %{project_id: project.id, user_id: member.id, role: :member},
+        authorize?: false
+      )
+      |> Ash.create!()
+
+      %{conn: conn} = log_in_user(conn, member)
+
+      {:ok, _view, html} = live(conn, ~p"/projects/#{project.id}")
+
+      refute html =~ "invite-form-project-members"
+    end
+  end
+
   describe "scoping" do
     test "non-admin sees only memberships", %{conn: conn, user: user} do
       {:ok, _mine} =
