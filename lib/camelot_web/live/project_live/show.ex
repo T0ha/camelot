@@ -5,9 +5,11 @@ defmodule CamelotWeb.ProjectLive.Show do
   use CamelotWeb, :live_view
 
   alias Camelot.Accounts.User
+  alias Camelot.Projects.Membership
   alias Camelot.Projects.Project
   alias Camelot.Runtime.Runner.DockerApi
   alias CamelotWeb.Components.EnvVarEditor
+  alias CamelotWeb.Components.MembersEditor
   alias CamelotWeb.Scope
   alias Phoenix.LiveView.Socket
 
@@ -23,7 +25,8 @@ defmodule CamelotWeb.ProjectLive.Show do
          assign(socket,
            page_title: project.name,
            project: project,
-           node_labels: node_labels(socket.assigns.current_user)
+           node_labels: node_labels(socket.assigns.current_user),
+           can_invite?: can_invite?(project.id, socket.assigns.current_user)
          )}
 
       :forbidden ->
@@ -71,6 +74,9 @@ defmodule CamelotWeb.ProjectLive.Show do
 
   defp node_labels(%User{role: :admin}), do: DockerApi.list_node_labels_or_empty()
   defp node_labels(%User{}), do: []
+
+  defp can_invite?(_project_id, %User{role: :admin}), do: true
+  defp can_invite?(project_id, %User{id: user_id}), do: Membership.owner?(project_id, user_id)
 
   @impl true
   def render(assigns) do
@@ -140,6 +146,14 @@ defmodule CamelotWeb.ProjectLive.Show do
           />
         </form>
       </div>
+
+      <.live_component
+        module={MembersEditor}
+        id="project-members"
+        project_id={@project.id}
+        current_user={@current_user}
+        can_invite?={@can_invite?}
+      />
 
       <.live_component
         module={EnvVarEditor}
