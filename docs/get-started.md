@@ -6,17 +6,21 @@ merged pull request.
 
 ## Prerequisites
 
-You need the URL of your team's Camelot workspace and an email address
-that's already been granted access — someone on your team invites you
-before you can sign in. Everything below assumes you're at that URL.
+You need an email address that's already been granted access to your
+team's Camelot workspace — someone on your team invites you before you
+can sign in. This guide uses Camelot Cloud at
+[app.camelotai.tech](https://app.camelotai.tech); everything below
+assumes you're signed in there.
 
 ## 1. Sign in
 
 Camelot uses passwordless magic-link auth — there's no signup form and no
-password to set. Go to `/sign-in` and enter your email. Camelot emails you
-a magic link that's valid for 10 minutes — click it to sign in. On first
-sign-in, Camelot also generates an SSH keypair for you automatically (more
-on that in [Set up your profile](#2-set-up-your-profile)).
+password to set. Go to
+[app.camelotai.tech/sign-in](https://app.camelotai.tech/sign-in) and enter
+your email. Camelot emails you a magic link that's valid for 10 minutes —
+click it to sign in. On first sign-in, Camelot also generates an SSH
+keypair for you automatically (more on that in
+[Set up your profile](#2-set-up-your-profile)).
 
 ## 2. Set up your profile
 
@@ -28,11 +32,10 @@ Visit `/profile` to finish your personal setup:
   other git host) so runners can clone your private repos. If you ever
   need to replace it, "Generate new key" rotates it — remember to update
   it everywhere the old key was installed.
-- **Credentials** — add any API keys or tokens your agents will need:
-  a Claude API key, an OpenAI/Codex API key, a GitHub personal access
-  token, or a GitHub OAuth token. Pick a **Kind**, give it a **Name**, and
-  paste the **Value**. These are encrypted at rest and shipped securely to
-  runner containers.
+- **Credentials** — add any API keys or tokens your agents will need: a
+  Claude API key, a GitHub personal access token, or a GitHub OAuth
+  token. Pick a **Kind**, give it a **Name**, and paste the **Value**.
+  These are encrypted at rest and shipped securely to runner containers.
 
 ## 3. Create a project
 
@@ -54,7 +57,8 @@ Click **Save**.
 Go to `/agents/new` and fill in:
 
 - **Name** — anything memorable
-- **Template** — the CLI tool this agent runs (e.g. Claude Code or Codex)
+- **Template** — the agent template to run; Claude Code is currently the
+  supported option
 - **Project** — the project this agent works on
 - **Max retries** — how many times it retries a failed run
 
