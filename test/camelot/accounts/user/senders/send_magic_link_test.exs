@@ -28,6 +28,17 @@ defmodule Camelot.Accounts.User.Senders.SendMagicLinkTest do
       :ok = SendMagicLink.send(user, "tok-123", [])
       assert_email_sent(to: [{"", "invited@example.com"}])
     end
+
+    test "renders the shared branded layout" do
+      user = Ash.Seed.seed!(User, %{email: "invited@example.com"})
+      :ok = SendMagicLink.send(user, "tok-123", [])
+
+      assert_email_sent(fn email ->
+        assert email.html_body =~ "Camelot AI"
+        assert email.html_body =~ "MedievalSharp"
+        assert email.html_body =~ "#7c3aed"
+      end)
+    end
   end
 
   describe "with registration disabled" do

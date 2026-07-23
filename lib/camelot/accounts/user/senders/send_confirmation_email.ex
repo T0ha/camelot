@@ -7,6 +7,8 @@ defmodule Camelot.Accounts.User.Senders.SendConfirmationEmail do
 
   import Swoosh.Email
 
+  alias Camelot.Mailer.Layout
+
   @impl true
   @spec send(
           Ash.Resource.record(),
@@ -35,11 +37,14 @@ defmodule Camelot.Accounts.User.Senders.SendConfirmationEmail do
     |> from(Camelot.Mailer.from())
     |> to(to)
     |> subject("Confirm your email for Camelot")
-    |> html_body("""
-    <h2>Confirm your email</h2>
-    <p>Click the link below to confirm:</p>
-    <p><a href="#{url}">Confirm email</a></p>
-    """)
+    |> html_body(
+      Layout.html("""
+      <h2 style="margin-top: 0;">Confirm your email</h2>
+      <p>Click the button below to confirm:</p>
+      #{Layout.button(url, "Confirm email")}
+      #{Layout.fallback_link(url)}
+      """)
+    )
     |> text_body("""
     Confirm your email
 
