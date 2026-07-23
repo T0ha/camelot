@@ -5,6 +5,8 @@ defmodule Camelot.Board.Task.Senders.SendStateChangeEmail do
   """
   import Swoosh.Email
 
+  alias Camelot.Mailer.Layout
+
   @subjects %{
     waiting_for_input: "needs your input",
     error: "hit an error",
@@ -33,10 +35,13 @@ defmodule Camelot.Board.Task.Senders.SendStateChangeEmail do
   defp task_url(task), do: CamelotWeb.Endpoint.url() <> "/tasks/#{task.id}"
 
   defp build_html_body(task, kind) do
-    """
-    <h2>Task "#{task.title}" #{@messages[kind]}</h2>
-    <p><a href="#{task_url(task)}">View task</a></p>
-    """
+    url = task_url(task)
+
+    Layout.html("""
+    <h2 style="margin-top: 0;">Task "#{task.title}" #{@messages[kind]}</h2>
+    #{Layout.button(url, "View task")}
+    #{Layout.fallback_link(url)}
+    """)
   end
 
   defp build_text_body(task, kind) do

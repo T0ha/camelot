@@ -15,6 +15,8 @@ defmodule Camelot.Accounts.User.Senders.SendMagicLink do
 
   import Swoosh.Email
 
+  alias Camelot.Mailer.Layout
+
   require Logger
 
   @impl true
@@ -63,13 +65,16 @@ defmodule Camelot.Accounts.User.Senders.SendMagicLink do
     |> from(Camelot.Mailer.from())
     |> to(to)
     |> subject("Your sign-in link for Camelot")
-    |> html_body("""
-    <h2>Sign in to Camelot</h2>
-    <p>Click the link below to sign in:</p>
-    <p><a href="#{url}">Sign in to Camelot</a></p>
-    <p>This link expires in 10 minutes.</p>
-    <p>If you didn't request this, you can safely ignore this email.</p>
-    """)
+    |> html_body(
+      Layout.html("""
+      <h2 style="margin-top: 0;">Sign in to Camelot</h2>
+      <p>Click the button below to sign in:</p>
+      #{Layout.button(url, "Sign in to Camelot")}
+      #{Layout.fallback_link(url)}
+      <p>This link expires in 10 minutes.</p>
+      <p>If you didn't request this, you can safely ignore this email.</p>
+      """)
+    )
     |> text_body("""
     Sign in to Camelot
 
