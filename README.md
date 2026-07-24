@@ -91,6 +91,9 @@ Visit [`localhost:4000`](http://localhost:4000).
 3. Add an agent (Claude Code or Codex)
 4. Create a task and watch it flow through the board
 
+See [`docs/get-started.md`](docs/get-started.md) for a full walkthrough
+from first login to your first merged PR.
+
 ## Configuration
 
 Key environment variables (see `config/runtime.exs` for full details):
