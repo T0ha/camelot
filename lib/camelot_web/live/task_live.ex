@@ -17,6 +17,15 @@ defmodule CamelotWeb.TaskLive do
 
   @task_load [:project, :agent, :creator, :sessions, :messages]
 
+  # GFM extensions so plan/description markdown renders tables,
+  # strikethrough, autolinks and task lists instead of raw text.
+  @markdown_extensions [
+    table: true,
+    strikethrough: true,
+    autolink: true,
+    tasklist: true
+  ]
+
   @impl true
   def mount(%{"id" => id}, _session, socket) do
     case load_or_forbid(id, socket.assigns.current_user) do
@@ -32,7 +41,8 @@ defmodule CamelotWeb.TaskLive do
             task: task,
             message_input: "",
             live_output: "",
-            subscribed_agent_id: nil
+            subscribed_agent_id: nil,
+            focused_column: :none
           )
           |> maybe_subscribe_agent(task)
 
@@ -267,6 +277,31 @@ defmodule CamelotWeb.TaskLive do
     end
   end
 
+  def handle_event("toggle_column", %{"col" => "left"}, socket) do
+    {:noreply, toggle_focused_column(socket, :left)}
+  end
+
+  def handle_event("toggle_column", %{"col" => "right"}, socket) do
+    {:noreply, toggle_focused_column(socket, :right)}
+  end
+
+  defp toggle_focused_column(socket, target) do
+    next =
+      case socket.assigns.focused_column do
+        ^target -> :none
+        _ -> target
+      end
+
+    assign(socket, focused_column: next)
+  end
+
+  defp grid_class(:none), do: "grid grid-cols-1 lg:grid-cols-2 gap-6"
+  defp grid_class(_focused), do: "grid grid-cols-1 gap-6"
+
+  defp column_hidden?(:left, :right), do: true
+  defp column_hidden?(:right, :left), do: true
+  defp column_hidden?(_col, _focused), do: false
+
   defp reset_task_and_agent(socket, task) do
     stop_agent_process(task.agent.id)
 
@@ -387,8 +422,34 @@ defmodule CamelotWeb.TaskLive do
         </div>
       </div>
 
-      <div class="grid grid-cols-2 gap-6">
-        <div class="space-y-4">
+      <div class={grid_class(@focused_column)}>
+        <div class={[
+          "space-y-4",
+          column_hidden?(:left, @focused_column) && "hidden"
+        ]}>
+          <div class="flex justify-end">
+            <button
+              type="button"
+              phx-click="toggle_column"
+              phx-value-col="left"
+              class="btn btn-xs btn-ghost"
+              aria-label="Toggle details column full-width"
+              title={
+                if @focused_column == :left,
+                  do: "Restore split view",
+                  else: "Expand to full width"
+              }
+            >
+              <.icon
+                name={
+                  if @focused_column == :left,
+                    do: "hero-arrows-pointing-in",
+                    else: "hero-arrows-pointing-out"
+                }
+                class="size-4"
+              />
+            </button>
+          </div>
           <.list>
             <:item title="Stage">
               <span class={["badge", stage_class(@task.stage)]}>
@@ -415,12 +476,12 @@ defmodule CamelotWeb.TaskLive do
             </:item>
           </.list>
 
-          <div :if={@task.description} class="prose max-w-none">
+          <div :if={@task.description} class="prose max-w-none overflow-x-auto">
             <h3>Description</h3>
             {render_markdown(@task.description)}
           </div>
 
-          <div :if={@task.plan} class="prose max-w-none">
+          <div :if={@task.plan} class="prose max-w-none overflow-x-auto">
             <h3>Plan</h3>
             {render_markdown(@task.plan)}
           </div>
@@ -466,8 +527,34 @@ defmodule CamelotWeb.TaskLive do
           </form>
         </div>
 
-        <div class="space-y-4">
-          <h3 class="font-semibold">Sessions</h3>
+        <div class={[
+          "space-y-4",
+          column_hidden?(:right, @focused_column) && "hidden"
+        ]}>
+          <div class="flex items-center justify-between">
+            <h3 class="font-semibold">Sessions</h3>
+            <button
+              type="button"
+              phx-click="toggle_column"
+              phx-value-col="right"
+              class="btn btn-xs btn-ghost"
+              aria-label="Toggle sessions column full-width"
+              title={
+                if @focused_column == :right,
+                  do: "Restore split view",
+                  else: "Expand to full width"
+              }
+            >
+              <.icon
+                name={
+                  if @focused_column == :right,
+                    do: "hero-arrows-pointing-in",
+                    else: "hero-arrows-pointing-out"
+                }
+                class="size-4"
+              />
+            </button>
+          </div>
           <div
             :if={Ash.Resource.loaded?(@task, :sessions) && @task.sessions != []}
             class="space-y-2"
@@ -621,7 +708,7 @@ defmodule CamelotWeb.TaskLive do
   end
 
   defp render_markdown(text) when is_binary(text) do
-    case MDEx.to_html(text) do
+    case MDEx.to_html(text, extension: @markdown_extensions) do
       {:ok, html} -> Phoenix.HTML.raw(html)
       {:error, _} -> text
     end

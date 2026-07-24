@@ -35,6 +35,22 @@ defmodule CamelotWeb.TaskLiveTest do
       assert html =~ "Live task"
       assert html =~ "todo"
     end
+
+    test "renders GFM markdown tables in the description", %{conn: conn, project: project, user: user} do
+      {:ok, task} =
+        Ash.create(Task, %{
+          title: "Tabular task",
+          description: "| A | B |\n|---|---|\n| 1 | 2 |",
+          project_id: project.id,
+          creator_id: user.id
+        })
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ "<table>"
+      assert html =~ "<th>A</th>"
+      refute html =~ "| A | B |"
+    end
   end
 
   describe "cancel" do
@@ -205,6 +221,32 @@ defmodule CamelotWeb.TaskLiveTest do
       send(view.pid, {:some_unexpected_message, :payload})
 
       assert render(view) =~ "Catch-all task"
+    end
+  end
+
+  describe "column focus" do
+    test "toggling a column expands it to full width", %{conn: conn, task: task} do
+      {:ok, view, html} = live(conn, ~p"/tasks/#{task.id}")
+      refute html =~ "Restore split view"
+
+      html =
+        view
+        |> element(~s(button[phx-value-col="left"]))
+        |> render_click()
+
+      assert html =~ "Restore split view"
+      assert html =~ "hero-arrows-pointing-in"
+    end
+
+    test "toggling the same column again restores the split view", %{conn: conn, task: task} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      button = fn -> element(view, ~s(button[phx-value-col="left"])) end
+
+      render_click(button.())
+      html = render_click(button.())
+
+      refute html =~ "Restore split view"
     end
   end
 

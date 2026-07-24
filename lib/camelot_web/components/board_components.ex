@@ -76,6 +76,16 @@ defmodule CamelotWeb.BoardComponents do
           <span class="badge badge-xs badge-ghost">
             P{@task.priority}
           </span>
+          <button
+            :if={@task.state in [:error, :in_progress]}
+            phx-click="restart_task"
+            phx-value-id={@task.id}
+            data-confirm="Restart this task?"
+            class="btn btn-xs btn-warning ml-auto"
+            title="Restart this task"
+          >
+            <.icon name="hero-arrow-path" class="size-3" />
+          </button>
         </div>
       </div>
     </div>

@@ -80,6 +80,19 @@ defmodule CamelotWeb.BoardLive do
     {:noreply, socket |> assign(see_all: !socket.assigns.see_all) |> load_board()}
   end
 
+  def handle_event("restart_task", %{"id" => id}, socket) do
+    task = Ash.get!(Task, id)
+
+    case Ash.update(task, %{}, action: :reset) do
+      {:ok, task} ->
+        broadcast_task_event(:task_updated, task)
+        {:noreply, socket |> put_flash(:info, "Task restarted") |> load_board()}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Cannot restart task")}
+    end
+  end
+
   defp load_board(socket) do
     user = socket.assigns.current_user
     see_all = socket.assigns.see_all
