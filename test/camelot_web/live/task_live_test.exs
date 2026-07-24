@@ -35,6 +35,22 @@ defmodule CamelotWeb.TaskLiveTest do
       assert html =~ "Live task"
       assert html =~ "todo"
     end
+
+    test "renders GFM markdown tables in the description", %{conn: conn, project: project, user: user} do
+      {:ok, task} =
+        Ash.create(Task, %{
+          title: "Tabular task",
+          description: "| A | B |\n|---|---|\n| 1 | 2 |",
+          project_id: project.id,
+          creator_id: user.id
+        })
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ "<table>"
+      assert html =~ "<th>A</th>"
+      refute html =~ "| A | B |"
+    end
   end
 
   describe "cancel" do

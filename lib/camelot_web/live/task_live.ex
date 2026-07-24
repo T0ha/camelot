@@ -17,6 +17,15 @@ defmodule CamelotWeb.TaskLive do
 
   @task_load [:project, :agent, :creator, :sessions, :messages]
 
+  # GFM extensions so plan/description markdown renders tables,
+  # strikethrough, autolinks and task lists instead of raw text.
+  @markdown_extensions [
+    table: true,
+    strikethrough: true,
+    autolink: true,
+    tasklist: true
+  ]
+
   @impl true
   def mount(%{"id" => id}, _session, socket) do
     case load_or_forbid(id, socket.assigns.current_user) do
@@ -467,12 +476,12 @@ defmodule CamelotWeb.TaskLive do
             </:item>
           </.list>
 
-          <div :if={@task.description} class="prose max-w-none">
+          <div :if={@task.description} class="prose max-w-none overflow-x-auto">
             <h3>Description</h3>
             {render_markdown(@task.description)}
           </div>
 
-          <div :if={@task.plan} class="prose max-w-none">
+          <div :if={@task.plan} class="prose max-w-none overflow-x-auto">
             <h3>Plan</h3>
             {render_markdown(@task.plan)}
           </div>
@@ -699,7 +708,7 @@ defmodule CamelotWeb.TaskLive do
   end
 
   defp render_markdown(text) when is_binary(text) do
-    case MDEx.to_html(text) do
+    case MDEx.to_html(text, extension: @markdown_extensions) do
       {:ok, html} -> Phoenix.HTML.raw(html)
       {:error, _} -> text
     end
