@@ -208,6 +208,32 @@ defmodule CamelotWeb.TaskLiveTest do
     end
   end
 
+  describe "column focus" do
+    test "toggling a column expands it to full width", %{conn: conn, task: task} do
+      {:ok, view, html} = live(conn, ~p"/tasks/#{task.id}")
+      refute html =~ "Restore split view"
+
+      html =
+        view
+        |> element(~s(button[phx-value-col="left"]))
+        |> render_click()
+
+      assert html =~ "Restore split view"
+      assert html =~ "hero-arrows-pointing-in"
+    end
+
+    test "toggling the same column again restores the split view", %{conn: conn, task: task} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      button = fn -> element(view, ~s(button[phx-value-col="left"])) end
+
+      render_click(button.())
+      html = render_click(button.())
+
+      refute html =~ "Restore split view"
+    end
+  end
+
   describe "scoping" do
     test "redirects non-member from another user's task", %{conn: conn} do
       other = Ash.Seed.seed!(Camelot.Accounts.User, %{email: "to-#{System.unique_integer()}@x.com"})
