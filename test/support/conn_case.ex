@@ -55,10 +55,15 @@ defmodule CamelotWeb.ConnCase do
           %{conn: Plug.Conn.t(), user: Ash.Resource.record()}
   def register_and_log_in_admin(%{conn: conn}), do: log_in_with_role(conn, :admin)
 
-  defp log_in_with_role(conn, role) do
-    email = "test-#{role}-#{System.unique_integer()}@example.com"
-    user = Ash.Seed.seed!(User, %{email: email, role: role})
-
+  @doc """
+  Stores an already-created user in the connection session for
+  authenticated test requests, without seeding a new one. Useful
+  when a test needs to log in as a specific user it created
+  earlier (e.g. a project owner or a plain member).
+  """
+  @spec log_in_user(Plug.Conn.t(), Ash.Resource.record()) ::
+          %{conn: Plug.Conn.t(), user: Ash.Resource.record()}
+  def log_in_user(conn, user) do
     {:ok, token, _claims} = AshAuthentication.Jwt.token_for_user(user)
     user = %{user | __metadata__: Map.put(user.__metadata__, :token, token)}
 
@@ -68,5 +73,12 @@ defmodule CamelotWeb.ConnCase do
       |> AuthHelpers.store_in_session(user)
 
     %{conn: conn, user: user}
+  end
+
+  defp log_in_with_role(conn, role) do
+    email = "test-#{role}-#{System.unique_integer()}@example.com"
+    user = Ash.Seed.seed!(User, %{email: email, role: role})
+
+    log_in_user(conn, user)
   end
 end

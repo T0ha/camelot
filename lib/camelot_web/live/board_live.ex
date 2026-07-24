@@ -41,6 +41,10 @@ defmodule CamelotWeb.BoardLive do
   @impl true
   @task_fields ~w(title description priority project_id)
 
+  def handle_event("validate_task", params, socket) do
+    {:noreply, assign(socket, task_form: to_form(Map.take(params, @task_fields)))}
+  end
+
   def handle_event("create_task", params, socket) do
     user = socket.assigns.current_user
     task_params = Map.take(params, @task_fields)
@@ -161,6 +165,7 @@ defmodule CamelotWeb.BoardLive do
         <h3 class="font-bold text-lg mb-4">New Task</h3>
         <.simple_form
           for={@task_form}
+          phx-change="validate_task"
           phx-submit={
             hide_modal("new-task-modal")
             |> JS.push("create_task")

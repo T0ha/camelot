@@ -25,6 +25,32 @@ defmodule CamelotWeb.BoardLiveTest do
     assert render(view) =~ "Board"
   end
 
+  test "New Task form clears fields after successful creation", %{conn: conn, user: user} do
+    {:ok, project} =
+      Ash.create(
+        Project,
+        %{name: "p-#{System.unique_integer()}", path: "/tmp/z"},
+        actor: user
+      )
+
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    task_form =
+      form(view, "#new-task-form", %{
+        "title" => "Write the plan",
+        "description" => "some details",
+        "project_id" => project.id,
+        "priority" => "2"
+      })
+
+    render_change(task_form)
+    render_submit(task_form)
+
+    form_html = view |> element("#new-task-form") |> render()
+    refute form_html =~ "Write the plan"
+    refute form_html =~ "some details"
+  end
+
   describe "scoping" do
     test "non-admin sees only tasks from member projects", %{conn: conn, user: user} do
       {:ok, mine} =

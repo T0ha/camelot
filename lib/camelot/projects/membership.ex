@@ -15,6 +15,8 @@ defmodule Camelot.Projects.Membership do
     data_layer: AshPostgres.DataLayer,
     authorizers: []
 
+  require Ash.Query
+
   @roles [:owner, :member]
 
   postgres do
@@ -66,6 +68,43 @@ defmodule Camelot.Projects.Membership do
 
     update :set_role do
       accept([:role])
+    end
+
+    create :invite do
+      argument :project_id, :uuid do
+        allow_nil?(false)
+      end
+
+      argument :email, :ci_string do
+        allow_nil?(false)
+      end
+
+      argument :role, :atom do
+        constraints(one_of: @roles)
+        default(:member)
+      end
+
+      change(Camelot.Projects.Membership.Changes.ResolveInvitee)
+      change(Camelot.Projects.Membership.Changes.SendProjectInviteEmail)
+    end
+  end
+
+  @doc """
+  Whether `user_id` holds an `owner` membership on `project_id`.
+
+  Shared by `Membership.Changes.ResolveInvitee` (resource-level
+  authorization for `:invite`) and `ProjectLive.Show` (UI-level
+  gating for the invite form), so the two checks can't drift apart.
+  """
+  @spec owner?(Ash.UUID.t(), Ash.UUID.t()) :: boolean()
+  def owner?(project_id, user_id) do
+    __MODULE__
+    |> Ash.Query.filter(project_id == ^project_id and user_id == ^user_id and role == :owner)
+    |> Ash.read_one(authorize?: false)
+    |> case do
+      {:ok, nil} -> false
+      {:ok, _membership} -> true
+      _ -> false
     end
   end
 end
