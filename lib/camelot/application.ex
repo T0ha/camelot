@@ -5,8 +5,12 @@ defmodule Camelot.Application do
 
   use Application
 
+  alias Camelot.Telemetry.PostHogHandler
+
   @impl true
   def start(_type, _args) do
+    PostHogHandler.attach()
+
     children = [
       CamelotWeb.Telemetry,
       Camelot.Repo,

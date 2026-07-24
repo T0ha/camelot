@@ -56,5 +56,13 @@ config :phoenix,
 config :phoenix_live_view,
   enable_expensive_runtime_checks: true
 
+# Keep PostHog "enabled" so its sender pool starts (required for
+# PostHog.Test to record captured events), but test_mode: true means
+# events are kept in memory instead of sent over HTTP.
+config :posthog,
+  enable: true,
+  api_key: "test-api-key",
+  test_mode: true
+
 # Disable swoosh api client as it is only required for production adapters
 config :swoosh, :api_client, false

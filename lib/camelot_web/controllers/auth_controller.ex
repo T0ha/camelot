@@ -13,6 +13,8 @@ defmodule CamelotWeb.AuthController do
           String.t() | nil
         ) :: Plug.Conn.t()
   def success(conn, _activity, user, _token) do
+    :telemetry.execute([:camelot, :user, :signed_in], %{}, %{user: user})
+
     conn
     |> store_in_session(user)
     |> assign(:current_user, user)

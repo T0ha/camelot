@@ -7,7 +7,8 @@ defmodule Camelot.Projects.Project do
     domain: Camelot.Projects,
     data_layer: AshPostgres.DataLayer,
     extensions: [AshOban],
-    authorizers: []
+    authorizers: [],
+    simple_notifiers: [Camelot.Telemetry.Notifier]
 
   alias Camelot.Projects.Membership
 
