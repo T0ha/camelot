@@ -219,6 +219,27 @@ defmodule Camelot.Runtime.AgentProcessTest do
     end
   end
 
+  describe "runner_died_message/2" do
+    test "prepends the runner log tail so the real cause leads" do
+      reason = {:bad_status, 409, %{"message" => "container is not running"}}
+      logs = "cloning git@github.com:acme/repo\nERROR: Repository not found."
+
+      msg = AgentProcess.runner_died_message(reason, logs)
+
+      assert String.starts_with?(msg, logs)
+      assert msg =~ "runtime detail: runner exited before producing output"
+      assert msg =~ "Repository not found"
+    end
+
+    test "falls back to the summary when the log tail is nil or blank" do
+      reason = %Req.TransportError{reason: :ehostunreach}
+      summary = AgentProcess.runner_died_message(reason)
+
+      assert AgentProcess.runner_died_message(reason, nil) == summary
+      assert AgentProcess.runner_died_message(reason, "   \n ") == summary
+    end
+  end
+
   describe "planning_action/2" do
     defp planning_state do
       %AgentProcess{

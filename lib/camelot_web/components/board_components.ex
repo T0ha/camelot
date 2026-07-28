@@ -87,6 +87,13 @@ defmodule CamelotWeb.BoardComponents do
             <.icon name="hero-arrow-path" class="size-3" />
           </button>
         </div>
+        <p
+          :if={@task.state == :error && @task.last_error}
+          class="mt-1 text-xs text-error whitespace-pre-line line-clamp-3"
+          title={@task.last_error}
+        >
+          {@task.last_error}
+        </p>
       </div>
     </div>
     """

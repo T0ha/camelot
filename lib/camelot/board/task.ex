@@ -128,6 +128,18 @@ defmodule Camelot.Board.Task do
       )
     end
 
+    attribute :last_error, :string do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Human-readable reason the task last entered the :error state — " <>
+          "e.g. the runner container's log tail when a git clone fails. " <>
+          "Surfaced on the board card so the user can fix the cause. " <>
+          "Cleared when work resumes (begin_work/retry/reset)."
+      )
+    end
+
     timestamps()
   end
 
@@ -226,11 +238,14 @@ defmodule Camelot.Board.Task do
             changeset
           end
 
-        Ash.Changeset.force_change_attribute(
-          changeset,
-          :state,
-          :in_progress
-        )
+        changeset =
+          Ash.Changeset.force_change_attribute(
+            changeset,
+            :state,
+            :in_progress
+          )
+
+        Ash.Changeset.force_change_attribute(changeset, :last_error, nil)
       end)
 
       change(manage_relationship(:agent_id, :agent, type: :append))
@@ -280,14 +295,14 @@ defmodule Camelot.Board.Task do
     end
 
     update :mark_error do
-      accept([])
+      accept([:last_error])
       notifiers([NotifyTaskStateEmail])
 
       change(set_attribute(:state, :error))
     end
 
     update :mark_runner_lost do
-      accept([])
+      accept([:last_error])
       notifiers([NotifyTaskStateEmail])
 
       change(set_attribute(:state, :error))
@@ -305,6 +320,7 @@ defmodule Camelot.Board.Task do
 
       validate(attribute_equals(:state, :error))
       change(set_attribute(:state, :queued))
+      change(set_attribute(:last_error, nil))
     end
 
     update :reset do
@@ -322,6 +338,7 @@ defmodule Camelot.Board.Task do
       end)
 
       change(set_attribute(:state, :queued))
+      change(set_attribute(:last_error, nil))
     end
 
     update :pr_created do

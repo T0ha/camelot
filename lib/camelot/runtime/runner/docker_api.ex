@@ -25,6 +25,8 @@ defmodule Camelot.Runtime.Runner.DockerApi do
   management call on a dead IP until the app restarted.
   """
 
+  alias Camelot.Runtime.Runner.DockerStreamDemux
+
   require Logger
 
   @api_version "v1.43"
@@ -111,6 +113,55 @@ defmodule Camelot.Runtime.Runner.DockerApi do
 
   defp maybe_invalidate_manager(true), do: invalidate_manager_proxy()
   defp maybe_invalidate_manager(false), do: :ok
+
+  @doc """
+  Fetches the tail of a Swarm service's combined stdout/stderr
+  logs and returns it as text. Used when a runner exits before
+  the app can attach an exec session (e.g. the entrypoint's git
+  clone fails): the real cause lives only in the container's log
+  output, which the exec stream never captured. Best-effort — the
+  caller falls back to the opaque exit reason on `{:error, _}`.
+
+  `opts[:tail]` bounds how many trailing lines to request
+  (default 50).
+  """
+  @spec service_logs(String.t(), keyword()) :: {:ok, String.t()} | {:error, term()}
+  def service_logs(service_ref, opts \\ []) when is_binary(service_ref) do
+    tail = Keyword.get(opts, :tail, 50)
+
+    result =
+      Req.get(request(),
+        url: "/services/#{service_ref}/logs",
+        params: [stdout: true, stderr: true, tail: tail],
+        receive_timeout: @probe_timeout_ms,
+        decode_body: false
+      )
+
+    case result do
+      {:ok, %Req.Response{status: 200, body: body}} when is_binary(body) ->
+        {:ok, decode_log_stream(body)}
+
+      {:ok, resp} ->
+        {:error, {:service_logs_bad_status, resp.status}}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  @doc false
+  # Public only so the demux/fallback behaviour can be asserted on
+  # in tests. Docker returns service logs in the multiplexed frame
+  # format (`Tty: false`); demux and concatenate the payloads. If no
+  # complete frame is found (e.g. a TTY service streams raw bytes),
+  # return the body unchanged as a best-effort fallback.
+  @spec decode_log_stream(binary()) :: String.t()
+  def decode_log_stream(body) when is_binary(body) do
+    case DockerStreamDemux.drain(<<>>, body) do
+      {[], _rest} -> body
+      {payloads, _rest} -> Enum.join(payloads)
+    end
+  end
 
   @doc """
   Lists the distinct `camelot-home` label values currently set
