@@ -35,6 +35,7 @@ defmodule Camelot.Runtime.AgentProcess do
   alias Camelot.Runtime.EnvVarResolver
   alias Camelot.Runtime.OutputParser
   alias Camelot.Runtime.Runner
+  alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.LocalPort
   alias Camelot.Runtime.Runner.Spec
   alias Camelot.Runtime.RunnerPool
@@ -350,7 +351,7 @@ defmodule Camelot.Runtime.AgentProcess do
       schedule_retry(state)
     else
       handle_cli_exit(state, exit_code, parsed)
-      if failed?, do: mark_task_error(state.current_task_id)
+      if failed?, do: mark_task_error(state.current_task_id, parsed_error(parsed))
       release_and_idle(state)
 
       if denials == [] do
@@ -365,14 +366,50 @@ defmodule Camelot.Runtime.AgentProcess do
     OutputParser.parse(parser_for(state), state.output_buffer)
   end
 
-  defp parsed_for_exit(_state, reason) do
-    {:error, runner_died_message(reason)}
+  defp parsed_for_exit(state, reason) do
+    {:error, runner_died_message(reason, runner_log_tail(state))}
   end
+
+  # Best-effort fetch of the dead runner's container log tail. When a
+  # runner exits before the exec stream attaches (e.g. the entrypoint's
+  # git clone fails), the output buffer is empty and the exit reason is
+  # an opaque Docker error — the actual cause lives only in the
+  # container logs. Any failure here (service already gone, proxy
+  # unreachable) collapses to `nil` so finalisation never crashes.
+  @spec runner_log_tail(t()) :: String.t() | nil
+  defp runner_log_tail(%__MODULE__{current_task_id: task_id}) when is_binary(task_id) do
+    service = Spec.task_runner_name(task_id)
+
+    case DockerApi.service_logs(service, tail: 50) do
+      {:ok, logs} -> logs
+      {:error, _} -> nil
+    end
+  rescue
+    error ->
+      Logger.debug("runner_log_tail failed for task #{task_id}: #{inspect(error)}")
+      nil
+  end
+
+  defp runner_log_tail(_state), do: nil
 
   @doc false
   @spec runner_died_message(term()) :: String.t()
-  def runner_died_message(reason) do
-    "runner exited before producing output (#{inspect(reason)})"
+  def runner_died_message(reason), do: runner_died_message(reason, nil)
+
+  # Two-arity variant that prepends the runner's log tail (the useful
+  # cause) when we managed to fetch it. Logs come first so a truncated
+  # card preview shows the real error rather than the opaque Docker
+  # exit reason, which is kept as a trailing runtime detail.
+  @doc false
+  @spec runner_died_message(term(), String.t() | nil) :: String.t()
+  def runner_died_message(reason, log_tail) do
+    summary = "runner exited before producing output (#{inspect(reason)})"
+
+    case log_tail && String.trim(log_tail) do
+      nil -> summary
+      "" -> summary
+      logs -> "#{logs}\n\nruntime detail: #{summary}"
+    end
   end
 
   defp parser_for(%__MODULE__{config: %AgentConfig{parser: p}}), do: p
@@ -726,11 +763,11 @@ defmodule Camelot.Runtime.AgentProcess do
     end
   end
 
-  defp mark_task_error(nil), do: :ok
+  defp mark_task_error(nil, _reason), do: :ok
 
-  defp mark_task_error(task_id) do
+  defp mark_task_error(task_id, reason) do
     task = Ash.get!(Task, task_id)
-    transition(task, :mark_error)
+    transition(task, :mark_error, %{last_error: reason})
   end
 
   # Variant used by paths where the CLI exited cleanly but the
@@ -741,7 +778,7 @@ defmodule Camelot.Runtime.AgentProcess do
   # to :error instead of progressing.
   defp mark_error_with_reason(state, task, reason) do
     annotate_session_error(state.current_session_id, reason)
-    transition(task, :mark_error)
+    transition(task, :mark_error, %{last_error: reason})
   end
 
   defp annotate_session_error(nil, _reason), do: :ok
@@ -1063,8 +1100,8 @@ defmodule Camelot.Runtime.AgentProcess do
     transition(task, :request_input)
   end
 
-  defp transition(task, action) do
-    case Ash.update(task, %{}, action: action) do
+  defp transition(task, action, params \\ %{}) do
+    case Ash.update(task, params, action: action) do
       {:ok, updated} ->
         broadcast_task_update(updated)
 

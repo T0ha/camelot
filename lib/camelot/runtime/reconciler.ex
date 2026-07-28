@@ -515,7 +515,9 @@ defmodule Camelot.Runtime.Reconciler do
         "marking task as error and clearing runner_handle"
     )
 
-    updated = Ash.update!(task, %{}, action: :mark_runner_lost)
+    updated =
+      Ash.update!(task, %{last_error: "runner lost: #{reason}"}, action: :mark_runner_lost)
+
     broadcast_task_update(updated)
   end
 

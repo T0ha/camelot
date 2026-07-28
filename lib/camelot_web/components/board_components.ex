@@ -77,6 +77,13 @@ defmodule CamelotWeb.BoardComponents do
             P{@task.priority}
           </span>
         </div>
+        <p
+          :if={@task.state == :error && @task.last_error}
+          class="mt-1 text-xs text-error whitespace-pre-line line-clamp-3"
+          title={@task.last_error}
+        >
+          {@task.last_error}
+        </p>
       </div>
     </div>
     """

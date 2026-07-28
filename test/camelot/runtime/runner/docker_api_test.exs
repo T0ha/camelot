@@ -43,6 +43,30 @@ defmodule Camelot.Runtime.Runner.DockerApiTest do
     end
   end
 
+  describe "decode_log_stream/1" do
+    defp frame(stream_type, payload) do
+      <<stream_type::8, 0::24, byte_size(payload)::32-big, payload::binary>>
+    end
+
+    test "demuxes multiplexed stdout/stderr frames into joined text" do
+      body =
+        frame(1, "cloning git@github.com:acme/repo\n") <>
+          frame(2, "ERROR: Repository not found.\n")
+
+      assert DockerApi.decode_log_stream(body) ==
+               "cloning git@github.com:acme/repo\nERROR: Repository not found.\n"
+    end
+
+    test "falls back to the raw body when no complete frame is present" do
+      # Shorter than an 8-byte frame header (e.g. a TTY service).
+      assert DockerApi.decode_log_stream("oops") == "oops"
+    end
+
+    test "returns an empty string for an empty body" do
+      assert DockerApi.decode_log_stream("") == ""
+    end
+  end
+
   describe "stale_proxy?/1" do
     test "true for a 503 response (cached IP is a worker proxy)" do
       assert DockerApi.stale_proxy?(%Req.Response{status: 503})
