@@ -14,7 +14,8 @@ defmodule Camelot.Board.Task do
     domain: Camelot.Board,
     data_layer: AshPostgres.DataLayer,
     extensions: [AshOban],
-    authorizers: []
+    authorizers: [],
+    simple_notifiers: [Camelot.Telemetry.Notifier]
 
   alias Camelot.Board.Notifiers.NotifyTaskStateEmail
 

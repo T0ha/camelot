@@ -70,6 +70,16 @@ if backend_env = System.get_env("RUNNER_BACKEND") do
     networks: runner_networks
 end
 
+# PostHog analytics. Read in every env (not just prod) so devs can opt in
+# locally; only flip enable: true when a key is actually present, since
+# analytics must never crash boot the way missing SMTP vars do below.
+if posthog_api_key = System.get_env("POSTHOG_API_KEY") do
+  config :posthog,
+    enable: true,
+    api_key: posthog_api_key,
+    api_host: System.get_env("POSTHOG_API_HOST", "https://us.i.posthog.com")
+end
+
 # DATABASE_URL is required in prod (below) but only an optional override
 # in dev/test, where config/dev.exs and config/test.exs already set up a
 # working default. When set, the parsed URL fields take precedence over
