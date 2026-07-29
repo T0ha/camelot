@@ -19,6 +19,7 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   alias Camelot.Runtime.Runner.AdoptMarker
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.DockerStreamDemux
+  alias Camelot.Runtime.Runner.SecretEnv
   alias Camelot.Runtime.Runner.Spec
   alias Camelot.Runtime.Runner.Swarm.ProxyRouter
   alias Camelot.Runtime.Runner.Swarm.TaskService
@@ -545,32 +546,11 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   defp session_id_env(%Spec{session_id: id}), do: ["CAMELOT_SESSION_ID=#{id}"]
 
   defp secret_env(%Spec{secrets: secrets}) do
-    Enum.flat_map(secrets, &secret_to_env/1)
+    Enum.flat_map(secrets, &SecretEnv.to_env/1)
   end
 
   defp mcp_env(%Spec{mcp_config_json: nil}), do: []
   defp mcp_env(%Spec{mcp_config_json: json}), do: ["PROJECT_MCP_CONFIG_JSON=#{json}"]
-
-  # Mirror DockerEngine — also clear the opposite var so a stale
-  # value baked into the container at boot can't beat the per-exec
-  # injection. Empty value is treated as unset by claude.
-  defp secret_to_env(%{kind: :claude_api_key, value: "sk-ant-oat" <> _ = v}) do
-    ["CLAUDE_CODE_OAUTH_TOKEN=#{v}", "ANTHROPIC_API_KEY="]
-  end
-
-  defp secret_to_env(%{kind: :claude_api_key, value: v}) do
-    ["ANTHROPIC_API_KEY=#{v}", "CLAUDE_CODE_OAUTH_TOKEN="]
-  end
-
-  defp secret_to_env(%{kind: :openai_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]
-  defp secret_to_env(%{kind: :codex_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]
-
-  defp secret_to_env(%{kind: kind, value: v}) when kind in [:github_pat, :github_oauth],
-    do: ["GH_TOKEN=#{v}", "GITHUB_TOKEN=#{v}"]
-
-  defp secret_to_env(%{kind: kind, value: v}) do
-    ["CAMELOT_SECRET_#{String.upcase(Atom.to_string(kind))}=#{v}"]
-  end
 
   defp kick_off_streams(%__MODULE__{} = state) do
     parent = self()

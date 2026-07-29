@@ -5,11 +5,13 @@ defmodule CamelotWeb.ProjectLive.Show do
   use CamelotWeb, :live_view
 
   alias Camelot.Accounts.User
+  alias Camelot.Github.AppConfig
   alias Camelot.Projects.Membership
   alias Camelot.Projects.Project
   alias Camelot.Runtime.Runner.DockerApi
   alias CamelotWeb.Components.EnvVarEditor
   alias CamelotWeb.Components.MembersEditor
+  alias CamelotWeb.GithubSetupController
   alias CamelotWeb.Scope
   alias Phoenix.LiveView.Socket
 
@@ -26,7 +28,9 @@ defmodule CamelotWeb.ProjectLive.Show do
            page_title: project.name,
            project: project,
            node_labels: node_labels(socket.assigns.current_user),
-           can_invite?: can_invite?(project.id, socket.assigns.current_user)
+           can_invite?: can_invite?(project.id, socket.assigns.current_user),
+           github_app_configured?: AppConfig.configured?(),
+           github_connect_url: github_connect_url(project, socket.assigns.current_user)
          )}
 
       :forbidden ->
@@ -37,15 +41,29 @@ defmodule CamelotWeb.ProjectLive.Show do
     end
   end
 
-  defp load_or_forbid(id, %User{role: :admin}), do: {:ok, Ash.get!(Project, id)}
+  defp load_or_forbid(id, %User{role: :admin}) do
+    project = Project |> Ash.get!(id) |> Ash.load!(:github_installation)
+    {:ok, project}
+  end
 
   defp load_or_forbid(id, %User{} = user) do
     case Project
          |> Ash.Query.filter(id == ^id)
          |> Scope.scope_projects(user)
          |> Ash.read_one() do
-      {:ok, %Project{} = project} -> {:ok, project}
+      {:ok, %Project{} = project} -> {:ok, Ash.load!(project, :github_installation)}
       _ -> :forbidden
+    end
+  end
+
+  defp github_connect_url(project, user) do
+    case AppConfig.fetch() do
+      {:ok, %{slug: slug}} ->
+        state = GithubSetupController.state_token(project.id, user.id)
+        "https://github.com/apps/#{slug}/installations/new?state=#{state}"
+
+      :not_configured ->
+        nil
     end
   end
 
@@ -68,6 +86,22 @@ defmodule CamelotWeb.ProjectLive.Show do
   end
 
   def handle_event("set_node_label", _params, socket), do: {:noreply, socket}
+
+  def handle_event("disconnect_github_app", _params, socket) do
+    socket.assigns.project
+    |> Ash.Changeset.for_update(:disconnect_github_app, %{})
+    |> Ash.update()
+    |> case do
+      {:ok, updated} ->
+        {:noreply,
+         socket
+         |> assign(project: Ash.load!(updated, :github_installation))
+         |> put_flash(:info, "GitHub App disconnected.")}
+
+      {:error, _error} ->
+        {:noreply, put_flash(socket, :error, "Could not disconnect the GitHub App.")}
+    end
+  end
 
   defp blank_to_nil(""), do: nil
   defp blank_to_nil(value), do: value
@@ -145,6 +179,44 @@ defmodule CamelotWeb.ProjectLive.Show do
             placeholder="e.g. gpu-1"
           />
         </form>
+      </div>
+
+      <div class="rounded border p-4 space-y-2">
+        <h2 class="text-lg font-semibold">GitHub App</h2>
+
+        <p class="text-sm text-base-content/60">
+          Linking a GitHub App installation lets Camelot poll PR/issue
+          status and lets runners push over HTTPS without an SSH key
+          or pasted token.
+        </p>
+
+        <p :if={!@github_app_configured?} class="text-sm text-warning">
+          No GitHub App is configured for this deployment.
+        </p>
+
+        <div :if={@github_app_configured? && @project.github_installation} class="text-sm space-y-2">
+          <p>
+            Connected to <strong>{@project.github_installation.account_login}</strong>
+            <span :if={@project.github_installation.suspended_at} class="badge badge-warning">
+              suspended
+            </span>
+          </p>
+          <button
+            class="btn btn-sm btn-outline"
+            phx-click="disconnect_github_app"
+            data-confirm="Disconnect the GitHub App from this project?"
+          >
+            Disconnect
+          </button>
+        </div>
+
+        <a
+          :if={@github_app_configured? && !@project.github_installation && @github_connect_url}
+          href={@github_connect_url}
+          class="btn btn-sm btn-primary"
+        >
+          Connect GitHub App
+        </a>
       </div>
 
       <.live_component

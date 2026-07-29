@@ -24,8 +24,6 @@ defmodule CamelotWeb.UserProfileLive do
     :claude_api_key,
     :openai_api_key,
     :codex_api_key,
-    :github_pat,
-    :github_oauth,
     :ssh_private_key,
     :generic
   ]
