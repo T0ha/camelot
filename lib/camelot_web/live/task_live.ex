@@ -692,7 +692,7 @@ defmodule CamelotWeb.TaskLive do
               <pre
                 :if={session.output_log}
                 class="mt-2 text-xs overflow-auto max-h-40 bg-base-300 p-2 rounded"
-              >{session.output_log}</pre>
+              >{output_tail(session.output_log)}</pre>
             </div>
           </div>
           <p
@@ -754,6 +754,22 @@ defmodule CamelotWeb.TaskLive do
       str
     end
   end
+
+  # A completed session's persisted output_log can be several MB. The
+  # panel only ever shows a scrollable tail, so shipping the whole blob
+  # in the LiveView diff is wasted bytes (and on longpoll it overflows
+  # the proxy buffer and kills the socket). Render only the tail.
+  @output_log_limit 20_000
+
+  defp output_tail(log) when is_binary(log) do
+    if String.length(log) > @output_log_limit do
+      "… (truncated — showing last 20 KB) …\n" <> cap_tail(log, @output_log_limit)
+    else
+      log
+    end
+  end
+
+  defp output_tail(log), do: log
 
   # Best-effort render of the NDJSON stream-json feed: surface
   # assistant text and tool calls, collapse other events to a marker,

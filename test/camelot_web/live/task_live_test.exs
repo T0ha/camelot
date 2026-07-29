@@ -162,6 +162,56 @@ defmodule CamelotWeb.TaskLiveTest do
     end
   end
 
+  describe "session output log" do
+    setup %{project: project, user: user} do
+      {:ok, agent} =
+        Ash.create(Agent, %{
+          name: "output-log-agent",
+          template_id: agent_template!("claude_code").id,
+          project_id: project.id,
+          user_id: user.id
+        })
+
+      {:ok, task} =
+        Ash.create(Task, %{
+          title: "Output log task",
+          project_id: project.id,
+          creator_id: user.id
+        })
+
+      {:ok, task} = Ash.update(task, %{agent_id: agent.id}, action: :begin_work)
+
+      {:ok, session} = Ash.create(Session, %{agent_id: agent.id, task_id: task.id})
+
+      %{agent: agent, task: task, session: session}
+    end
+
+    test "a large output log is truncated to its tail in the render",
+         %{conn: conn, task: task, session: session} do
+      log = "HEAD_MARKER" <> String.duplicate("x", 30_000) <> "TAIL_MARKER"
+
+      {:ok, _session} =
+        Ash.update(session, %{output_log: log, exit_code: 0}, action: :complete)
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ "TAIL_MARKER"
+      refute html =~ "HEAD_MARKER"
+      assert html =~ "truncated"
+    end
+
+    test "a small output log renders in full without truncation",
+         %{conn: conn, task: task, session: session} do
+      {:ok, _session} =
+        Ash.update(session, %{output_log: "SHORT_OUTPUT", exit_code: 0}, action: :complete)
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ "SHORT_OUTPUT"
+      refute html =~ "truncated"
+    end
+  end
+
   describe "agent updates" do
     test "survives an {:agent_updated, agent} broadcast and reflects new status",
          %{conn: conn, project: project, user: user} do
