@@ -44,9 +44,9 @@ materialise_secrets() {
   fi
 
   # Canonical env vars set by the DockerEngine runner.
-  [ -n "${ANTHROPIC_API_KEY:-}" ] && materialise_one claude_api_key "$ANTHROPIC_API_KEY"
-  [ -n "${OPENAI_API_KEY:-}"    ] && materialise_one openai_api_key  "$OPENAI_API_KEY"
-  [ -n "${GH_TOKEN:-}"          ] && materialise_one github_pat      "$GH_TOKEN"
+  [ -n "${ANTHROPIC_API_KEY:-}" ] && materialise_one claude_api_key   "$ANTHROPIC_API_KEY"
+  [ -n "${OPENAI_API_KEY:-}"    ] && materialise_one openai_api_key   "$OPENAI_API_KEY"
+  [ -n "${GH_TOKEN:-}"          ] && materialise_one github_app_token "$GH_TOKEN"
 
   # Generic CAMELOT_SECRET_* env var fallback for kinds without a
   # natural canonical env var (claude_oauth, ssh_private_key, generic).
@@ -86,11 +86,17 @@ materialise_one() {
       export OPENAI_API_KEY="$value"
       persist_env OPENAI_API_KEY "$value"
       ;;
-    github_pat|github_oauth)
+    github_app_token)
       export GH_TOKEN="$value"
       export GITHUB_TOKEN="$value"
       persist_env GH_TOKEN "$value"
       persist_env GITHUB_TOKEN "$value"
+      # Neither this nor the old PAT path wires up plain `git`
+      # (clone/push over HTTPS) on their own — only `gh` CLI calls
+      # pick up GH_TOKEN automatically. `gh auth setup-git` installs
+      # a git credential helper for github.com (and any GH_HOST) so
+      # `git clone`/`git push` over HTTPS also authenticate.
+      gh auth setup-git || log "gh auth setup-git failed; git HTTPS auth may not work"
       ;;
     ssh_private_key)
       mkdir -p "$HOME/.ssh"

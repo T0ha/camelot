@@ -25,7 +25,7 @@ defmodule CamelotWeb.AgentTemplateLive.Index do
   @integer_fields ~w(base_retry_delay_ms)
 
   @credential_kinds ~w(claude_api_key openai_api_key codex_api_key
-                       github_pat github_oauth ssh_private_key generic)
+                       ssh_private_key generic)
 
   @impl true
   def mount(_params, _session, socket) do

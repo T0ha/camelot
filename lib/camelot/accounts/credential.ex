@@ -1,8 +1,13 @@
 defmodule Camelot.Accounts.Credential do
   @moduledoc """
-  An encrypted credential belonging to a user — API key,
-  OAuth token, GitHub PAT, or SSH key — used by runner
-  containers to authenticate against external services.
+  An encrypted credential belonging to a user — API key
+  or SSH key — used by runner containers to authenticate
+  against external services.
+
+  GitHub auth is not a credential kind here: it's either
+  the App-token path (`Camelot.Github.InstallationTokenCache`,
+  automatic per-project once a GitHub App installation is
+  linked) or the `:ssh_private_key` kind below.
 
   Values are encrypted at rest via `AshCloak` against
   `Camelot.Vault`. The encryption key comes from the
@@ -19,8 +24,6 @@ defmodule Camelot.Accounts.Credential do
     :claude_api_key,
     :openai_api_key,
     :codex_api_key,
-    :github_pat,
-    :github_oauth,
     :ssh_private_key,
     :generic
   ]

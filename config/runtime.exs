@@ -45,6 +45,21 @@ runner_networks =
 
 config :camelot, CamelotWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+# GitHub App credentials — a static, per-deployment secret set once by
+# whoever registers the App on github.com, same channel as ENCRYPTION_KEY
+# / SMTP_* below. Optional: this integration is opt-in per deployment,
+# same as the (currently unused) legacy global github_token. Camelot.
+# Github.AppConfig.configured?/0 reports whether all six are present.
+# GITHUB_APP_PRIVATE_KEY_B64 holds the PEM base64-encoded to dodge
+# newline-escaping issues in env-var/secret-store tooling.
+config :camelot, :github_app,
+  app_id: System.get_env("GITHUB_APP_ID"),
+  slug: System.get_env("GITHUB_APP_SLUG"),
+  client_id: System.get_env("GITHUB_APP_CLIENT_ID"),
+  client_secret: System.get_env("GITHUB_APP_CLIENT_SECRET"),
+  private_key: System.get_env("GITHUB_APP_PRIVATE_KEY_B64"),
+  webhook_secret: System.get_env("GITHUB_APP_WEBHOOK_SECRET")
+
 # Invite-only mode. When false, /sign-in rejects unknown emails; existing
 # users can still receive magic links. Defaults to open so self-hosted
 # installs work out of the box.

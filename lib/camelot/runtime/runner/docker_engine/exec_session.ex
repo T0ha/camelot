@@ -15,6 +15,7 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.DockerEngine.TaskContainer
   alias Camelot.Runtime.Runner.DockerStreamDemux
+  alias Camelot.Runtime.Runner.SecretEnv
   alias Camelot.Runtime.Runner.Spec
 
   require Logger
@@ -252,38 +253,11 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
   defp session_id_env(%Spec{session_id: id}), do: ["CAMELOT_SESSION_ID=#{id}"]
 
   defp secret_env(%Spec{secrets: secrets}) do
-    Enum.flat_map(secrets, &secret_to_env/1)
+    Enum.flat_map(secrets, &SecretEnv.to_env/1)
   end
 
   defp mcp_env(%Spec{mcp_config_json: nil}), do: []
   defp mcp_env(%Spec{mcp_config_json: json}), do: ["PROJECT_MCP_CONFIG_JSON=#{json}"]
-
-  # Mirror runner-images/base/entrypoint.sh#materialise_one — an
-  # `sk-ant-oat*` value is an OAuth access token that Claude reads
-  # from CLAUDE_CODE_OAUTH_TOKEN (sending it on x-api-key would 401).
-  # Everything else is a plain API key.
-  # When the OAuth path is in play, also explicitly clear
-  # ANTHROPIC_API_KEY in the exec env so that any stale value
-  # baked into the container (e.g. from a previous credential or
-  # the old TaskContainer mapping) can't beat us. claude treats
-  # an empty value as unset and falls back to CLAUDE_CODE_OAUTH_TOKEN.
-  defp secret_to_env(%{kind: :claude_api_key, value: "sk-ant-oat" <> _ = v}) do
-    ["CLAUDE_CODE_OAUTH_TOKEN=#{v}", "ANTHROPIC_API_KEY="]
-  end
-
-  defp secret_to_env(%{kind: :claude_api_key, value: v}) do
-    ["ANTHROPIC_API_KEY=#{v}", "CLAUDE_CODE_OAUTH_TOKEN="]
-  end
-
-  defp secret_to_env(%{kind: :openai_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]
-  defp secret_to_env(%{kind: :codex_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]
-
-  defp secret_to_env(%{kind: kind, value: v}) when kind in [:github_pat, :github_oauth],
-    do: ["GH_TOKEN=#{v}", "GITHUB_TOKEN=#{v}"]
-
-  defp secret_to_env(%{kind: kind, value: v}) do
-    ["CAMELOT_SECRET_#{String.upcase(Atom.to_string(kind))}=#{v}"]
-  end
 
   defp kick_off_streams(%__MODULE__{} = state) do
     parent = self()

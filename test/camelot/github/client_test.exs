@@ -67,4 +67,25 @@ defmodule Camelot.Github.ClientTest do
                )
     end
   end
+
+  describe "installation_id: opt" do
+    test "proceeds unauthenticated (no crash) when the App isn't configured" do
+      assert {:error, _} =
+               Client.get_pull_request(
+                 "nonexistent-owner",
+                 "nonexistent-repo",
+                 999_999,
+                 installation_id: 42
+               )
+    end
+
+    test "nil installation_id behaves exactly like omitting opts" do
+      assert {:error, _} =
+               Client.list_issues(
+                 "nonexistent-owner",
+                 "nonexistent-repo",
+                 installation_id: nil
+               )
+    end
+  end
 end

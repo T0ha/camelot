@@ -36,7 +36,8 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
     case Client.list_issues(
            project.github_owner,
            project.github_repo,
-           labels: @sync_label
+           labels: @sync_label,
+           installation_id: project.github_installation_id
          ) do
       {:ok, issues} ->
         Enum.each(issues, &maybe_create_task(project, &1))

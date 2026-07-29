@@ -13,6 +13,7 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
 
   alias Camelot.Board.Task
   alias Camelot.Runtime.Runner.DockerApi
+  alias Camelot.Runtime.Runner.SecretEnv
   alias Camelot.Runtime.Runner.Spec
 
   require Logger
@@ -339,28 +340,10 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
 
   defp env_pairs(%Spec{} = spec) do
     base = Enum.map(spec.env, fn {k, v} -> "#{k}=#{v}" end)
-    secret_env = Enum.flat_map(spec.secrets, &secret_to_env/1)
+    secret_env = Enum.flat_map(spec.secrets, &SecretEnv.to_env/1)
     extras = bootstrap_env(spec) ++ repo_env(spec) ++ mcp_env(spec)
 
     base ++ secret_env ++ extras
-  end
-
-  # `sk-ant-oat*` is an OAuth access token. Anthropic returns 401
-  # if it's sent on the `x-api-key` header (ANTHROPIC_API_KEY). Claude
-  # CLI reads it from CLAUDE_CODE_OAUTH_TOKEN and uses Bearer auth.
-  defp secret_to_env(%{kind: :claude_api_key, value: "sk-ant-oat" <> _ = v}) do
-    ["CLAUDE_CODE_OAUTH_TOKEN=#{v}"]
-  end
-
-  defp secret_to_env(%{kind: :claude_api_key, value: v}), do: ["ANTHROPIC_API_KEY=#{v}"]
-  defp secret_to_env(%{kind: :openai_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]
-  defp secret_to_env(%{kind: :codex_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]
-
-  defp secret_to_env(%{kind: kind, value: v}) when kind in [:github_pat, :github_oauth],
-    do: ["GH_TOKEN=#{v}", "GITHUB_TOKEN=#{v}"]
-
-  defp secret_to_env(%{kind: kind, value: v}) do
-    ["CAMELOT_SECRET_#{String.upcase(Atom.to_string(kind))}=#{v}"]
   end
 
   defp bootstrap_env(%Spec{bootstrap?: true}), do: ["BOOTSTRAP=1"]

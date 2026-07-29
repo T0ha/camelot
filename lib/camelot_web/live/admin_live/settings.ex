@@ -5,6 +5,7 @@ defmodule CamelotWeb.AdminLive.Settings do
   """
   use CamelotWeb, :live_view
 
+  alias Camelot.Github.AppConfig
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Settings
   alias Camelot.Settings.SystemSetting
@@ -17,7 +18,10 @@ defmodule CamelotWeb.AdminLive.Settings do
      assign(socket,
        page_title: "Settings",
        default_swarm_node_label: Settings.default_swarm_node_label(),
-       node_labels: DockerApi.list_node_labels_or_empty()
+       node_labels: DockerApi.list_node_labels_or_empty(),
+       github_app_configured?: AppConfig.configured?(),
+       github_setup_url: url(~p"/github/setup"),
+       github_webhook_url: url(~p"/github/webhooks")
      )}
   end
 
@@ -73,6 +77,36 @@ defmodule CamelotWeb.AdminLive.Settings do
             placeholder="e.g. gpu-1"
           />
         </form>
+      </section>
+
+      <section class="rounded border p-4 space-y-3">
+        <h2 class="text-lg font-semibold">GitHub App</h2>
+
+        <p class="text-sm text-base-content/60">
+          Credentials for this integration are set via deployment
+          config (<code>GITHUB_APP_*</code> env vars), not here —
+          same channel as <code>ENCRYPTION_KEY</code>.
+        </p>
+
+        <p>
+          Status:
+          <span class={[
+            "badge",
+            @github_app_configured? && "badge-success",
+            !@github_app_configured? && "badge-ghost"
+          ]}>
+            {if @github_app_configured?, do: "configured", else: "not configured"}
+          </span>
+        </p>
+
+        <p class="text-sm text-base-content/60">
+          Paste these into the App's registration form on github.com:
+        </p>
+
+        <div class="text-sm space-y-1">
+          <div>Setup URL: <code>{@github_setup_url}</code></div>
+          <div>Webhook URL: <code>{@github_webhook_url}</code></div>
+        </div>
       </section>
     </div>
     """

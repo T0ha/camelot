@@ -53,7 +53,28 @@ defmodule Camelot.Runtime.SecretSync do
   @spec secret_name(String.t(), atom()) :: String.t()
   def secret_name(user_id, kind), do: "camelot_user_#{user_id}_#{kind_suffix(kind)}"
 
+  @doc """
+  Returns the Swarm secret name for a per-task secret —
+  used for `:github_app_token`, which is minted fresh per
+  task rather than shared per user/installation, so a
+  task's token can be swept independently once the task
+  is done (see `Camelot.Runtime.Reconciler`).
+  """
+  @spec task_secret_name(String.t(), atom()) :: String.t()
+  def task_secret_name(task_id, kind), do: "camelot_task_#{task_id}_#{kind_suffix(kind)}"
+
+  @doc """
+  Creates (or replaces) an arbitrary Swarm secret. Public,
+  synchronous, and stateless — unlike `reconcile/2` it
+  isn't tied to a `Credential` row, so callers minting a
+  transient token (e.g. a GitHub App installation token)
+  can publish it directly.
+  """
+  @spec put_secret(String.t(), String.t()) :: :ok
+  def put_secret(name, value), do: upsert_secret(name, value)
+
   defp kind_suffix(:ssh_private_key), do: "ssh_pk"
+  defp kind_suffix(:github_app_token), do: "gh_token"
   defp kind_suffix(kind), do: Atom.to_string(kind)
 
   @doc """

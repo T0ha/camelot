@@ -35,6 +35,24 @@ defmodule Camelot.Runtime.ReconcilerTest do
     end
   end
 
+  describe "extract_github_app_secret_task_id/1" do
+    test "extracts the task id from a well-formed secret name" do
+      assert Reconciler.extract_github_app_secret_task_id("camelot_task_abc-123_gh_token") == ["abc-123"]
+    end
+
+    test "returns [] for names without the expected prefix" do
+      assert Reconciler.extract_github_app_secret_task_id("camelot_user_abc-123_gh_token") == []
+    end
+
+    test "returns [] for names without the expected suffix" do
+      assert Reconciler.extract_github_app_secret_task_id("camelot_task_abc-123_ssh_pk") == []
+    end
+
+    test "returns [] for nil" do
+      assert Reconciler.extract_github_app_secret_task_id(nil) == []
+    end
+  end
+
   describe "doomed_adoption?/2" do
     defp dt(iso), do: elem(DateTime.from_iso8601(iso), 1)
 
