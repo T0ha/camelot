@@ -28,6 +28,10 @@ defmodule Camelot.Accounts.Credential do
     :generic
   ]
 
+  @doc "Currently-valid credential kinds."
+  @spec valid_kinds() :: [atom()]
+  def valid_kinds, do: @kinds
+
   postgres do
     table("credentials")
     repo(Camelot.Repo)

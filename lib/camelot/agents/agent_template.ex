@@ -158,7 +158,7 @@ defmodule Camelot.Agents.AgentTemplate do
       )
     end
 
-    attribute :required_credential_kinds, {:array, :atom} do
+    attribute :required_credential_kinds, Camelot.Agents.CredentialKinds do
       allow_nil?(false)
       public?(true)
       default([])
