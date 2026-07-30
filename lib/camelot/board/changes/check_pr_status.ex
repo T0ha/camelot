@@ -37,17 +37,18 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
     owner = project.github_owner
     repo = project.github_repo
     pr = task.pr_number
+    opts = [installation_id: project.github_installation_id]
 
     with {:ok, pr_data} <-
-           Client.get_pull_request(owner, repo, pr),
+           Client.get_pull_request(owner, repo, pr, opts),
          {:ok, reviews} <-
-           Client.list_pull_request_reviews(owner, repo, pr),
+           Client.list_pull_request_reviews(owner, repo, pr, opts),
          {:ok, comments} <-
-           Client.list_pull_request_comments(owner, repo, pr),
+           Client.list_pull_request_comments(owner, repo, pr, opts),
          {:ok, commits} <-
-           Client.list_pull_request_commits(owner, repo, pr),
+           Client.list_pull_request_commits(owner, repo, pr, opts),
          {:ok, check_runs} <-
-           fetch_check_runs(owner, repo, pr_data) do
+           fetch_check_runs(owner, repo, pr_data, opts) do
       apply_pr_state(task, pr_data, reviews, comments, commits, check_runs)
     else
       {:error, reason} ->
@@ -58,10 +59,10 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
     end
   end
 
-  defp fetch_check_runs(owner, repo, pr_data) do
+  defp fetch_check_runs(owner, repo, pr_data, opts) do
     case get_in(pr_data, ["head", "sha"]) do
       nil -> {:ok, []}
-      sha -> Client.list_check_runs(owner, repo, sha)
+      sha -> Client.list_check_runs(owner, repo, sha, opts)
     end
   end
 

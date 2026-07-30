@@ -64,7 +64,8 @@ config :camelot,
     Camelot.Agents,
     Camelot.Board,
     Camelot.Prompts,
-    Camelot.Settings
+    Camelot.Settings,
+    Camelot.Github
   ]
 
 # Configure esbuild (the version is required)
@@ -84,6 +85,10 @@ config :logger, :default_formatter,
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
+
+# Analytics are best-effort and opt-in — disabled unless a real API key is
+# supplied via POSTHOG_API_KEY at runtime (see config/runtime.exs).
+config :posthog, enable: false, in_app_otp_apps: [:camelot]
 
 # Configure tailwind (the version is required)
 config :tailwind,

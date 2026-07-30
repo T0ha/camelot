@@ -5,8 +5,12 @@ defmodule Camelot.Application do
 
   use Application
 
+  alias Camelot.Telemetry.PostHogHandler
+
   @impl true
   def start(_type, _args) do
+    PostHogHandler.attach()
+
     children = [
       CamelotWeb.Telemetry,
       Camelot.Repo,
@@ -25,6 +29,7 @@ defmodule Camelot.Application do
       {DynamicSupervisor, name: Camelot.Runtime.Runner.Swarm.TaskSupervisor, strategy: :one_for_one},
       {Registry, keys: :unique, name: Camelot.Runtime.Runner.DockerEngine.TaskRegistry},
       {DynamicSupervisor, name: Camelot.Runtime.Runner.DockerEngine.TaskSupervisor, strategy: :one_for_one},
+      Camelot.Github.InstallationTokenCache,
       Camelot.Runtime.RunnerPool,
       Camelot.Runtime.SecretSync,
       Camelot.Runtime.AgentSupervisor,

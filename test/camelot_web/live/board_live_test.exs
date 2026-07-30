@@ -51,6 +51,30 @@ defmodule CamelotWeb.BoardLiveTest do
     refute form_html =~ "some details"
   end
 
+  test "restart_task resets an errored task back to queued", %{conn: conn, user: user} do
+    {:ok, project} =
+      Ash.create(
+        Project,
+        %{name: "p-#{System.unique_integer()}", path: "/tmp/r"},
+        actor: user
+      )
+
+    task =
+      Ash.Seed.seed!(Task, %{
+        title: "stuck-task-#{System.unique_integer()}",
+        project_id: project.id,
+        creator_id: user.id,
+        stage: :executing,
+        state: :error
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    render_click(view, "restart_task", %{"id" => task.id})
+
+    assert Ash.get!(Task, task.id).state == :queued
+  end
+
   describe "scoping" do
     test "non-admin sees only tasks from member projects", %{conn: conn, user: user} do
       {:ok, mine} =

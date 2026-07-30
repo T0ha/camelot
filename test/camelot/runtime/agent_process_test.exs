@@ -174,6 +174,76 @@ defmodule Camelot.Runtime.AgentProcessTest do
     end
   end
 
+  describe "maybe_append_github_app_token/3" do
+    setup do
+      previous = Application.get_env(:camelot, :github_app)
+      on_exit(fn -> Application.put_env(:camelot, :github_app, previous) end)
+      :ok
+    end
+
+    defp put_app_configured do
+      Application.put_env(:camelot, :github_app,
+        app_id: "123",
+        slug: "camelot-dev",
+        client_id: "Iv1.abc",
+        client_secret: "secret",
+        private_key: Base.encode64("not-a-real-key"),
+        webhook_secret: "whsecret"
+      )
+    end
+
+    defp seed_cached_token(installation_id, token) do
+      far_future = DateTime.add(DateTime.utc_now(), 3_600, :second)
+      :ets.insert(Camelot.Github.InstallationTokenCache, {installation_id, token, far_future})
+    end
+
+    defp agent_with_installation(installation_id) do
+      %Agent{project: %Project{github_installation_id: installation_id}}
+    end
+
+    test "appends a github_app_token secret when the project is linked and the App is configured" do
+      put_app_configured()
+      id = System.unique_integer([:positive])
+      seed_cached_token(id, "cached-installation-token")
+
+      assert [%{kind: :github_app_token, value: "cached-installation-token"}] =
+               AgentProcess.maybe_append_github_app_token([], agent_with_installation(id), "task-1")
+    end
+
+    test "is a no-op when the project has no linked installation" do
+      put_app_configured()
+      assert AgentProcess.maybe_append_github_app_token([], agent_with_installation(nil), "task-1") == []
+    end
+
+    test "is a no-op when the App isn't configured" do
+      Application.put_env(:camelot, :github_app, [])
+      id = System.unique_integer([:positive])
+      seed_cached_token(id, "cached-installation-token")
+
+      assert AgentProcess.maybe_append_github_app_token([], agent_with_installation(id), "task-1") == []
+    end
+
+    test "logs and skips when minting fails (no such installation)" do
+      put_app_configured()
+      id = System.unique_integer([:positive])
+
+      assert AgentProcess.maybe_append_github_app_token([], agent_with_installation(id), "task-1") == []
+    end
+
+    test "preserves already-built secrets, appending after them" do
+      put_app_configured()
+      id = System.unique_integer([:positive])
+      seed_cached_token(id, "cached-installation-token")
+
+      existing = [%{kind: :ssh_private_key, name: "n", value: "v"}]
+
+      assert [
+               %{kind: :ssh_private_key},
+               %{kind: :github_app_token, value: "cached-installation-token"}
+             ] = AgentProcess.maybe_append_github_app_token(existing, agent_with_installation(id), "task-1")
+    end
+  end
+
   describe "start_link/1" do
     test "starts and registers process", ctx do
       {:ok, pid} =
@@ -216,6 +286,27 @@ defmodule Camelot.Runtime.AgentProcessTest do
 
       assert msg =~ "runner exited before producing output"
       assert msg =~ "ehostunreach"
+    end
+  end
+
+  describe "runner_died_message/2" do
+    test "prepends the runner log tail so the real cause leads" do
+      reason = {:bad_status, 409, %{"message" => "container is not running"}}
+      logs = "cloning git@github.com:acme/repo\nERROR: Repository not found."
+
+      msg = AgentProcess.runner_died_message(reason, logs)
+
+      assert String.starts_with?(msg, logs)
+      assert msg =~ "runtime detail: runner exited before producing output"
+      assert msg =~ "Repository not found"
+    end
+
+    test "falls back to the summary when the log tail is nil or blank" do
+      reason = %Req.TransportError{reason: :ehostunreach}
+      summary = AgentProcess.runner_died_message(reason)
+
+      assert AgentProcess.runner_died_message(reason, nil) == summary
+      assert AgentProcess.runner_died_message(reason, "   \n ") == summary
     end
   end
 

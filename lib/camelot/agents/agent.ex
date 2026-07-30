@@ -11,7 +11,8 @@ defmodule Camelot.Agents.Agent do
     domain: Camelot.Agents,
     data_layer: AshPostgres.DataLayer,
     extensions: [AshOban],
-    authorizers: []
+    authorizers: [],
+    simple_notifiers: [Camelot.Telemetry.Notifier]
 
   oban do
     scheduled_actions do

@@ -35,6 +35,22 @@ defmodule CamelotWeb.TaskLiveTest do
       assert html =~ "Live task"
       assert html =~ "todo"
     end
+
+    test "renders GFM markdown tables in the description", %{conn: conn, project: project, user: user} do
+      {:ok, task} =
+        Ash.create(Task, %{
+          title: "Tabular task",
+          description: "| A | B |\n|---|---|\n| 1 | 2 |",
+          project_id: project.id,
+          creator_id: user.id
+        })
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ "<table>"
+      assert html =~ "<th>A</th>"
+      refute html =~ "| A | B |"
+    end
   end
 
   describe "cancel" do
@@ -146,6 +162,56 @@ defmodule CamelotWeb.TaskLiveTest do
     end
   end
 
+  describe "session output log" do
+    setup %{project: project, user: user} do
+      {:ok, agent} =
+        Ash.create(Agent, %{
+          name: "output-log-agent",
+          template_id: agent_template!("claude_code").id,
+          project_id: project.id,
+          user_id: user.id
+        })
+
+      {:ok, task} =
+        Ash.create(Task, %{
+          title: "Output log task",
+          project_id: project.id,
+          creator_id: user.id
+        })
+
+      {:ok, task} = Ash.update(task, %{agent_id: agent.id}, action: :begin_work)
+
+      {:ok, session} = Ash.create(Session, %{agent_id: agent.id, task_id: task.id})
+
+      %{agent: agent, task: task, session: session}
+    end
+
+    test "a large output log is truncated to its tail in the render",
+         %{conn: conn, task: task, session: session} do
+      log = "HEAD_MARKER" <> String.duplicate("x", 30_000) <> "TAIL_MARKER"
+
+      {:ok, _session} =
+        Ash.update(session, %{output_log: log, exit_code: 0}, action: :complete)
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ "TAIL_MARKER"
+      refute html =~ "HEAD_MARKER"
+      assert html =~ "truncated"
+    end
+
+    test "a small output log renders in full without truncation",
+         %{conn: conn, task: task, session: session} do
+      {:ok, _session} =
+        Ash.update(session, %{output_log: "SHORT_OUTPUT", exit_code: 0}, action: :complete)
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ "SHORT_OUTPUT"
+      refute html =~ "truncated"
+    end
+  end
+
   describe "agent updates" do
     test "survives an {:agent_updated, agent} broadcast and reflects new status",
          %{conn: conn, project: project, user: user} do
@@ -205,6 +271,32 @@ defmodule CamelotWeb.TaskLiveTest do
       send(view.pid, {:some_unexpected_message, :payload})
 
       assert render(view) =~ "Catch-all task"
+    end
+  end
+
+  describe "column focus" do
+    test "toggling a column expands it to full width", %{conn: conn, task: task} do
+      {:ok, view, html} = live(conn, ~p"/tasks/#{task.id}")
+      refute html =~ "Restore split view"
+
+      html =
+        view
+        |> element(~s(button[phx-value-col="left"]))
+        |> render_click()
+
+      assert html =~ "Restore split view"
+      assert html =~ "hero-arrows-pointing-in"
+    end
+
+    test "toggling the same column again restores the split view", %{conn: conn, task: task} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      button = fn -> element(view, ~s(button[phx-value-col="left"])) end
+
+      render_click(button.())
+      html = render_click(button.())
+
+      refute html =~ "Restore split view"
     end
   end
 

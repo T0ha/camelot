@@ -60,6 +60,7 @@ defmodule Camelot.Runtime.Reconciler do
   alias Camelot.Runtime.Runner.Swarm
   alias Camelot.Runtime.Runner.Swarm.ExecSession
   alias Camelot.Runtime.RunnerPool
+  alias Camelot.Runtime.SecretSync
   alias Camelot.Runtime.SessionRegistry
 
   require Ash.Query
@@ -132,6 +133,8 @@ defmodule Camelot.Runtime.Reconciler do
       live_tasks = list_task_runners()
       sweep_orphan_task_runners(live_tasks)
       sweep_stale_task_runner_handles()
+
+      if Runner.backend() == Swarm, do: sweep_orphan_github_app_secrets()
 
       RunnerPool.tick()
     else
@@ -436,6 +439,66 @@ defmodule Camelot.Runtime.Reconciler do
     delete_by_name(name)
   end
 
+  # `github_app_token` is minted per-task (see
+  # `Camelot.Runtime.AgentProcess.maybe_append_github_app_token/3`),
+  # not per-user like every other credential, so it needs its own
+  # sweep keyed off the task rather than piggybacking on
+  # `sweep_orphan_task_runners/1`'s live-service list — the secret can
+  # outlive the task's runner container/service.
+  defp sweep_orphan_github_app_secrets do
+    cutoff = DateTime.add(DateTime.utc_now(), -@log_retention_ms, :millisecond)
+
+    valid =
+      Task
+      |> Ash.Query.filter(
+        stage not in [:done, :cancelled] or
+          updated_at > ^cutoff
+      )
+      |> Ash.Query.select([:id])
+      |> Ash.read!()
+      |> MapSet.new(& &1.id)
+
+    list_github_app_secret_task_ids()
+    |> Enum.reject(&MapSet.member?(valid, &1))
+    |> Enum.each(fn task_id ->
+      Logger.info("Reconciler: removing orphan github_app_token secret for task #{task_id}")
+      delete_by_name(SecretSync.task_secret_name(task_id, :github_app_token))
+    end)
+  end
+
+  @github_app_secret_prefix "camelot_task_"
+  @github_app_secret_suffix "_gh_token"
+
+  defp list_github_app_secret_task_ids do
+    case Req.get(DockerApi.request(), url: "/secrets") do
+      {:ok, %Req.Response{status: 200, body: secrets}} when is_list(secrets) ->
+        secrets
+        |> Enum.map(&get_in(&1, ["Spec", "Name"]))
+        |> Enum.flat_map(&extract_github_app_secret_task_id/1)
+
+      _ ->
+        []
+    end
+  end
+
+  @doc false
+  # Extracts the task id from a `camelot_task_<id>_gh_token` Swarm
+  # secret name, or `[]` for anything else. List-returning (instead of
+  # `nil`/id) so callers can `Enum.flat_map/2` straight over the full
+  # secret list. Public (with `@doc false`) so the name parsing is
+  # unit-testable without a Docker API.
+  @spec extract_github_app_secret_task_id(String.t() | nil) :: [String.t()]
+  def extract_github_app_secret_task_id(nil), do: []
+
+  def extract_github_app_secret_task_id(name) do
+    with @github_app_secret_prefix <> rest <- name,
+         true <- String.ends_with?(rest, @github_app_secret_suffix) do
+      [String.trim_trailing(rest, @github_app_secret_suffix)]
+    else
+      _ -> []
+    end
+  end
+
   # Probe per-task (not via bulk list) so a transient Docker API
   # hiccup can't false-positive every in-flight task at once.
   defp sweep_stale_task_runner_handles do
@@ -515,7 +578,9 @@ defmodule Camelot.Runtime.Reconciler do
         "marking task as error and clearing runner_handle"
     )
 
-    updated = Ash.update!(task, %{}, action: :mark_runner_lost)
+    updated =
+      Ash.update!(task, %{last_error: "runner lost: #{reason}"}, action: :mark_runner_lost)
+
     broadcast_task_update(updated)
   end
 

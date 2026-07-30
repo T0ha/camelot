@@ -110,3 +110,112 @@
 [data-phx-session], [data-phx-teleported-src] { display: contents }
 
 /* This file is for your main application CSS */
+
+/* Prose markdown styling for plan/description cards */
+.prose h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-top: 1.25rem;
+  margin-bottom: 0.75rem;
+  line-height: 1.2;
+}
+
+.prose h2 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.25;
+}
+
+.prose h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.3;
+}
+
+.prose h4 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-top: 0.75rem;
+  margin-bottom: 0.25rem;
+  line-height: 1.3;
+}
+
+.prose p {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.6;
+}
+
+.prose ul,
+.prose ol {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  padding-left: 1.5rem;
+}
+
+.prose ul {
+  list-style-type: disc;
+}
+
+.prose ol {
+  list-style-type: decimal;
+}
+
+.prose li {
+  margin-top: 0.125rem;
+  margin-bottom: 0.125rem;
+}
+
+.prose a {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+.prose blockquote {
+  border-left: 3px solid oklch(70% 0 0 / 40%);
+  padding-left: 0.75rem;
+  margin: 0.75rem 0;
+  color: oklch(from currentColor l c h / 0.75);
+  font-style: italic;
+}
+
+.prose hr {
+  border: 0;
+  border-top: 1px solid oklch(70% 0 0 / 25%);
+  margin: 1rem 0;
+}
+
+.prose table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.875rem;
+}
+
+.prose th,
+.prose td {
+  border: 1px solid oklch(70% 0 0 / 30%);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+
+.prose th {
+  font-weight: 600;
+  background-color: oklch(50% 0 0 / 10%);
+}
+
+.prose tr:nth-child(even) {
+  background-color: oklch(50% 0 0 / 5%);
+}
+
+.prose pre {
+  overflow-x: auto;
+}
+
+.prose code {
+  font-size: 0.85em;
+  word-break: break-word;
+}

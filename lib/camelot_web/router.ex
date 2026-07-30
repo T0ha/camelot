@@ -24,6 +24,23 @@ defmodule CamelotWeb.Router do
     plug CamelotWeb.Plugs.RegistrationGate
   end
 
+  pipeline :github_webhook do
+    plug :accepts, ["json"]
+    plug CamelotWeb.Plugs.VerifyGithubSignature
+  end
+
+  scope "/github", CamelotWeb do
+    pipe_through :browser
+
+    get "/setup", GithubSetupController, :new
+  end
+
+  scope "/github", CamelotWeb do
+    pipe_through :github_webhook
+
+    post "/webhooks", GithubWebhookController, :create
+  end
+
   scope "/" do
     pipe_through [:browser, :registration_gate]
 

@@ -166,7 +166,8 @@ defmodule Camelot.Agents.AgentTemplate do
       description(
         "Credential kinds the runner needs at /run/secrets/. " <>
           "Drives `SecretSync` reconciliation. Example: " <>
-          "`[:claude_api_key, :github_pat]`."
+          "`[:claude_api_key]`. GitHub auth is automatic " <>
+          "(App token / SSH) and isn't declared here."
       )
     end
 

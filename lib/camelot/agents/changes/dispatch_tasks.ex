@@ -174,7 +174,8 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
     case Client.list_pull_request_comments(
            project.github_owner,
            project.github_repo,
-           task.pr_number
+           task.pr_number,
+           installation_id: project.github_installation_id
          ) do
       {:ok, comments} ->
         Enum.map_join(comments, "\n\n---\n\n", fn c ->

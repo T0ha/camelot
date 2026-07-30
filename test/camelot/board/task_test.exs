@@ -331,6 +331,67 @@ defmodule Camelot.Board.TaskTest do
       assert task.state == :queued
       assert task.stage == :planning
     end
+
+    test "mark_error records last_error and retry clears it", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      {:ok, task} =
+        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+
+      {:ok, task} =
+        Ash.update(
+          task,
+          %{last_error: "ERROR: Repository not found."},
+          action: :mark_error
+        )
+
+      assert task.state == :error
+      assert task.last_error == "ERROR: Repository not found."
+
+      {:ok, task} = Ash.update(task, %{}, action: :retry)
+
+      assert task.state == :queued
+      assert task.last_error == nil
+    end
+
+    test "begin_work clears a stale last_error", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      {:ok, task} =
+        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+
+      {:ok, task} =
+        Ash.update(task, %{last_error: "boom"}, action: :mark_error)
+
+      {:ok, task} = Ash.update(task, %{}, action: :retry)
+
+      {:ok, task} =
+        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+
+      assert task.state == :in_progress
+      assert task.last_error == nil
+    end
+
+    test "mark_runner_lost records last_error and clears runner_handle", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      {:ok, task} =
+        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+
+      {:ok, task} =
+        Ash.update(task, %{runner_handle: "svc123"}, action: :set_runner_handle)
+
+      {:ok, task} =
+        Ash.update(
+          task,
+          %{last_error: "runner lost: service returned 404"},
+          action: :mark_runner_lost
+        )
+
+      assert task.state == :error
+      assert task.runner_handle == nil
+      assert task.last_error == "runner lost: service returned 404"
+    end
   end
 
   describe "cancel" do
