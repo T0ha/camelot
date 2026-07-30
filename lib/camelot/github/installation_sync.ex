@@ -18,11 +18,15 @@ defmodule Camelot.Github.InstallationSync do
     account = gh_installation["account"] || %{}
 
     Installation
-    |> Ash.Changeset.for_create(:upsert, %{
-      installation_id: installation_id,
-      account_login: account["login"],
-      account_type: normalize_account_type(account["type"])
-    })
+    |> Ash.Changeset.for_create(
+      :upsert,
+      %{
+        installation_id: installation_id,
+        account_login: account["login"],
+        account_type: normalize_account_type(account["type"])
+      },
+      authorize?: false
+    )
     |> Ash.create()
   end
 
@@ -35,7 +39,7 @@ defmodule Camelot.Github.InstallationSync do
   @spec delete(map()) :: :ok
   def delete(%{"id" => installation_id}) do
     case find(installation_id) do
-      {:ok, %Installation{} = installation} -> Ash.destroy(installation)
+      {:ok, %Installation{} = installation} -> Ash.destroy(installation, authorize?: false)
       _ -> :ok
     end
 
@@ -44,8 +48,11 @@ defmodule Camelot.Github.InstallationSync do
 
   defp update_action(installation_id, action) do
     case find(installation_id) do
-      {:ok, %Installation{} = installation} -> Ash.update(installation, %{}, action: action)
-      _ -> :ok
+      {:ok, %Installation{} = installation} ->
+        Ash.update(installation, %{}, action: action, authorize?: false)
+
+      _ ->
+        :ok
     end
 
     :ok

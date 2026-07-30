@@ -26,10 +26,6 @@ defmodule Camelot.Projects.Project do
   postgres do
     table("projects")
     repo(Camelot.Repo)
-
-    references do
-      reference(:github_installation, on_delete: :nilify)
-    end
   end
 
   attributes do
@@ -128,17 +124,6 @@ defmodule Camelot.Projects.Project do
     has_many :mcps, Camelot.Projects.Mcp do
       destination_attribute(:project_id)
     end
-
-    belongs_to :github_installation, Camelot.Github.Installation do
-      allow_nil?(true)
-      public?(true)
-
-      description(
-        "GitHub App installation this project is linked to, if " <>
-          "any. Drives App-token auth in `Camelot.Github.Client` " <>
-          "and the `github_app_token` runner secret."
-      )
-    end
   end
 
   identities do
@@ -158,8 +143,7 @@ defmodule Camelot.Projects.Project do
         :github_repo_url,
         :github_owner,
         :github_repo,
-        :runner_image_override,
-        :github_installation_id
+        :runner_image_override
       ])
 
       change(Camelot.Projects.Project.Changes.AddActorAsMember)
@@ -176,17 +160,12 @@ defmodule Camelot.Projects.Project do
         :github_owner,
         :github_repo,
         :runner_image_override,
-        :status,
-        :github_installation_id
+        :status
       ])
     end
 
     update :set_swarm_node_label do
       accept([:swarm_node_label])
-    end
-
-    update :disconnect_github_app do
-      change(set_attribute(:github_installation_id, nil))
     end
 
     update :archive do

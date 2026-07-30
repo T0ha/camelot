@@ -14,6 +14,7 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   """
   use Ash.Resource.Change
 
+  alias Camelot.Board.Task
   alias Camelot.Github.Client
 
   require Logger
@@ -26,7 +27,7 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
         ) :: Ash.Changeset.t()
   def change(changeset, _opts, _context) do
     Ash.Changeset.after_action(changeset, fn _changeset, task ->
-      task = Ash.load!(task, :project)
+      task = Ash.load!(task, [:project, creator: [:github_installation]], authorize?: false)
       check_and_transition(task)
       {:ok, task}
     end)
@@ -37,7 +38,7 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
     owner = project.github_owner
     repo = project.github_repo
     pr = task.pr_number
-    opts = [installation_id: project.github_installation_id]
+    opts = [installation_id: installation_id(task)]
 
     with {:ok, pr_data} <-
            Client.get_pull_request(owner, repo, pr, opts),
@@ -58,6 +59,14 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
         )
     end
   end
+
+  @doc """
+  Resolves the GitHub App installation id from the task
+  creator's connected installation, if any.
+  """
+  @spec installation_id(Task.t()) :: integer() | nil
+  def installation_id(%{creator: %{github_installation: %{installation_id: id}}}), do: id
+  def installation_id(_task), do: nil
 
   defp fetch_check_runs(owner, repo, pr_data, opts) do
     case get_in(pr_data, ["head", "sha"]) do

@@ -48,7 +48,7 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
 
   defp find_next_task(project_id) do
     Task
-    |> Ash.read!(load: [:messages, :project])
+    |> Ash.read!(load: [:messages, :project, creator: [:github_installation]], authorize?: false)
     |> Enum.filter(fn task ->
       task.project_id == project_id and
         task.state == :queued and
@@ -92,6 +92,14 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
         )
     end
   end
+
+  @doc """
+  Resolves the GitHub App installation id from the task
+  creator's connected installation, if any.
+  """
+  @spec installation_id(map()) :: integer() | nil
+  def installation_id(%{creator: %{github_installation: %{installation_id: id}}}), do: id
+  def installation_id(_task), do: nil
 
   defp ensure_agent_process(agent_id) do
     case AgentRegistry.lookup(agent_id) do
@@ -175,7 +183,7 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
            project.github_owner,
            project.github_repo,
            task.pr_number,
-           installation_id: project.github_installation_id
+           installation_id: installation_id(task)
          ) do
       {:ok, comments} ->
         Enum.map_join(comments, "\n\n---\n\n", fn c ->

@@ -4,6 +4,7 @@ defmodule CamelotWeb.UserProfileLiveTest do
   import Phoenix.LiveViewTest
 
   alias Camelot.Accounts.Credential
+  alias Camelot.Github.Installation
 
   require Ash.Query
 
@@ -110,6 +111,93 @@ defmodule CamelotWeb.UserProfileLiveTest do
 
       assert html =~ "Preferences saved"
     end
+  end
+
+  describe "GitHub App section" do
+    setup do
+      previous = Application.get_env(:camelot, :github_app)
+      on_exit(fn -> Application.put_env(:camelot, :github_app, previous) end)
+      :ok
+    end
+
+    test "warns when no GitHub App is configured for this deployment", %{conn: conn} do
+      Application.put_env(:camelot, :github_app, [])
+
+      {:ok, _view, html} = live(conn, ~p"/profile")
+      assert html =~ "No GitHub App is configured"
+    end
+
+    test "shows a connect link when configured but not connected", %{conn: conn} do
+      put_app_configured()
+
+      {:ok, _view, html} = live(conn, ~p"/profile")
+      assert html =~ "Connect GitHub App"
+      refute html =~ "Disconnect"
+    end
+
+    test "shows the connected account and a disconnect button when linked", %{
+      conn: conn,
+      user: user
+    } do
+      put_app_configured()
+      link_installation!(user, "acme-org")
+
+      {:ok, _view, html} = live(conn, ~p"/profile")
+      assert html =~ "acme-org"
+      assert html =~ "Disconnect"
+    end
+
+    test "disconnecting removes the installation and shows the connect link again", %{
+      conn: conn,
+      user: user
+    } do
+      put_app_configured()
+      link_installation!(user, "acme-org")
+
+      {:ok, view, _html} = live(conn, ~p"/profile")
+
+      html =
+        view
+        |> element("button[phx-click=disconnect_github_app]")
+        |> render_click()
+
+      assert html =~ "GitHub App disconnected"
+      assert html =~ "Connect GitHub App"
+      refute html =~ "acme-org"
+
+      assert Installation
+             |> Ash.Query.filter(user_id == ^user.id)
+             |> Ash.read!(authorize?: false) == []
+    end
+  end
+
+  defp put_app_configured do
+    Application.put_env(:camelot, :github_app,
+      app_id: "123",
+      slug: "camelot-dev",
+      client_id: "Iv1.abc",
+      client_secret: "secret",
+      private_key: Base.encode64("not-a-real-key"),
+      webhook_secret: "whsecret"
+    )
+  end
+
+  defp link_installation!(user, account_login) do
+    {:ok, installation} =
+      Ash.create(
+        Installation,
+        %{
+          installation_id: System.unique_integer([:positive]),
+          account_login: account_login,
+          account_type: :organization
+        },
+        authorize?: false
+      )
+
+    {:ok, linked} =
+      Ash.update(installation, %{user_id: user.id}, action: :link_user, actor: user)
+
+    linked
   end
 
   defp ssh_credentials_for(user_id) do

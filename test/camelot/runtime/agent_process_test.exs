@@ -5,6 +5,7 @@ defmodule Camelot.Runtime.AgentProcessTest do
   alias Camelot.Accounts.User
   alias Camelot.Agents.Agent
   alias Camelot.Board.Task
+  alias Camelot.Github.Installation
   alias Camelot.Projects.Membership
   alias Camelot.Projects.Project
   alias Camelot.Runtime.AgentConfig
@@ -197,22 +198,28 @@ defmodule Camelot.Runtime.AgentProcessTest do
       :ets.insert(Camelot.Github.InstallationTokenCache, {installation_id, token, far_future})
     end
 
-    defp agent_with_installation(installation_id) do
-      %Agent{project: %Project{github_installation_id: installation_id}}
+    defp task_with_installation(installation_id) do
+      installation = installation_id && %Installation{installation_id: installation_id}
+      %Task{creator: %User{github_installation: installation}}
     end
 
-    test "appends a github_app_token secret when the project is linked and the App is configured" do
+    test "appends a github_app_token secret when the creator has a linked installation and the App is configured" do
       put_app_configured()
       id = System.unique_integer([:positive])
       seed_cached_token(id, "cached-installation-token")
 
       assert [%{kind: :github_app_token, value: "cached-installation-token"}] =
-               AgentProcess.maybe_append_github_app_token([], agent_with_installation(id), "task-1")
+               AgentProcess.maybe_append_github_app_token([], task_with_installation(id), "task-1")
     end
 
-    test "is a no-op when the project has no linked installation" do
+    test "is a no-op when the creator has no linked installation" do
       put_app_configured()
-      assert AgentProcess.maybe_append_github_app_token([], agent_with_installation(nil), "task-1") == []
+      assert AgentProcess.maybe_append_github_app_token([], task_with_installation(nil), "task-1") == []
+    end
+
+    test "is a no-op when there is no task (bootstrap session)" do
+      put_app_configured()
+      assert AgentProcess.maybe_append_github_app_token([], nil, "task-1") == []
     end
 
     test "is a no-op when the App isn't configured" do
@@ -220,14 +227,14 @@ defmodule Camelot.Runtime.AgentProcessTest do
       id = System.unique_integer([:positive])
       seed_cached_token(id, "cached-installation-token")
 
-      assert AgentProcess.maybe_append_github_app_token([], agent_with_installation(id), "task-1") == []
+      assert AgentProcess.maybe_append_github_app_token([], task_with_installation(id), "task-1") == []
     end
 
     test "logs and skips when minting fails (no such installation)" do
       put_app_configured()
       id = System.unique_integer([:positive])
 
-      assert AgentProcess.maybe_append_github_app_token([], agent_with_installation(id), "task-1") == []
+      assert AgentProcess.maybe_append_github_app_token([], task_with_installation(id), "task-1") == []
     end
 
     test "preserves already-built secrets, appending after them" do
@@ -240,7 +247,7 @@ defmodule Camelot.Runtime.AgentProcessTest do
       assert [
                %{kind: :ssh_private_key},
                %{kind: :github_app_token, value: "cached-installation-token"}
-             ] = AgentProcess.maybe_append_github_app_token(existing, agent_with_installation(id), "task-1")
+             ] = AgentProcess.maybe_append_github_app_token(existing, task_with_installation(id), "task-1")
     end
   end
 
