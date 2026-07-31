@@ -1,7 +1,10 @@
 defmodule Camelot.Board.Changes.CheckPrStatusTest do
   use ExUnit.Case, async: true
 
+  alias Camelot.Accounts.User
   alias Camelot.Board.Changes.CheckPrStatus
+  alias Camelot.Board.Task
+  alias Camelot.Github.Installation
 
   @commit "2026-07-09T13:42:09Z"
 
@@ -148,6 +151,18 @@ defmodule Camelot.Board.Changes.CheckPrStatusTest do
 
     test "completed stale is not failing" do
       refute CheckPrStatus.ci_failing?([check_run("completed", "stale")])
+    end
+  end
+
+  describe "installation_id/1" do
+    test "resolves the task creator's connected installation id" do
+      task = %Task{creator: %User{github_installation: %Installation{installation_id: 42}}}
+      assert CheckPrStatus.installation_id(task) == 42
+    end
+
+    test "is nil when the creator has no connected installation" do
+      task = %Task{creator: %User{github_installation: nil}}
+      assert is_nil(CheckPrStatus.installation_id(task))
     end
   end
 end

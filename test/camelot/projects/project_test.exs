@@ -2,7 +2,6 @@ defmodule Camelot.Projects.ProjectTest do
   use Camelot.DataCase, async: true
 
   alias Camelot.Accounts.User
-  alias Camelot.Github.Installation
   alias Camelot.Projects.Membership
   alias Camelot.Projects.Project
 
@@ -204,46 +203,6 @@ defmodule Camelot.Projects.ProjectTest do
 
       assert {:ok, projects} = Ash.read(Project)
       assert length(projects) == 2
-    end
-  end
-
-  describe "github_installation_id" do
-    defp installation!(login \\ "acme") do
-      {:ok, installation} =
-        Ash.create(Installation, %{
-          installation_id: System.unique_integer([:positive]),
-          account_login: login,
-          account_type: :organization
-        })
-
-      installation
-    end
-
-    test "accepts a github_installation_id on create" do
-      installation = installation!()
-
-      assert {:ok, project} =
-               Ash.create(Project, Map.put(@valid_attrs, :github_installation_id, installation.id))
-
-      assert project.github_installation_id == installation.id
-    end
-
-    test "accepts a github_installation_id on update" do
-      {:ok, project} = Ash.create(Project, @valid_attrs)
-      installation = installation!()
-
-      assert {:ok, updated} =
-               Ash.update(project, %{github_installation_id: installation.id})
-
-      assert updated.github_installation_id == installation.id
-    end
-
-    test "disconnect_github_app clears the link" do
-      installation = installation!()
-      {:ok, project} = Ash.create(Project, Map.put(@valid_attrs, :github_installation_id, installation.id))
-
-      assert {:ok, disconnected} = Ash.update(project, %{}, action: :disconnect_github_app)
-      assert disconnected.github_installation_id == nil
     end
   end
 

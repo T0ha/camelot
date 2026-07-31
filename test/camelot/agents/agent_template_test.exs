@@ -2,6 +2,7 @@ defmodule Camelot.Agents.AgentTemplateTest do
   use Camelot.DataCase, async: true
 
   alias Camelot.Agents.AgentTemplate
+  alias Ecto.Adapters.SQL
 
   describe "seeded data" do
     test "claude_code template exists with expected fields" do
@@ -75,6 +76,27 @@ defmodule Camelot.Agents.AgentTemplateTest do
 
       assert updated.base_args == ["--quiet", "--no-color"]
       assert updated.slug == "codex"
+    end
+  end
+
+  describe "required_credential_kinds legacy values" do
+    test "loads a row carrying a retired kind, dropping it instead of failing" do
+      template = agent_template!("claude_code")
+
+      # Simulate data left behind by a credential-kind retirement (e.g.
+      # PR #75 removing github_pat/github_oauth) without a cleanup
+      # migration having run yet: a raw SQL write, bypassing Ash, since
+      # `String.to_existing_atom("github_pat")` no longer succeeds and
+      # Ash's own `one_of`-validated write path would reject it outright.
+      SQL.query!(
+        Camelot.Repo,
+        "UPDATE agent_templates SET required_credential_kinds = $1 WHERE id = $2",
+        [["claude_api_key", "github_pat"], Ecto.UUID.dump!(template.id)]
+      )
+
+      reloaded = agent_template!("claude_code")
+
+      assert reloaded.required_credential_kinds == [:claude_api_key]
     end
   end
 end
