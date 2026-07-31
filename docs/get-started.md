@@ -32,10 +32,18 @@ Visit `/profile` to finish your personal setup:
   other git host) so runners can clone your private repos. If you ever
   need to replace it, "Generate new key" rotates it — remember to update
   it everywhere the old key was installed.
-- **Credentials** — add any API keys or tokens your agents will need: a
-  Claude API key, a GitHub personal access token, or a GitHub OAuth
-  token. Pick a **Kind**, give it a **Name**, and paste the **Value**.
-  These are encrypted at rest and shipped securely to runner containers.
+- **GitHub App** — if your workspace has a GitHub App configured,
+  **Connect GitHub App** sends you to GitHub's installation flow; once
+  installed, runners push over HTTPS using your installation instead of
+  your SSH key, and Camelot can poll PR/issue status for tasks you
+  create. **Disconnect** removes it any time — runners fall back to your
+  SSH key.
+- **Credentials** — add any API keys your agents need: a Claude, OpenAI,
+  or Codex API key, or a generic secret. Pick a **Kind**, give it a
+  **Name**, and paste the **Value**. These are encrypted at rest and
+  shipped securely to runner containers. Pasted GitHub personal access
+  tokens or OAuth tokens aren't supported — use the GitHub App above for
+  git/GitHub access instead.
 
 ## 3. Create a project
 
@@ -45,8 +53,12 @@ local path under `~/projects/<slug>` if you don't pick one with the
 
 - **Description**
 - **GitHub URL** / **GitHub Owner** / **GitHub Repo** — set these so
-  Camelot can open PRs and poll CI status for this project. If your local
-  repo already has a GitHub remote, these are auto-detected.
+  Camelot knows which repo to open PRs against and poll CI status for. If
+  your local repo already has a GitHub remote, these are auto-detected.
+  Camelot authenticates those calls with whichever GitHub App
+  installation you connected in [Set up your
+  profile](#2-set-up-your-profile) — no GitHub App connected just means
+  unauthenticated API calls instead.
 - **Runner Image Override** — only needed if this project requires a
   non-default runner image.
 
