@@ -81,5 +81,8 @@ defmodule Camelot.Telemetry.PostHogHandler do
   @spec capture(String.t(), String.t() | nil, PostHog.properties()) :: :ok
   defp capture(_event, nil, _properties), do: :ok
 
-  defp capture(event, distinct_id, properties), do: PostHog.bare_capture(event, distinct_id, properties)
+  defp capture(event, distinct_id, properties) do
+    merged_properties = Map.merge(PostHog.get_context(), properties)
+    PostHog.bare_capture(event, distinct_id, merged_properties)
+  end
 end
