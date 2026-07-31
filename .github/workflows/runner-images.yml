@@ -2,7 +2,9 @@ name: Build runner images
 
 on:
   push:
-    branches: [main]
+    branches: 
+    - main
+    - develop
     paths:
       - 'runner-images/**'
       - '.github/workflows/runner-images.yml'
