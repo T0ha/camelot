@@ -14,8 +14,10 @@ defmodule CamelotWeb.UserProfileLive do
   alias Camelot.Accounts.SshKeygen
   alias Camelot.Accounts.User.Changes.EnsureDefaultSshKey
   alias Camelot.Agents.Session
+  alias Camelot.Github.AppConfig
   alias Camelot.Runtime.RunnerPool
   alias Camelot.Runtime.SecretSync
+  alias CamelotWeb.GithubSetupController
   alias Phoenix.LiveView.Socket
 
   require Ash.Query
@@ -125,8 +127,17 @@ defmodule CamelotWeb.UserProfileLive do
     {:noreply, rotate_default_ssh_key(socket)}
   end
 
+  def handle_event("disconnect_github_app", _params, socket) do
+    Ash.destroy!(socket.assigns.github_installation, actor: socket.assigns.current_user)
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "GitHub App disconnected.")
+     |> load_state()}
+  end
+
   defp load_state(socket) do
-    user = socket.assigns.current_user
+    user = Ash.load!(socket.assigns.current_user, :github_installation, actor: socket.assigns.current_user)
 
     credentials =
       Credential
@@ -145,6 +156,7 @@ defmodule CamelotWeb.UserProfileLive do
 
     assign(socket,
       page_title: "Profile",
+      current_user: user,
       credentials: credentials,
       default_ssh_key: default_ssh_key,
       show_rotate_modal: socket.assigns[:show_rotate_modal] || false,
@@ -152,8 +164,22 @@ defmodule CamelotWeb.UserProfileLive do
       kinds: @credential_kinds,
       pool: pool_for(user),
       credential_form: empty_credential_form(),
-      notification_prefs_form: notification_prefs_form(user)
+      notification_prefs_form: notification_prefs_form(user),
+      github_installation: user.github_installation,
+      github_app_configured?: AppConfig.configured?(),
+      github_connect_url: github_connect_url(user)
     )
+  end
+
+  defp github_connect_url(user) do
+    case AppConfig.fetch() do
+      {:ok, %{slug: slug}} ->
+        state = GithubSetupController.state_token(user.id)
+        "https://github.com/apps/#{slug}/installations/new?state=#{state}"
+
+      :not_configured ->
+        nil
+    end
   end
 
   defp rotate_default_ssh_key(socket) do
@@ -364,6 +390,44 @@ defmodule CamelotWeb.UserProfileLive do
         <p :if={@pool.user.queued > 0} class="text-sm text-base-content/60">
           Waiting room: your queued tasks will start as your running slot opens up.
         </p>
+      </section>
+
+      <section class="rounded border p-4 space-y-2">
+        <h2 class="text-lg font-semibold">GitHub App</h2>
+
+        <p class="text-sm text-base-content/60">
+          Linking a GitHub App installation lets Camelot poll PR/issue
+          status and lets runners push over HTTPS without an SSH key
+          or pasted token, using your credentials for tasks you create.
+        </p>
+
+        <p :if={!@github_app_configured?} class="text-sm text-warning">
+          No GitHub App is configured for this deployment.
+        </p>
+
+        <div :if={@github_app_configured? && @github_installation} class="text-sm space-y-2">
+          <p>
+            Connected to <strong>{@github_installation.account_login}</strong>
+            <span :if={@github_installation.suspended_at} class="badge badge-warning">
+              suspended
+            </span>
+          </p>
+          <button
+            class="btn btn-sm btn-outline"
+            phx-click="disconnect_github_app"
+            data-confirm="Disconnect the GitHub App?"
+          >
+            Disconnect
+          </button>
+        </div>
+
+        <a
+          :if={@github_app_configured? && !@github_installation && @github_connect_url}
+          href={@github_connect_url}
+          class="btn btn-sm btn-primary"
+        >
+          Connect GitHub App
+        </a>
       </section>
 
       <section class="rounded border p-4 space-y-3">

@@ -49,13 +49,17 @@ defmodule Camelot.Github.InstallationTokenCacheTest do
       id = unique_installation_id()
 
       {:ok, installation} =
-        Ash.create(Installation, %{
-          installation_id: id,
-          account_login: "acme",
-          account_type: :organization
-        })
+        Ash.create(
+          Installation,
+          %{
+            installation_id: id,
+            account_login: "acme",
+            account_type: :organization
+          },
+          authorize?: false
+        )
 
-      {:ok, _} = Ash.update(installation, %{}, action: :suspend)
+      {:ok, _} = Ash.update(installation, %{}, action: :suspend, authorize?: false)
 
       assert InstallationTokenCache.fetch(id) == {:error, :suspended}
     end

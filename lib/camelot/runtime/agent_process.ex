@@ -519,7 +519,11 @@ defmodule Camelot.Runtime.AgentProcess do
   defp start_adoption(state, session_id) do
     session = Ash.get!(Session, session_id)
     agent = Ash.get!(Agent, session.agent_id, load: [:template, :user, project: [owner_membership: [:user]]])
-    task = session.task_id && Ash.get!(Task, session.task_id)
+
+    task =
+      session.task_id &&
+        Ash.get!(Task, session.task_id, load: [creator: [:github_installation]], authorize?: false)
+
     config = AgentConfig.resolve(agent)
 
     state = %{
@@ -566,7 +570,11 @@ defmodule Camelot.Runtime.AgentProcess do
 
   defp start_runner(state) do
     agent = Ash.get!(Agent, state.agent_id, load: [:template, :user, project: [owner_membership: [:user]]])
-    task = state.current_task_id && Ash.get!(Task, state.current_task_id)
+
+    task =
+      state.current_task_id &&
+        Ash.get!(Task, state.current_task_id, load: [creator: [:github_installation]], authorize?: false)
+
     config = AgentConfig.resolve(agent)
 
     cli_args =
@@ -606,7 +614,7 @@ defmodule Camelot.Runtime.AgentProcess do
       profile_volume: if(agent.user_id, do: "camelot_user_#{agent.user_id}_profile"),
       resources: config.runner_resources,
       node_label: node_label_for(agent),
-      secrets: agent |> build_secrets(config) |> maybe_append_github_app_token(agent, task_id),
+      secrets: agent |> build_secrets(config) |> maybe_append_github_app_token(task, task_id),
       repo_url: repo_url_for(backend, agent),
       repo_branch: nil,
       mcp_config_json: build_mcp_config_json(agent),
@@ -706,24 +714,25 @@ defmodule Camelot.Runtime.AgentProcess do
   end
 
   @doc false
-  # Appends a fresh installation access token when the agent's
-  # project is linked to a GitHub App installation — independent of
-  # `required_credential_kinds`, since there's no per-user Credential
-  # kind for this: like SSH, it's automatic once a project is linked.
-  # On the Swarm backend the token is published under a per-task
-  # secret name (not shared per-project/installation) so the
-  # Reconciler can sweep it independently once the task is done,
-  # without racing `SecretSync.reconcile/2`'s delete-then-create dance.
-  @spec maybe_append_github_app_token([map()], Agent.t(), String.t() | nil) :: [map()]
-  def maybe_append_github_app_token(secrets, agent, task_id) do
-    case installation_id(agent) do
+  # Appends a fresh installation access token when the task's
+  # creator has a connected GitHub App installation — independent
+  # of `required_credential_kinds`, since there's no per-user
+  # Credential kind for this: like SSH, it's automatic once a user
+  # has connected GitHub. On the Swarm backend the token is
+  # published under a per-task secret name (not shared per-user)
+  # so the Reconciler can sweep it independently once the task is
+  # done, without racing `SecretSync.reconcile/2`'s
+  # delete-then-create dance.
+  @spec maybe_append_github_app_token([map()], Task.t() | nil, String.t() | nil) :: [map()]
+  def maybe_append_github_app_token(secrets, task, task_id) do
+    case installation_id(task) do
       nil -> secrets
       installation_id -> append_github_app_token(secrets, installation_id, task_id)
     end
   end
 
-  defp installation_id(%Agent{project: %{github_installation_id: id}}), do: id
-  defp installation_id(_agent), do: nil
+  defp installation_id(%Task{creator: %{github_installation: %{installation_id: id}}}), do: id
+  defp installation_id(_task), do: nil
 
   defp append_github_app_token(secrets, installation_id, task_id) do
     if AppConfig.configured?() do
@@ -1062,15 +1071,15 @@ defmodule Camelot.Runtime.AgentProcess do
   end
 
   defp github_pr_fallback(task) do
-    task = Ash.load!(task, :project)
-    find_pr_on_github(task.project, task.id)
+    task = Ash.load!(task, [:project, creator: [:github_installation]], authorize?: false)
+    find_pr_on_github(task)
   end
 
-  defp find_pr_on_github(%{github_owner: nil}, _task_id), do: :no_pr
-  defp find_pr_on_github(%{github_repo: nil}, _task_id), do: :no_pr
+  defp find_pr_on_github(%{project: %{github_owner: nil}}), do: :no_pr
+  defp find_pr_on_github(%{project: %{github_repo: nil}}), do: :no_pr
 
-  defp find_pr_on_github(%{github_owner: owner, github_repo: repo} = project, task_id) do
-    opts = [installation_id: project.github_installation_id]
+  defp find_pr_on_github(%{project: %{github_owner: owner, github_repo: repo}, id: task_id} = task) do
+    opts = [installation_id: installation_id(task)]
 
     case Client.find_open_pr_by_head(owner, repo, "camelot/task-#{task_id}", opts) do
       {:ok, %{"html_url" => url, "number" => number}} ->

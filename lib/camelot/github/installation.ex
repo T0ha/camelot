@@ -1,21 +1,22 @@
 defmodule Camelot.Github.Installation do
   @moduledoc """
   One row per GitHub App installation on github.com,
-  linking it to zero or more Camelot projects.
+  linking it to at most one Camelot user.
 
-  Written only by the setup-callback controller
-  (`CamelotWeb.GithubSetupController`) and the webhook
-  receiver (`CamelotWeb.GithubWebhookController`) via
-  system actions — nothing else creates or mutates these
-  rows. Like the rest of the `Camelot.Projects` resources
-  it links to (`Project`, `Membership`, `Mcp`), access
-  control is enforced at the web boundary rather than via
-  an `Ash.Policy.Authorizer`.
+  Rows are created and mutated by two independent paths:
+  the setup-callback controller
+  (`CamelotWeb.GithubSetupController`, which also links
+  the row to the connecting user via `:link_user`) and the
+  webhook receiver (`CamelotWeb.GithubWebhookController`).
+  Both are system/trusted call sites with no acting user in
+  scope, so they call in with `authorize?: false`. Reads and
+  destroys, on the other hand, are user-driven from the
+  profile LiveView, so those go through the policies below.
   """
   use Ash.Resource,
     domain: Camelot.Github,
     data_layer: AshPostgres.DataLayer,
-    authorizers: []
+    authorizers: [Ash.Policy.Authorizer]
 
   @account_types [:user, :organization]
 
@@ -60,8 +61,16 @@ defmodule Camelot.Github.Installation do
   end
 
   relationships do
-    has_many :projects, Camelot.Projects.Project do
-      destination_attribute(:github_installation_id)
+    belongs_to :user, Camelot.Accounts.User do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Camelot user this installation is connected to. Nilable " <>
+          "because a row can arrive via the GitHub webhook before " <>
+          "the owning user's setup-callback redirect lands and " <>
+          "links it via :link_user."
+      )
     end
   end
 
@@ -86,6 +95,37 @@ defmodule Camelot.Github.Installation do
 
     update :unsuspend do
       change(set_attribute(:suspended_at, nil))
+    end
+
+    update :link_user do
+      require_atomic?(false)
+
+      argument :user_id, :uuid do
+        allow_nil?(false)
+      end
+
+      change(fn changeset, _context ->
+        Ash.Changeset.change_attribute(
+          changeset,
+          :user_id,
+          Ash.Changeset.get_argument(changeset, :user_id)
+        )
+      end)
+    end
+  end
+
+  policies do
+    policy action_type(:read) do
+      authorize_if(expr(user_id == ^actor(:id)))
+    end
+
+    policy action(:destroy) do
+      authorize_if(expr(user_id == ^actor(:id)))
+    end
+
+    policy action(:link_user) do
+      authorize_if(expr(is_nil(user_id) and ^arg(:user_id) == ^actor(:id)))
+      authorize_if(expr(user_id == ^actor(:id)))
     end
   end
 end

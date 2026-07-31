@@ -26,9 +26,9 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
 
   defp projects_with_github do
     Project
-    |> Ash.read!()
+    |> Ash.read!(load: [owner_membership: [user: [:github_installation]]], authorize?: false)
     |> Enum.filter(fn p ->
-      p.github_owner && p.github_repo
+      p.github_owner && p.github_repo && p.owner_membership
     end)
   end
 
@@ -37,7 +37,7 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
            project.github_owner,
            project.github_repo,
            labels: @sync_label,
-           installation_id: project.github_installation_id
+           installation_id: installation_id(project)
          ) do
       {:ok, issues} ->
         Enum.each(issues, &maybe_create_task(project, &1))
@@ -63,7 +63,7 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
              title: title,
              description: issue["body"],
              project_id: project.id,
-             creator_id: get_system_user_id()
+             creator_id: project.owner_membership.user.id
            }) do
         {:ok, _task} ->
           Logger.info("Created task from issue ##{issue["number"]}")
@@ -77,10 +77,11 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
     end
   end
 
-  defp get_system_user_id do
-    case Ash.read!(Camelot.Accounts.User) do
-      [user | _] -> user.id
-      [] -> raise "No users exist for issue sync"
-    end
-  end
+  @doc """
+  Resolves the GitHub App installation id from the
+  project owner's connected installation, if any.
+  """
+  @spec installation_id(Project.t()) :: integer() | nil
+  def installation_id(%{owner_membership: %{user: %{github_installation: %{installation_id: id}}}}), do: id
+  def installation_id(_project), do: nil
 end

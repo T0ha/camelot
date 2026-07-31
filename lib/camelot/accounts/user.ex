@@ -106,6 +106,10 @@ defmodule Camelot.Accounts.User do
       destination_attribute(:user_id)
     end
 
+    has_one :github_installation, Camelot.Github.Installation do
+      destination_attribute(:user_id)
+    end
+
     many_to_many :projects, Camelot.Projects.Project do
       through(Camelot.Projects.Membership)
       source_attribute_on_join_resource(:user_id)

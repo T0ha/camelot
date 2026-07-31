@@ -64,6 +64,6 @@ defmodule CamelotWeb.GithubWebhookControllerTest do
   defp fetch(installation_id) do
     Installation
     |> Ash.Query.filter(installation_id == ^installation_id)
-    |> Ash.read_one()
+    |> Ash.read_one(authorize?: false)
   end
 end
