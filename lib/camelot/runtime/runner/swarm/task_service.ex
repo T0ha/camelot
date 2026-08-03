@@ -21,6 +21,8 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
 
   alias Camelot.Board.Task
   alias Camelot.Runtime.Runner.DockerApi
+  alias Camelot.Runtime.Runner.ImageRef
+  alias Camelot.Runtime.Runner.RegistryClient
   alias Camelot.Runtime.Runner.Spec
   alias Camelot.Runtime.Runner.Swarm.SelfNetworks
   alias Camelot.Runtime.SecretSync
@@ -117,6 +119,60 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
            fetch_service(service_id) do
       post_service_update(service_id, version, bump_force_update(spec))
     end
+  end
+
+  @doc """
+  Pin a service's floating-tag image to the newest published
+  digest, in place. Best-effort and idempotent:
+
+    * pinned images (`:1.19`, or a digest with no tag) are left
+      untouched;
+    * for a floating image (`latest` or no tag) the current
+      registry digest is resolved and, only when it differs from
+      the digest the service already runs, the spec is POSTed back
+      with a fully digest-pinned image so Swarm rolls the container.
+
+  Called by the Reconciler's boot sweep. Never raises; logs the
+  outcome and always returns `:ok` so one bad service can't abort
+  the sweep.
+  """
+  @spec autoupdate_image(String.t()) :: :ok
+  def autoupdate_image(service_ref) when is_binary(service_ref) do
+    with {:ok, %{"Version" => %{"Index" => version}, "Spec" => spec}} <-
+           fetch_service(service_ref),
+         image when is_binary(image) <- get_in(spec, ["TaskTemplate", "ContainerSpec", "Image"]),
+         true <- ImageRef.floating?(image),
+         {:ok, digest} <- RegistryClient.current_digest(image) do
+      apply_image_update(service_ref, version, plan_pinned_update(spec, image, digest))
+    else
+      {:error, reason} ->
+        Logger.warning("Swarm.TaskService autoupdate_image #{service_ref}: #{inspect(reason)}")
+
+        :ok
+
+      _pinned_or_missing ->
+        :ok
+    end
+  end
+
+  defp apply_image_update(service_ref, version, {:update, new_spec}) do
+    log_autoupdate(service_ref, post_service_update(service_ref, version, new_spec))
+  end
+
+  defp apply_image_update(_service_ref, _version, :unchanged), do: :ok
+
+  defp log_autoupdate(service_ref, :ok) do
+    Logger.info("Swarm.TaskService autoupdate_image #{service_ref}: pinned newest digest")
+    :ok
+  end
+
+  defp log_autoupdate(service_ref, {:error, reason}) do
+    Logger.warning(
+      "Swarm.TaskService autoupdate_image #{service_ref}: " <>
+        "update failed: #{inspect(reason)}"
+    )
+
+    :ok
   end
 
   # --- GenServer plumbing ---
@@ -310,6 +366,23 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
     template = Map.get(spec, "TaskTemplate", %{})
     current = Map.get(template, "ForceUpdate", 0)
     Map.put(spec, "TaskTemplate", Map.put(template, "ForceUpdate", current + 1))
+  end
+
+  @doc false
+  # Public only so the digest-comparison decision can be asserted on
+  # in tests. Given a live service `Spec` map, the service's current
+  # image string, and the digest its tag now resolves to: returns
+  # `:unchanged` when the service already runs that digest, or
+  # `{:update, spec}` with the image pinned to the new digest.
+  @spec plan_pinned_update(map(), String.t(), String.t()) :: {:update, map()} | :unchanged
+  def plan_pinned_update(spec, image, digest) do
+    case ImageRef.parse(image).digest do
+      ^digest ->
+        :unchanged
+
+      _ ->
+        {:update, put_in(spec, ["TaskTemplate", "ContainerSpec", "Image"], ImageRef.pin(image, digest))}
+    end
   end
 
   defp post_service_update(id, version, spec) do

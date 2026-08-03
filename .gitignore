@@ -37,3 +37,6 @@ npm-debug.log
 
 .envrc
 .DS_Store
+
+# Private keys / certs (e.g. GitHub App keys) — never commit.
+*.pem
