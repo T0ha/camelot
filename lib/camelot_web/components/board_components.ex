@@ -104,8 +104,11 @@ defmodule CamelotWeb.BoardComponents do
   @spec state_badge(map()) :: Rendered.t()
   def state_badge(assigns) do
     ~H"""
-    <span class={["badge badge-xs", state_badge_class(@state)]}>
-      {format_state(@state)}
+    <span
+      class={["badge badge-xs", state_badge_class(@state)]}
+      title={format_state(@state)}
+    >
+      {state_emoji(@state)}
     </span>
     """
   end
@@ -137,4 +140,9 @@ defmodule CamelotWeb.BoardComponents do
   defp state_badge_class(:waiting_for_input), do: "badge-warning"
   defp state_badge_class(:error), do: "badge-error"
   defp state_badge_class(_state), do: "badge-ghost"
+
+  defp state_emoji(:queued), do: "⏳"
+  defp state_emoji(:in_progress), do: "🔃"
+  defp state_emoji(:waiting_for_input), do: "💬"
+  defp state_emoji(:error), do: "⚠️"
 end
