@@ -72,6 +72,7 @@ defmodule Camelot.MixProject do
       {:gen_smtp, "~> 1.2"},
       {:posthog, "~> 2.0"},
       {:req, "~> 0.5"},
+      {:req_s3, "~> 0.2"},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:gettext, "~> 1.0"},

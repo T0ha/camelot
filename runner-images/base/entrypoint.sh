@@ -166,6 +166,21 @@ clone_workspace() {
   fi
 }
 
+fetch_attachments() {
+  [ -n "${ATTACHMENTS_JSON:-}" ] || return 0
+
+  local dir="/workspace/.camelot/attachments"
+  mkdir -p "$dir"
+
+  printf '%s' "$ATTACHMENTS_JSON" | jq -c '.[]' | while IFS= read -r entry; do
+    local filename url
+    filename="$(printf '%s' "$entry" | jq -r '.filename')"
+    url="$(printf '%s' "$entry" | jq -r '.url')"
+    log "fetching attachment $filename"
+    curl -fsSL "$url" -o "$dir/$filename" || log "failed to fetch attachment $filename"
+  done
+}
+
 install_repo_languages() {
   cd /workspace
   if [ -f .tool-versions ]; then
@@ -206,6 +221,7 @@ main() {
   fi
 
   clone_workspace
+  fetch_attachments
   install_repo_languages
   mark_ready
 

@@ -4,7 +4,9 @@ defmodule Camelot.Runtime.AgentProcessTest do
   alias Camelot.Accounts.Credential
   alias Camelot.Accounts.User
   alias Camelot.Agents.Agent
+  alias Camelot.Board.AttachmentStore
   alias Camelot.Board.Task
+  alias Camelot.Board.TaskAttachment
   alias Camelot.Github.Installation
   alias Camelot.Projects.Membership
   alias Camelot.Projects.Project
@@ -461,6 +463,68 @@ defmodule Camelot.Runtime.AgentProcessTest do
       # Ash.get! raises for the missing row; the rescue must swallow it
       # so AgentProcess survives instead of stranding the session.
       assert :ok = AgentProcess.finish_session(state, 1, {:error, "boom"}, [])
+    end
+  end
+
+  describe "handle_info({:task_updated, ...}) with a terminal stage" do
+    setup %{task: task} do
+      base_dir = Path.join(System.tmp_dir!(), "camelot-attachments-test-#{System.unique_integer([:positive])}")
+      previous = Application.get_env(:camelot, :attachments_dir)
+      Application.put_env(:camelot, :attachments_dir, base_dir)
+
+      on_exit(fn ->
+        File.rm_rf(base_dir)
+
+        if previous do
+          Application.put_env(:camelot, :attachments_dir, previous)
+        else
+          Application.delete_env(:camelot, :attachments_dir)
+        end
+      end)
+
+      tmp_path = Path.join(base_dir, "src.txt")
+      File.mkdir_p!(base_dir)
+      File.write!(tmp_path, "bytes")
+
+      {:ok, storage_key, byte_size} = AttachmentStore.put(task.id, tmp_path, "notes.txt")
+
+      {:ok, attachment} =
+        Ash.create(TaskAttachment, %{
+          filename: "notes.txt",
+          byte_size: byte_size,
+          storage_key: storage_key,
+          task_id: task.id
+        })
+
+      %{attachment: attachment}
+    end
+
+    test "purges the task's attachments on :done", %{task: task, attachment: attachment} do
+      state = %AgentProcess{agent_id: "a", subscribed_tasks: MapSet.new([task.id])}
+
+      assert {:noreply, new_state} =
+               AgentProcess.handle_info({:task_updated, %{id: task.id, stage: :done}}, state)
+
+      refute MapSet.member?(new_state.subscribed_tasks, task.id)
+      assert {:error, _} = Ash.get(TaskAttachment, attachment.id)
+    end
+
+    test "purges the task's attachments on :cancelled", %{task: task, attachment: attachment} do
+      state = %AgentProcess{agent_id: "a", subscribed_tasks: MapSet.new([task.id])}
+
+      assert {:noreply, _new_state} =
+               AgentProcess.handle_info({:task_updated, %{id: task.id, stage: :cancelled}}, state)
+
+      assert {:error, _} = Ash.get(TaskAttachment, attachment.id)
+    end
+
+    test "does nothing when the task isn't subscribed", %{task: task, attachment: attachment} do
+      state = %AgentProcess{agent_id: "a", subscribed_tasks: MapSet.new()}
+
+      assert {:noreply, ^state} =
+               AgentProcess.handle_info({:task_updated, %{id: task.id, stage: :done}}, state)
+
+      assert {:ok, _} = Ash.get(TaskAttachment, attachment.id)
     end
   end
 end

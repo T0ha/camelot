@@ -7,6 +7,7 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
 
   alias Camelot.Board.Task
   alias Camelot.Github.Client
+  alias Camelot.Github.IssueAttachments
   alias Camelot.Projects.Project
 
   require Logger
@@ -65,7 +66,8 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
              project_id: project.id,
              creator_id: project.owner_membership.user.id
            }) do
-        {:ok, _task} ->
+        {:ok, task} ->
+          IssueAttachments.import_from_issue!(task, issue["body"])
           Logger.info("Created task from issue ##{issue["number"]}")
 
         {:error, error} ->

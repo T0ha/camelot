@@ -17,4 +17,22 @@ defmodule Camelot.Agents.Changes.DispatchTasksTest do
       assert is_nil(DispatchTasks.installation_id(task))
     end
   end
+
+  describe "attachments_block/1" do
+    test "lists attachment filenames under .camelot/attachments/" do
+      task = %{attachments: [%{filename: "screenshot.png"}, %{filename: "error.log"}]}
+
+      assert DispatchTasks.attachments_block(task) ==
+               "Attachments (available under .camelot/attachments/ in the workspace):\n" <>
+                 "- screenshot.png\n- error.log"
+    end
+
+    test "is blank when the task has no attachments" do
+      assert DispatchTasks.attachments_block(%{attachments: []}) == ""
+    end
+
+    test "is blank when attachments aren't loaded" do
+      assert DispatchTasks.attachments_block(%{}) == ""
+    end
+  end
 end

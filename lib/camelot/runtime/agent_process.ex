@@ -264,6 +264,7 @@ defmodule Camelot.Runtime.AgentProcess do
       Logger.info("AgentProcess #{state.agent_id}: task #{task_id} reached #{stage}; tearing down runner")
 
       Runner.stop_task(task_id)
+      Camelot.Board.purge_task_attachments!(task_id)
       Phoenix.PubSub.unsubscribe(Camelot.PubSub, "task:#{task_id}")
       {:noreply, %{state | subscribed_tasks: MapSet.delete(state.subscribed_tasks, task_id)}}
     else
@@ -522,7 +523,7 @@ defmodule Camelot.Runtime.AgentProcess do
 
     task =
       session.task_id &&
-        Ash.get!(Task, session.task_id, load: [creator: [:github_installation]], authorize?: false)
+        Ash.get!(Task, session.task_id, load: [:attachments, creator: [:github_installation]], authorize?: false)
 
     config = AgentConfig.resolve(agent)
 
@@ -573,7 +574,7 @@ defmodule Camelot.Runtime.AgentProcess do
 
     task =
       state.current_task_id &&
-        Ash.get!(Task, state.current_task_id, load: [creator: [:github_installation]], authorize?: false)
+        Ash.get!(Task, state.current_task_id, load: [:attachments, creator: [:github_installation]], authorize?: false)
 
     config = AgentConfig.resolve(agent)
 
@@ -618,9 +619,27 @@ defmodule Camelot.Runtime.AgentProcess do
       repo_url: repo_url_for(backend, agent),
       repo_branch: nil,
       mcp_config_json: build_mcp_config_json(agent),
+      attachments_json: build_attachments_json(task),
       bootstrap?: task == nil,
       task_id: task_id
     }
+  end
+
+  defp build_attachments_json(nil), do: nil
+
+  defp build_attachments_json(%Task{attachments: attachments}) when is_list(attachments) and attachments != [] do
+    Jason.encode!(
+      Enum.map(attachments, fn attachment ->
+        %{filename: attachment.filename, url: attachment_download_url(attachment)}
+      end)
+    )
+  end
+
+  defp build_attachments_json(_task), do: nil
+
+  defp attachment_download_url(attachment) do
+    token = CamelotWeb.TaskAttachmentController.sign_token(attachment.id)
+    CamelotWeb.Endpoint.url() <> "/attachments/#{attachment.id}/download?token=#{token}"
   end
 
   defp task_id_for(LocalPort, _task), do: nil

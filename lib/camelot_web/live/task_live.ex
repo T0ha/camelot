@@ -10,12 +10,14 @@ defmodule CamelotWeb.TaskLive do
   alias Camelot.Accounts.User
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
+  alias Camelot.Board.TaskAttachment
   alias Camelot.Board.TaskMessage
   alias CamelotWeb.Scope
+  alias CamelotWeb.TaskAttachments
 
   require Ash.Query
 
-  @task_load [:project, :agent, :creator, :sessions, :messages]
+  @task_load [:project, :agent, :creator, :sessions, :messages, :attachments]
 
   # GFM extensions so plan/description markdown renders tables,
   # strikethrough, autolinks and task lists instead of raw text.
@@ -45,6 +47,7 @@ defmodule CamelotWeb.TaskLive do
             focused_column: :none
           )
           |> maybe_subscribe_agent(task)
+          |> allow_upload(:attachment, accept: :any, max_entries: 5, max_file_size: 25_000_000)
 
         {:ok, socket}
 
@@ -70,14 +73,7 @@ defmodule CamelotWeb.TaskLive do
 
   @impl true
   def handle_info({:task_updated, task}, socket) do
-    task =
-      Ash.load!(task, [
-        :project,
-        :agent,
-        :creator,
-        :sessions,
-        :messages
-      ])
+    task = Ash.load!(task, @task_load)
 
     {:noreply,
      socket
@@ -113,13 +109,7 @@ defmodule CamelotWeb.TaskLive do
         broadcast_update(updated)
 
         updated =
-          Ash.load!(updated, [
-            :project,
-            :agent,
-            :creator,
-            :sessions,
-            :messages
-          ])
+          Ash.load!(updated, @task_load)
 
         {:noreply, assign(socket, task: updated)}
 
@@ -136,13 +126,7 @@ defmodule CamelotWeb.TaskLive do
         broadcast_update(updated)
 
         updated =
-          Ash.load!(updated, [
-            :project,
-            :agent,
-            :creator,
-            :sessions,
-            :messages
-          ])
+          Ash.load!(updated, @task_load)
 
         {:noreply,
          socket
@@ -192,13 +176,7 @@ defmodule CamelotWeb.TaskLive do
         broadcast_update(updated)
 
         updated =
-          Ash.load!(updated, [
-            :project,
-            :agent,
-            :creator,
-            :sessions,
-            :messages
-          ])
+          Ash.load!(updated, @task_load)
 
         {:noreply,
          socket
@@ -227,14 +205,7 @@ defmodule CamelotWeb.TaskLive do
         {:ok, updated} ->
           broadcast_update(updated)
 
-          updated =
-            Ash.load!(updated, [
-              :project,
-              :agent,
-              :creator,
-              :sessions,
-              :messages
-            ])
+          updated = Ash.load!(updated, @task_load)
 
           {:noreply, assign(socket, task: updated, message_input: "")}
 
@@ -262,19 +233,35 @@ defmodule CamelotWeb.TaskLive do
         broadcast_update(updated)
 
         updated =
-          Ash.load!(updated, [
-            :project,
-            :agent,
-            :creator,
-            :sessions,
-            :messages
-          ])
+          Ash.load!(updated, @task_load)
 
         {:noreply, assign(socket, task: updated)}
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, "Cannot cancel task")}
     end
+  end
+
+  def handle_event("validate_attachment", _params, socket), do: {:noreply, socket}
+
+  def handle_event("save_attachments", _params, socket) do
+    task = socket.assigns.task
+
+    consume_uploaded_entries(socket, :attachment, fn %{path: tmp_path}, entry ->
+      {:ok, TaskAttachments.store!(task.id, tmp_path, entry)}
+    end)
+
+    updated = Ash.load!(task, @task_load)
+    {:noreply, assign(socket, task: updated)}
+  end
+
+  def handle_event("delete_attachment", %{"id" => id}, socket) do
+    TaskAttachment
+    |> Ash.get!(id)
+    |> Ash.destroy!()
+
+    updated = Ash.load!(socket.assigns.task, @task_load)
+    {:noreply, assign(socket, task: updated)}
   end
 
   def handle_event("toggle_column", %{"col" => "left"}, socket) do
@@ -484,6 +471,48 @@ defmodule CamelotWeb.TaskLive do
           <div :if={@task.plan} class="prose max-w-none overflow-x-auto">
             <h3>Plan</h3>
             {render_markdown(@task.plan)}
+          </div>
+
+          <div class="space-y-2">
+            <h3 class="font-semibold">Attachments</h3>
+            <div
+              :for={attachment <- sorted_attachments(@task)}
+              class="flex items-center justify-between gap-2 text-sm p-2 rounded bg-base-200"
+            >
+              <a
+                href={~p"/attachments/#{attachment.id}/download"}
+                target="_blank"
+                class="link truncate"
+              >
+                {attachment.filename}
+              </a>
+              <div class="flex items-center gap-2 shrink-0 text-base-content/60">
+                <span>{human_size(attachment.byte_size)}</span>
+                <button
+                  type="button"
+                  phx-click="delete_attachment"
+                  phx-value-id={attachment.id}
+                  data-confirm="Delete this attachment?"
+                  class="btn btn-xs btn-ghost text-error"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+            <form
+              id="attachment-upload-form"
+              phx-submit="save_attachments"
+              phx-change="validate_attachment"
+              class="flex items-center gap-2"
+            >
+              <.live_file_input upload={@uploads.attachment} class="text-sm" />
+              <button type="submit" class="btn btn-xs btn-primary">
+                Upload
+              </button>
+            </form>
+            <p :for={err <- upload_errors(@uploads.attachment)} class="text-xs text-error">
+              {error_to_string(err)}
+            </p>
           </div>
 
           <div
@@ -828,6 +857,24 @@ defmodule CamelotWeb.TaskLive do
       []
     end
   end
+
+  defp sorted_attachments(task) do
+    if Ash.Resource.loaded?(task, :attachments) do
+      Enum.sort_by(task.attachments, & &1.inserted_at)
+    else
+      []
+    end
+  end
+
+  defp human_size(nil), do: ""
+  defp human_size(bytes) when bytes < 1024, do: "#{bytes} B"
+  defp human_size(bytes) when bytes < 1024 * 1024, do: "#{Float.round(bytes / 1024, 1)} KB"
+  defp human_size(bytes), do: "#{Float.round(bytes / (1024 * 1024), 1)} MB"
+
+  defp error_to_string(:too_large), do: "File is too large"
+  defp error_to_string(:too_many_files), do: "Too many files"
+  defp error_to_string(:not_accepted), do: "Unacceptable file type"
+  defp error_to_string(_error), do: "Upload failed"
 
   @internal_tools ~w(ExitPlanMode EnterPlanMode)
 

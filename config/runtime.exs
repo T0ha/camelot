@@ -16,6 +16,7 @@ import Config
 #
 # Alternatively, you can use `mix phx.gen.release` to generate a `bin/server`
 # script that automatically sets the env var above.
+alias Camelot.Board.AttachmentStore
 alias Camelot.Runtime.Runner.Swarm
 
 if System.get_env("PHX_SERVER") do
@@ -43,7 +44,26 @@ runner_networks =
       |> Enum.reject(&(&1 == ""))
   end
 
+attachment_store_for = fn
+  Swarm -> AttachmentStore.S3
+  _local_backend -> AttachmentStore.Local
+end
+
 config :camelot, CamelotWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
+
+config :camelot, :attachment_store_s3,
+  endpoint: System.get_env("ATTACHMENTS_S3_ENDPOINT"),
+  bucket: System.get_env("ATTACHMENTS_S3_BUCKET"),
+  access_key_id: System.get_env("ATTACHMENTS_S3_ACCESS_KEY_ID"),
+  secret_access_key: System.get_env("ATTACHMENTS_S3_SECRET_ACCESS_KEY"),
+  region: System.get_env("ATTACHMENTS_S3_REGION")
+
+# Attachment store: local temp directory for the single-host
+# DockerEngine/LocalPort backends, OCI Object Storage (S3-compatible)
+# for the clustered Swarm backend. Selected from the same
+# RUNNER_BACKEND switch below rather than a second env var, since the
+# two choices always move together (see `attachment_store_for/1`).
+config :camelot, :attachments_dir, System.get_env("ATTACHMENTS_DIR")
 
 # GitHub App credentials — a static, per-deployment secret set once by
 # whoever registers the App on github.com, same channel as ENCRYPTION_KEY
@@ -64,10 +84,10 @@ config :camelot, :github_app,
 # users can still receive magic links. Defaults to open so self-hosted
 # installs work out of the box.
 config :camelot,
+  # Runner backend is overridable in every env via the RUNNER_BACKEND env
+  # var. Default differs by env: prod = swarm, dev/test = local.
   registration_enabled: System.get_env("REGISTRATION_ENABLED", "true") in ~w(true 1)
 
-# Runner backend is overridable in every env via the RUNNER_BACKEND env
-# var. Default differs by env: prod = swarm, dev/test = local.
 if backend_env = System.get_env("RUNNER_BACKEND") do
   runner_backend =
     case backend_env do
@@ -76,6 +96,8 @@ if backend_env = System.get_env("RUNNER_BACKEND") do
       "local" -> Camelot.Runtime.Runner.LocalPort
       other -> raise "unknown RUNNER_BACKEND: #{other}"
     end
+
+  config :camelot, :attachment_store, attachment_store_for.(runner_backend)
 
   config :camelot, :runner,
     backend: runner_backend,
@@ -137,6 +159,8 @@ if config_env() == :prod do
 
   # In prod, default to swarm if RUNNER_BACKEND wasn't set above.
   if !System.get_env("RUNNER_BACKEND") do
+    config :camelot, :attachment_store, attachment_store_for.(Swarm)
+
     config :camelot, :runner,
       backend: Swarm,
       docker_host: System.get_env("DOCKER_HOST", "unix:///var/run/docker.sock"),
