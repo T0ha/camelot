@@ -57,6 +57,7 @@ defmodule Camelot.Runtime.Reconciler do
   alias Camelot.Runtime.Runner
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.LocalPort
+  alias Camelot.Runtime.Runner.Spec
   alias Camelot.Runtime.Runner.Swarm
   alias Camelot.Runtime.Runner.Swarm.ExecSession
   alias Camelot.Runtime.RunnerPool
@@ -87,8 +88,19 @@ defmodule Camelot.Runtime.Reconciler do
 
   @impl GenServer
   def init(_opts) do
-    if !skip_initial_tick?(), do: Process.send_after(self(), :tick, initial_delay_ms())
+    if !skip_initial_tick?(), do: schedule_boot_work(self())
     {:ok, %{}}
+  end
+
+  # Boot work fires once, `initial_delay_ms` after start (which, in a
+  # release, is after `Camelot.Release.migrate` has run — see
+  # `rel/overlays/bin/server`): the recurring reconcile tick plus a
+  # one-shot pass that re-resolves floating-tag runner images so a
+  # redeploy picks up freshly-published runner images.
+  defp schedule_boot_work(pid) do
+    delay = initial_delay_ms()
+    Process.send_after(pid, :tick, delay)
+    Process.send_after(pid, :autoupdate_runner_images, delay)
   end
 
   defp skip_initial_tick? do
@@ -119,6 +131,12 @@ defmodule Camelot.Runtime.Reconciler do
     {:noreply, state}
   end
 
+  # One-shot on boot only (never rescheduled).
+  def handle_info(:autoupdate_runner_images, state) do
+    autoupdate_runner_images()
+    {:noreply, state}
+  end
+
   def handle_info(_msg, state), do: {:noreply, state}
 
   # --- Reconciliation pass ---
@@ -144,6 +162,23 @@ defmodule Camelot.Runtime.Reconciler do
   rescue
     e ->
       Logger.warning("Reconciler pass failed: #{Exception.message(e)}")
+      :ok
+  end
+
+  # One-shot boot sweep: re-resolve every Swarm task service whose
+  # image uses a floating tag (`latest` or untagged) to the newest
+  # published digest, in place. Idempotent — a service already on the
+  # current digest is not rolled. Swarm-only; best-effort so a Docker
+  # hiccup can't crash the reconciler.
+  defp autoupdate_runner_images do
+    if Runner.backend() == Swarm and backend_available?() do
+      ids = list_task_runners()
+      Enum.each(ids, &Swarm.TaskService.autoupdate_image(Spec.task_runner_name(&1)))
+      Logger.info("Reconciler: autoupdate swept #{length(ids)} task runner image(s)")
+    end
+  rescue
+    e ->
+      Logger.warning("Reconciler autoupdate pass failed: #{Exception.message(e)}")
       :ok
   end
 
