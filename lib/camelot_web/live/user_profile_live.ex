@@ -15,6 +15,7 @@ defmodule CamelotWeb.UserProfileLive do
   alias Camelot.Accounts.User.Changes.EnsureDefaultSshKey
   alias Camelot.Agents.Session
   alias Camelot.Github.AppConfig
+  alias Camelot.Github.Installation
   alias Camelot.Runtime.RunnerPool
   alias Camelot.Runtime.SecretSync
   alias CamelotWeb.GithubSetupController
@@ -127,8 +128,9 @@ defmodule CamelotWeb.UserProfileLive do
     {:noreply, rotate_default_ssh_key(socket)}
   end
 
-  def handle_event("disconnect_github_app", _params, socket) do
-    Ash.destroy!(socket.assigns.github_installation, actor: socket.assigns.current_user)
+  def handle_event("disconnect_github_app", %{"id" => id}, socket) do
+    installation = Ash.get!(Installation, id, actor: socket.assigns.current_user)
+    Ash.destroy!(installation, actor: socket.assigns.current_user)
 
     {:noreply,
      socket
@@ -137,7 +139,7 @@ defmodule CamelotWeb.UserProfileLive do
   end
 
   defp load_state(socket) do
-    user = Ash.load!(socket.assigns.current_user, :github_installation, actor: socket.assigns.current_user)
+    user = Ash.load!(socket.assigns.current_user, :github_installations, actor: socket.assigns.current_user)
 
     credentials =
       Credential
@@ -154,7 +156,8 @@ defmodule CamelotWeb.UserProfileLive do
     default_ssh_key =
       Enum.find(credentials, &(&1.kind == :ssh_private_key and &1.name == "default"))
 
-    assign(socket,
+    socket
+    |> assign(
       page_title: "Profile",
       current_user: user,
       credentials: credentials,
@@ -165,10 +168,11 @@ defmodule CamelotWeb.UserProfileLive do
       pool: pool_for(user),
       credential_form: empty_credential_form(),
       notification_prefs_form: notification_prefs_form(user),
-      github_installation: user.github_installation,
+      github_installations_count: length(user.github_installations),
       github_app_configured?: AppConfig.configured?(),
       github_connect_url: github_connect_url(user)
     )
+    |> stream(:github_installations, user.github_installations, reset: true)
   end
 
   defp github_connect_url(user) do
@@ -405,28 +409,43 @@ defmodule CamelotWeb.UserProfileLive do
           No GitHub App is configured for this deployment.
         </p>
 
-        <div :if={@github_app_configured? && @github_installation} class="text-sm space-y-2">
-          <p>
-            Connected to <strong>{@github_installation.account_login}</strong>
-            <span :if={@github_installation.suspended_at} class="badge badge-warning">
-              suspended
-            </span>
-          </p>
-          <button
-            class="btn btn-sm btn-outline"
-            phx-click="disconnect_github_app"
-            data-confirm="Disconnect the GitHub App?"
+        <ul
+          :if={@github_app_configured?}
+          id="github-installations"
+          phx-update="stream"
+          class="text-sm space-y-2"
+        >
+          <li
+            :for={{dom_id, installation} <- @streams.github_installations}
+            id={dom_id}
+            class="flex items-center justify-between gap-2"
           >
-            Disconnect
-          </button>
-        </div>
+            <p>
+              Connected to <strong>{installation.account_login}</strong>
+              <span class="badge badge-ghost">{installation.account_type}</span>
+              <span :if={installation.suspended_at} class="badge badge-warning">
+                suspended
+              </span>
+            </p>
+            <button
+              class="btn btn-sm btn-outline"
+              phx-click="disconnect_github_app"
+              phx-value-id={installation.id}
+              data-confirm="Disconnect the GitHub App?"
+            >
+              Disconnect
+            </button>
+          </li>
+        </ul>
 
         <a
-          :if={@github_app_configured? && !@github_installation && @github_connect_url}
+          :if={@github_app_configured? && @github_connect_url}
           href={@github_connect_url}
           class="btn btn-sm btn-primary"
         >
-          Connect GitHub App
+          {if @github_installations_count > 0,
+            do: "Connect another organization",
+            else: "Connect GitHub App"}
         </a>
       </section>
 

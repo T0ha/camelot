@@ -2,6 +2,7 @@ defmodule Camelot.Accounts.UserTest do
   use Camelot.DataCase, async: true
 
   alias Camelot.Accounts.User
+  alias Camelot.Github.Installation
 
   describe "magic link request" do
     test "requests a magic link for existing user" do
@@ -48,6 +49,32 @@ defmodule Camelot.Accounts.UserTest do
       assert_raise Ash.Error.Invalid, fn ->
         Ash.Seed.seed!(User, %{email: "dup@example.com"})
       end
+    end
+  end
+
+  describe "github_installations relationship" do
+    test "loads every installation linked to the user" do
+      user = Ash.Seed.seed!(User, %{email: "multi-org-#{System.unique_integer()}@example.com"})
+
+      for login <- ["acme-org", "other-org"] do
+        {:ok, installation} =
+          Ash.create(
+            Installation,
+            %{
+              installation_id: System.unique_integer([:positive]),
+              account_login: login,
+              account_type: :organization
+            },
+            authorize?: false
+          )
+
+        Ash.update!(installation, %{user_id: user.id}, action: :link_user, actor: user)
+      end
+
+      loaded = Ash.load!(user, :github_installations, actor: user)
+
+      assert loaded.github_installations |> Enum.map(& &1.account_login) |> Enum.sort() ==
+               ["acme-org", "other-org"]
     end
   end
 

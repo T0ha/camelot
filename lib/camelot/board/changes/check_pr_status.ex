@@ -16,6 +16,7 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
 
   alias Camelot.Board.Task
   alias Camelot.Github.Client
+  alias Camelot.Github.Resolver
 
   require Logger
 
@@ -27,7 +28,7 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
         ) :: Ash.Changeset.t()
   def change(changeset, _opts, _context) do
     Ash.Changeset.after_action(changeset, fn _changeset, task ->
-      task = Ash.load!(task, [:project, creator: [:github_installation]], authorize?: false)
+      task = Ash.load!(task, [:project, creator: [:github_installations]], authorize?: false)
       check_and_transition(task)
       {:ok, task}
     end)
@@ -65,8 +66,14 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   creator's connected installation, if any.
   """
   @spec installation_id(Task.t()) :: integer() | nil
-  def installation_id(%{creator: %{github_installation: %{installation_id: id}}}), do: id
+  def installation_id(%{creator: %{github_installations: installations}} = task) when is_list(installations) do
+    Resolver.installation_id(installations, github_owner(task))
+  end
+
   def installation_id(_task), do: nil
+
+  defp github_owner(%{project: %{github_owner: owner}}), do: owner
+  defp github_owner(_task), do: nil
 
   defp fetch_check_runs(owner, repo, pr_data, opts) do
     case get_in(pr_data, ["head", "sha"]) do

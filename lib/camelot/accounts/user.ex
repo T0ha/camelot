@@ -106,7 +106,7 @@ defmodule Camelot.Accounts.User do
       destination_attribute(:user_id)
     end
 
-    has_one :github_installation, Camelot.Github.Installation do
+    has_many :github_installations, Camelot.Github.Installation do
       destination_attribute(:user_id)
     end
 
