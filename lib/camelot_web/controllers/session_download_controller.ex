@@ -17,7 +17,7 @@ defmodule CamelotWeb.SessionDownloadController do
     case load_or_forbid(id, conn.assigns[:current_user]) do
       {:ok, session} ->
         conn
-        |> put_resp_content_type("application/x-ndjson")
+        |> put_resp_content_type("application/x-ndjson", nil)
         |> put_resp_header(
           "content-disposition",
           ~s(attachment; filename="session-#{session.id}.ndjson")

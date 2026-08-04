@@ -34,7 +34,7 @@ defmodule CamelotWeb.SessionDownloadControllerTest do
     {:ok, session} = Ash.create(Session, %{agent_id: agent.id, task_id: task.id})
 
     {:ok, session} =
-      Ash.update(session, %{output_log: "{\"line\":1}\n", exit_code: 0}, action: :complete)
+      Ash.update(session, %{output_log: "{\"line\":1}", exit_code: 0}, action: :complete)
 
     %{conn: conn, user: user, project: project, session: session}
   end
@@ -43,7 +43,7 @@ defmodule CamelotWeb.SessionDownloadControllerTest do
     test "streams the session's output_log as an attachment", %{conn: conn, session: session} do
       conn = get(conn, ~p"/sessions/#{session.id}/download")
 
-      assert response(conn, 200) == "{\"line\":1}\n"
+      assert response(conn, 200) == "{\"line\":1}"
       assert get_resp_header(conn, "content-type") == ["application/x-ndjson"]
 
       [disposition] = get_resp_header(conn, "content-disposition")
@@ -76,7 +76,7 @@ defmodule CamelotWeb.SessionDownloadControllerTest do
 
       conn = get(conn, ~p"/sessions/#{session.id}/download")
 
-      assert response(conn, 200) == "{\"line\":1}\n"
+      assert response(conn, 200) == "{\"line\":1}"
     end
   end
 end
