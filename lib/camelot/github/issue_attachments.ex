@@ -50,11 +50,12 @@ defmodule Camelot.Github.IssueAttachments do
   end
 
   defp import_url(task, url) do
+    filename = filename_for(url)
+
     with {:ok, %Req.Response{status: status, body: body}} when status in 200..299 <-
            Req.get(url: url, retry: false),
-         {:ok, tmp_path} <- write_tmp(body) do
-      filename = filename_for(url)
-      {:ok, storage_key, byte_size} = AttachmentStore.put(task.id, tmp_path, filename)
+         {:ok, tmp_path} <- write_tmp(body),
+         {:ok, storage_key, byte_size} <- AttachmentStore.put(task.id, tmp_path, filename) do
       File.rm(tmp_path)
 
       Ash.create!(TaskAttachment, %{
@@ -64,12 +65,14 @@ defmodule Camelot.Github.IssueAttachments do
         source: :github_issue,
         task_id: task.id
       })
+
+      :ok
     else
       {:ok, %Req.Response{status: status}} ->
         Logger.warning("IssueAttachments: #{url} returned status #{status}; skipping")
 
       {:error, reason} ->
-        Logger.warning("IssueAttachments: failed to fetch #{url}: #{inspect(reason)}")
+        Logger.warning("IssueAttachments: failed to fetch or store #{url}: #{inspect(reason)}")
     end
   end
 

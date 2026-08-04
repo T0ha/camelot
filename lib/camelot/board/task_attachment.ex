@@ -82,10 +82,4 @@ defmodule Camelot.Board.TaskAttachment do
       change(DeleteAttachmentFile)
     end
   end
-
-  @doc """
-  Returns all valid attachment sources.
-  """
-  @spec sources() :: [atom()]
-  def sources, do: @sources
 end
