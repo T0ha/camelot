@@ -51,6 +51,20 @@ defmodule Camelot.Github.Client do
     )
   end
 
+  @spec list_pull_request_review_comments(
+          String.t(),
+          String.t(),
+          integer(),
+          keyword()
+        ) :: {:ok, [map()]} | {:error, term()}
+  def list_pull_request_review_comments(owner, repo, pr_number, opts \\ []) do
+    request(
+      :get,
+      "/repos/#{owner}/#{repo}/pulls/#{pr_number}/comments",
+      opts
+    )
+  end
+
   @spec list_pull_request_commits(
           String.t(),
           String.t(),
