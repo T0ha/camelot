@@ -9,6 +9,7 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
   alias Camelot.Agents.Agent
   alias Camelot.Board.Task
   alias Camelot.Github.Client
+  alias Camelot.Github.Resolver
   alias Camelot.Prompts.Renderer
   alias Camelot.Runtime.AgentProcess
   alias Camelot.Runtime.AgentRegistry
@@ -48,7 +49,7 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
 
   defp find_next_task(project_id) do
     Task
-    |> Ash.read!(load: [:messages, :project, creator: [:github_installation]], authorize?: false)
+    |> Ash.read!(load: [:messages, :project, creator: [:github_installations]], authorize?: false)
     |> Enum.filter(fn task ->
       task.project_id == project_id and
         task.state == :queued and
@@ -98,8 +99,14 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
   creator's connected installation, if any.
   """
   @spec installation_id(map()) :: integer() | nil
-  def installation_id(%{creator: %{github_installation: %{installation_id: id}}}), do: id
+  def installation_id(%{creator: %{github_installations: installations}} = task) do
+    Resolver.installation_id(installations, github_owner(task))
+  end
+
   def installation_id(_task), do: nil
+
+  defp github_owner(%{project: %{github_owner: owner}}), do: owner
+  defp github_owner(_task), do: nil
 
   defp ensure_agent_process(agent_id) do
     case AgentRegistry.lookup(agent_id) do
