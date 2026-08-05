@@ -99,7 +99,7 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
   creator's connected installation, if any.
   """
   @spec installation_id(map()) :: integer() | nil
-  def installation_id(%{creator: %{github_installations: installations}} = task) when is_list(installations) do
+  def installation_id(%{creator: %{github_installations: installations}} = task) do
     Resolver.installation_id(installations, github_owner(task))
   end
 

@@ -738,7 +738,7 @@ defmodule Camelot.Runtime.AgentProcess do
     end
   end
 
-  defp installation_id(%Task{creator: %{github_installations: installations}} = task) when is_list(installations) do
+  defp installation_id(%Task{creator: %{github_installations: installations}} = task) do
     Resolver.installation_id(installations, github_owner(task))
   end
 

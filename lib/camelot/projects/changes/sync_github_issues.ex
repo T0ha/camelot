@@ -83,8 +83,7 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
   project owner's connected installation, if any.
   """
   @spec installation_id(Project.t()) :: integer() | nil
-  def installation_id(%{owner_membership: %{user: %{github_installations: installations}}} = project)
-      when is_list(installations) do
+  def installation_id(%{owner_membership: %{user: %{github_installations: installations}}} = project) do
     Resolver.installation_id(installations, project.github_owner)
   end
 
