@@ -690,17 +690,9 @@ defmodule CamelotWeb.TaskLive do
                 <pre class="text-xs overflow-auto max-h-40 bg-base-300 p-2 rounded whitespace-pre-wrap">{humanize_stream(@live_output)}</pre>
               </div>
               <pre
-                :if={session.output_log && session.status != :completed}
+                :if={session.output_log}
                 class="mt-2 text-xs overflow-auto max-h-40 bg-base-300 p-2 rounded"
               >{output_tail(session.output_log)}</pre>
-              <.link
-                :if={session.output_log && session.status == :completed}
-                href={~p"/sessions/#{session.id}/download"}
-                download
-                class="mt-2 link link-primary text-xs inline-flex items-center gap-1"
-              >
-                <.icon name="hero-arrow-down-tray" class="size-3" /> Download logs
-              </.link>
             </div>
           </div>
           <p
