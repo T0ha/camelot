@@ -15,6 +15,7 @@ defmodule CamelotWeb.BoardLiveTest do
     assert html =~ "Planning"
     assert html =~ "Executing"
     assert html =~ "Done"
+    refute html =~ "Draft"
   end
 
   test "ignores unrelated PubSub messages without crashing", %{conn: conn} do

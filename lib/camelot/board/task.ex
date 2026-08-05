@@ -402,6 +402,6 @@ defmodule Camelot.Board.Task do
   """
   @spec column_stages() :: [atom()]
   def column_stages do
-    @stages -- [:cancelled]
+    @stages -- [:cancelled, :draft]
   end
 end

@@ -591,6 +591,7 @@ defmodule Camelot.Board.TaskTest do
       assert :todo in cols
       assert :done in cols
       refute :cancelled in cols
+      refute :draft in cols
     end
   end
 
