@@ -513,17 +513,35 @@ defmodule CamelotWeb.TaskLive do
             phx-submit="provide_input"
             class="flex gap-2"
           >
-            <input
-              type="text"
-              name="message"
-              value={@message_input}
-              placeholder="Type your response..."
-              class="input input-bordered flex-1"
-              autofocus
-            />
+            <div class="flex-1 flex flex-col gap-1">
+              <textarea
+                id="message-input"
+                name="message"
+                placeholder="Type your response..."
+                class="textarea textarea-bordered flex-1"
+                phx-hook=".SubmitOnModifierEnter"
+                rows="3"
+                autofocus
+              >{@message_input}</textarea>
+              <p class="text-xs text-base-content/60">
+                Shift+Enter or Ctrl+Enter to send
+              </p>
+            </div>
             <button type="submit" class="btn btn-primary">
               Send
             </button>
+            <script :type={Phoenix.LiveView.ColocatedHook} name=".SubmitOnModifierEnter">
+              export default {
+                mounted() {
+                  this.el.addEventListener("keydown", (event) => {
+                    if (event.key === "Enter" && (event.shiftKey || event.ctrlKey)) {
+                      event.preventDefault()
+                      this.el.form.requestSubmit()
+                    }
+                  })
+                }
+              }
+            </script>
           </form>
         </div>
 
