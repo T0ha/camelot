@@ -64,6 +64,12 @@ defmodule CamelotWeb.Scope do
     )
   end
 
+  @doc "Filter a Session query to sessions whose task's project the user is a member of."
+  @spec scope_sessions(queryable(), User.t()) :: Ash.Query.t()
+  def scope_sessions(query, %User{id: user_id}) do
+    Ash.Query.filter(query, exists(task.project.memberships, user_id == ^user_id))
+  end
+
   @doc """
   Convenience: apply `scope_fun` to the query only when the actor doesn't
   see all. Lets callers write `Scope.maybe_scope(query, user, see_all, &Scope.scope_projects/2)`.

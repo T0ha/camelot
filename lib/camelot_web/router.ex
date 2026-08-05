@@ -41,6 +41,12 @@ defmodule CamelotWeb.Router do
     get "/:id/download", TaskAttachmentController, :download
   end
 
+  scope "/", CamelotWeb do
+    pipe_through :browser
+
+    get "/sessions/:id/download", SessionDownloadController, :download
+  end
+
   scope "/github", CamelotWeb do
     pipe_through :github_webhook
 

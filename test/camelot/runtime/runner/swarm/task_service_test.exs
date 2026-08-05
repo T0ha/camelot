@@ -89,4 +89,39 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskServiceTest do
              ]
     end
   end
+
+  describe "plan_pinned_update/3" do
+    defp service_spec(image) do
+      %{"TaskTemplate" => %{"ContainerSpec" => %{"Image" => image, "Command" => ["sleep"]}}}
+    end
+
+    test "pins a floating :latest tag to the newly resolved digest" do
+      spec = service_spec("ghcr.io/acme/runner:latest@sha256:old")
+
+      assert {:update, new_spec} =
+               TaskService.plan_pinned_update(spec, "ghcr.io/acme/runner:latest@sha256:old", "sha256:new")
+
+      assert get_in(new_spec, ["TaskTemplate", "ContainerSpec", "Image"]) ==
+               "ghcr.io/acme/runner:latest@sha256:new"
+
+      # unrelated fields survive untouched
+      assert get_in(new_spec, ["TaskTemplate", "ContainerSpec", "Command"]) == ["sleep"]
+    end
+
+    test "pins a bare (untagged, undigested) image to the resolved digest" do
+      spec = service_spec("ghcr.io/acme/runner")
+
+      assert {:update, new_spec} = TaskService.plan_pinned_update(spec, "ghcr.io/acme/runner", "sha256:new")
+
+      assert get_in(new_spec, ["TaskTemplate", "ContainerSpec", "Image"]) ==
+               "ghcr.io/acme/runner@sha256:new"
+    end
+
+    test "is a no-op when the service already runs the resolved digest" do
+      spec = service_spec("ghcr.io/acme/runner:latest@sha256:same")
+
+      assert :unchanged =
+               TaskService.plan_pinned_update(spec, "ghcr.io/acme/runner:latest@sha256:same", "sha256:same")
+    end
+  end
 end

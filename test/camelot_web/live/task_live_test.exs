@@ -186,12 +186,12 @@ defmodule CamelotWeb.TaskLiveTest do
       %{agent: agent, task: task, session: session}
     end
 
-    test "a large output log is truncated to its tail in the render",
+    test "a failed session's large output log is truncated to its tail in the render",
          %{conn: conn, task: task, session: session} do
       log = "HEAD_MARKER" <> String.duplicate("x", 30_000) <> "TAIL_MARKER"
 
       {:ok, _session} =
-        Ash.update(session, %{output_log: log, exit_code: 0}, action: :complete)
+        Ash.update(session, %{output_log: log, exit_code: 1}, action: :fail)
 
       {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
 
@@ -200,15 +200,31 @@ defmodule CamelotWeb.TaskLiveTest do
       assert html =~ "truncated"
     end
 
-    test "a small output log renders in full without truncation",
+    test "a failed session's small output log renders in full without truncation",
          %{conn: conn, task: task, session: session} do
       {:ok, _session} =
-        Ash.update(session, %{output_log: "SHORT_OUTPUT", exit_code: 0}, action: :complete)
+        Ash.update(session, %{output_log: "SHORT_OUTPUT", exit_code: 1}, action: :fail)
 
       {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
 
       assert html =~ "SHORT_OUTPUT"
       refute html =~ "truncated"
+    end
+
+    test "a completed session shows a download link instead of the inline log",
+         %{conn: conn, task: task, session: session} do
+      log = "HEAD_MARKER" <> String.duplicate("x", 30_000) <> "TAIL_MARKER"
+
+      {:ok, session} =
+        Ash.update(session, %{output_log: log, exit_code: 0}, action: :complete)
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      refute html =~ "HEAD_MARKER"
+      refute html =~ "TAIL_MARKER"
+      refute html =~ "truncated"
+      assert html =~ "Download logs"
+      assert html =~ ~p"/sessions/#{session.id}/download"
     end
   end
 

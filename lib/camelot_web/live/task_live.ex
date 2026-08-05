@@ -542,17 +542,35 @@ defmodule CamelotWeb.TaskLive do
             phx-submit="provide_input"
             class="flex gap-2"
           >
-            <input
-              type="text"
-              name="message"
-              value={@message_input}
-              placeholder="Type your response..."
-              class="input input-bordered flex-1"
-              autofocus
-            />
+            <div class="flex-1 flex flex-col gap-1">
+              <textarea
+                id="message-input"
+                name="message"
+                placeholder="Type your response..."
+                class="textarea textarea-bordered flex-1"
+                phx-hook=".SubmitOnModifierEnter"
+                rows="3"
+                autofocus
+              >{@message_input}</textarea>
+              <p class="text-xs text-base-content/60">
+                Shift+Enter or Ctrl+Enter to send
+              </p>
+            </div>
             <button type="submit" class="btn btn-primary">
               Send
             </button>
+            <script :type={Phoenix.LiveView.ColocatedHook} name=".SubmitOnModifierEnter">
+              export default {
+                mounted() {
+                  this.el.addEventListener("keydown", (event) => {
+                    if (event.key === "Enter" && (event.shiftKey || event.ctrlKey)) {
+                      event.preventDefault()
+                      this.el.form.requestSubmit()
+                    }
+                  })
+                }
+              }
+            </script>
           </form>
         </div>
 
@@ -719,9 +737,17 @@ defmodule CamelotWeb.TaskLive do
                 <pre class="text-xs overflow-auto max-h-40 bg-base-300 p-2 rounded whitespace-pre-wrap">{humanize_stream(@live_output)}</pre>
               </div>
               <pre
-                :if={session.output_log}
+                :if={session.output_log && session.status != :completed}
                 class="mt-2 text-xs overflow-auto max-h-40 bg-base-300 p-2 rounded"
               >{output_tail(session.output_log)}</pre>
+              <.link
+                :if={session.output_log && session.status == :completed}
+                href={~p"/sessions/#{session.id}/download"}
+                download
+                class="mt-2 link link-primary text-xs inline-flex items-center gap-1"
+              >
+                <.icon name="hero-arrow-down-tray" class="size-3" /> Download logs
+              </.link>
             </div>
           </div>
           <p
