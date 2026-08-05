@@ -54,7 +54,7 @@ jobs:
           }
 
       - name: Deploy Image to CapRover (production)
-        uses: caprover/deploy-from-github@v1.1.2
+        uses: caprover/deploy-from-github@v1.2.0
         with:
           server: "${{ vars.CAPROVER_SERVER }}"
           app: "${{ vars.APP_NAME }}"
