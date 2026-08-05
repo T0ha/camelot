@@ -154,6 +154,119 @@ defmodule Camelot.Board.Changes.CheckPrStatusTest do
     end
   end
 
+  describe "merge_review_feedback/3" do
+    test "folds inline review comments into the comment set" do
+      review_comment = %{
+        "created_at" => "2026-07-10T05:19:45Z",
+        "user" => %{"login" => "T0ha"},
+        "body" => "is_list is not needed here.",
+        "path" => "lib/foo.ex",
+        "line" => 12
+      }
+
+      assert [%{"body" => "is_list is not needed here."}] =
+               CheckPrStatus.merge_review_feedback([], [review_comment], [])
+    end
+
+    test "folds a COMMENTED review body into the comment set" do
+      review = %{
+        "state" => "COMMENTED",
+        "submitted_at" => "2026-07-10T05:19:45Z",
+        "user" => %{"login" => "T0ha"},
+        "body" => "Please tidy this up."
+      }
+
+      assert [%{"created_at" => "2026-07-10T05:19:45Z", "body" => "Please tidy this up."}] =
+               CheckPrStatus.merge_review_feedback([], [], [review])
+    end
+
+    test "drops empty-body reviews (inline-only reviews carry no body)" do
+      review = %{
+        "state" => "COMMENTED",
+        "submitted_at" => "2026-07-10T05:19:45Z",
+        "user" => %{"login" => "T0ha"},
+        "body" => ""
+      }
+
+      assert CheckPrStatus.merge_review_feedback([], [], [review]) == []
+    end
+
+    test "keeps existing issue comments alongside review feedback" do
+      issue = comment("2026-07-10T05:00:00Z")
+      review_comment = %{"created_at" => "2026-07-10T05:19:45Z", "user" => %{}, "body" => "x"}
+
+      merged = CheckPrStatus.merge_review_feedback([issue], [review_comment], [])
+
+      assert length(merged) == 2
+    end
+
+    test "an inline review comment newer than the last commit triggers detection" do
+      review_comment = %{"created_at" => "2026-07-10T05:19:45Z", "user" => %{}, "body" => "x"}
+      merged = CheckPrStatus.merge_review_feedback([], [review_comment], [])
+
+      assert CheckPrStatus.new_comments?(merged, @commit, nil)
+    end
+  end
+
+  describe "latest_commit_human?/1" do
+    defp agent_commit do
+      %{
+        "commit" => %{
+          "author" => %{"email" => "camelot-agent@anthropic.com"},
+          "committer" => %{"email" => "camelot-agent@anthropic.com"}
+        }
+      }
+    end
+
+    defp human_commit(email \\ "anton@rollhub.com") do
+      %{
+        "commit" => %{
+          "author" => %{"email" => email},
+          "committer" => %{"email" => email}
+        }
+      }
+    end
+
+    test "a human-authored last commit is human" do
+      assert CheckPrStatus.latest_commit_human?([agent_commit(), human_commit()])
+    end
+
+    test "an agent-authored last commit is not human" do
+      refute CheckPrStatus.latest_commit_human?([human_commit(), agent_commit()])
+    end
+
+    test "only the last commit decides" do
+      refute CheckPrStatus.latest_commit_human?([human_commit(), agent_commit()])
+      assert CheckPrStatus.latest_commit_human?([agent_commit(), human_commit()])
+    end
+
+    test "no commits is not human (preserves agent self-heal path)" do
+      refute CheckPrStatus.latest_commit_human?([])
+    end
+
+    test "the Claude co-author noreply email counts as agent" do
+      commit = %{
+        "commit" => %{
+          "author" => %{"email" => "noreply@anthropic.com"},
+          "committer" => %{"email" => "noreply@anthropic.com"}
+        }
+      }
+
+      refute CheckPrStatus.latest_commit_human?([commit])
+    end
+
+    test "an agent author with a human committer is still agent" do
+      commit = %{
+        "commit" => %{
+          "author" => %{"email" => "camelot-agent@anthropic.com"},
+          "committer" => %{"email" => "anton@rollhub.com"}
+        }
+      }
+
+      refute CheckPrStatus.latest_commit_human?([commit])
+    end
+  end
+
   describe "installation_id/1" do
     test "resolves the task creator's connected installation id" do
       task = %Task{creator: %User{github_installation: %Installation{installation_id: 42}}}
