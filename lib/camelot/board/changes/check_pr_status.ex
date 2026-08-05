@@ -11,11 +11,22 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   - changes_requested → queued for agent fix (via request_pr_changes)
   - new comments after last commit → queued for agent fix
   - approved → done (via complete)
+
+  "Comments" covers three GitHub surfaces: top-level issue comments,
+  inline review comments on the diff (`pulls/{n}/comments`), and the
+  body of a `COMMENTED` review — a reviewer who leaves inline notes or
+  a plain "Comment" review (not "Request changes") is acted on too.
+
+  Merge-conflict and CI-failure auto-fixes are suppressed while a human
+  authored the latest commit: a reviewer hand-fixing the branch during
+  review is re-verified, not fought. The agent's own commits (authored
+  by the Camelot agent) never count as human activity.
   """
   use Ash.Resource.Change
 
   alias Camelot.Board.Task
   alias Camelot.Github.Client
+  alias Camelot.Github.Resolver
 
   require Logger
 
@@ -27,7 +38,7 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
         ) :: Ash.Changeset.t()
   def change(changeset, _opts, _context) do
     Ash.Changeset.after_action(changeset, fn _changeset, task ->
-      task = Ash.load!(task, [:project, creator: [:github_installation]], authorize?: false)
+      task = Ash.load!(task, [:project, creator: [:github_installations]], authorize?: false)
       check_and_transition(task)
       {:ok, task}
     end)
@@ -50,7 +61,9 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
            Client.list_pull_request_commits(owner, repo, pr, opts),
          {:ok, check_runs} <-
            fetch_check_runs(owner, repo, pr_data, opts) do
-      apply_pr_state(task, pr_data, reviews, comments, commits, check_runs)
+      review_comments = fetch_review_comments(owner, repo, pr, opts)
+      feedback = merge_review_feedback(comments, review_comments, reviews)
+      apply_pr_state(task, pr_data, reviews, feedback, commits, check_runs)
     else
       {:error, reason} ->
         Logger.warning(
@@ -65,8 +78,14 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   creator's connected installation, if any.
   """
   @spec installation_id(Task.t()) :: integer() | nil
-  def installation_id(%{creator: %{github_installation: %{installation_id: id}}}), do: id
+  def installation_id(%{creator: %{github_installations: installations}} = task) do
+    Resolver.installation_id(installations, github_owner(task))
+  end
+
   def installation_id(_task), do: nil
+
+  defp github_owner(%{project: %{github_owner: owner}}), do: owner
+  defp github_owner(_task), do: nil
 
   defp fetch_check_runs(owner, repo, pr_data, opts) do
     case get_in(pr_data, ["head", "sha"]) do
@@ -74,6 +93,47 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
       sha -> Client.list_check_runs(owner, repo, sha, opts)
     end
   end
+
+  # Best-effort: inline review comments enrich detection but must never
+  # block the core transition flow, so a failure degrades to no comments.
+  defp fetch_review_comments(owner, repo, pr, opts) do
+    case Client.list_pull_request_review_comments(owner, repo, pr, opts) do
+      {:ok, review_comments} -> review_comments
+      {:error, _reason} -> []
+    end
+  end
+
+  @doc """
+  Merges the three reviewer-feedback surfaces into one comment list.
+
+  GitHub splits reviewer feedback across top-level issue comments,
+  inline review comments on the diff, and review bodies. Inline
+  comments already carry `created_at`; a review body is normalised to
+  `created_at` from its `submitted_at`. Empty review bodies are dropped
+  — an inline-only review has an empty body, and its content lives in
+  the review comments instead.
+  """
+  @spec merge_review_feedback([map()], [map()], [map()]) :: [map()]
+  def merge_review_feedback(comments, review_comments, reviews) do
+    comments ++ review_comments ++ review_body_comments(reviews)
+  end
+
+  defp review_body_comments(reviews) do
+    reviews
+    |> Enum.filter(&review_has_body?/1)
+    |> Enum.map(fn review ->
+      %{
+        "created_at" => review["submitted_at"],
+        "user" => review["user"],
+        "body" => review["body"]
+      }
+    end)
+  end
+
+  defp review_has_body?(%{"body" => ""}), do: false
+  defp review_has_body?(%{"body" => nil}), do: false
+  defp review_has_body?(%{"body" => _body}), do: true
+  defp review_has_body?(_review), do: false
 
   defp apply_pr_state(task, pr, reviews, comments, commits, check_runs) do
     cond do
@@ -92,11 +152,17 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   end
 
   defp apply_waiting_for_input(task, pr, reviews, comments, commits, check_runs) do
+    # A human hand-fixing the branch during review is re-verified, not
+    # fought: suppress the CI/merge auto-fix while a human authored the
+    # latest commit. Explicit feedback (changes requested / comments)
+    # still wakes the agent regardless of who pushed last.
+    human_pushed_last? = latest_commit_human?(commits)
+
     cond do
-      merge_conflict?(pr) ->
+      not human_pushed_last? and merge_conflict?(pr) ->
         transition_with_seen_at(task, comments)
 
-      ci_failing?(check_runs) ->
+      not human_pushed_last? and ci_failing?(check_runs) ->
         transition_with_seen_at(task, comments)
 
       has_review_state?(reviews, "CHANGES_REQUESTED") ->
@@ -183,6 +249,33 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
       nil -> nil
       commit -> get_in(commit, ["commit", "committer", "date"])
     end
+  end
+
+  # The Camelot agent authors commits under these git identities; a
+  # commit touched by either (as author or committer) is agent work,
+  # never a human hand-fix.
+  @agent_emails ~w(camelot-agent@anthropic.com noreply@anthropic.com)
+
+  @doc """
+  True if the latest commit on the PR was authored by a human.
+
+  Used to suppress CI/merge auto-fixes while a reviewer is hand-fixing
+  the branch. An empty commit list is not human, so the agent's own
+  self-heal path is preserved when no commits have landed yet.
+  """
+  @spec latest_commit_human?([map()]) :: boolean()
+  def latest_commit_human?(commits) do
+    case List.last(commits) do
+      nil -> false
+      commit -> human_commit?(commit)
+    end
+  end
+
+  defp human_commit?(commit) do
+    author = get_in(commit, ["commit", "author", "email"])
+    committer = get_in(commit, ["commit", "committer", "email"])
+
+    author not in @agent_emails and committer not in @agent_emails
   end
 
   defp latest_comment_date(comments) do
