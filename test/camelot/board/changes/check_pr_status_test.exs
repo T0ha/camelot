@@ -268,6 +268,25 @@ defmodule Camelot.Board.Changes.CheckPrStatusTest do
     end
   end
 
+  describe "best_effort_check_runs/1" do
+    test "passes a successful fetch through unchanged" do
+      runs = [%{"status" => "completed", "conclusion" => "success"}]
+
+      assert CheckPrStatus.best_effort_check_runs({:ok, runs}) == {:ok, runs}
+    end
+
+    test "degrades an error to no checks so the poll never aborts" do
+      # Regression: a missing Checks permission 403s the check-runs
+      # endpoint; that must not take down the whole PR reconciliation.
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert CheckPrStatus.best_effort_check_runs({:error, {:http_error, 403, %{"message" => "no"}}}) == {:ok, []}
+        end)
+
+      assert log =~ "check-runs unavailable"
+    end
+  end
+
   describe "installation_id/1" do
     test "resolves the task creator's connected installation id" do
       task = %Task{creator: %User{github_installations: [%Installation{installation_id: 42, account_login: "acme-org"}]}}

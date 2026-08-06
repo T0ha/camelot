@@ -89,9 +89,37 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
 
   defp fetch_check_runs(owner, repo, pr_data, opts) do
     case get_in(pr_data, ["head", "sha"]) do
-      nil -> {:ok, []}
-      sha -> Client.list_check_runs(owner, repo, sha, opts)
+      nil ->
+        {:ok, []}
+
+      sha ->
+        owner
+        |> Client.list_check_runs(repo, sha, opts)
+        |> best_effort_check_runs()
     end
+  end
+
+  @doc """
+  Coerces a check-runs fetch into an always-`{:ok, runs}` result.
+
+  CI status only *enriches* PR reconciliation (a failing run queues an
+  auto-fix); it must never block it. A missing **Checks** permission on
+  the App installation 403s the check-runs endpoint — degrade that to
+  "no checks" so merge-conflict, review, and comment handling still run,
+  mirroring `fetch_review_comments/4`. The trade-off is intentional: CI
+  failures simply go undetected until the permission is granted.
+  """
+  @spec best_effort_check_runs({:ok, [map()]} | {:error, term()}) ::
+          {:ok, [map()]}
+  def best_effort_check_runs({:ok, runs}), do: {:ok, runs}
+
+  def best_effort_check_runs({:error, reason}) do
+    Logger.warning(
+      "check-runs unavailable (#{inspect(reason)}); treating as " <>
+        "no checks"
+    )
+
+    {:ok, []}
   end
 
   # Best-effort: inline review comments enrich detection but must never
