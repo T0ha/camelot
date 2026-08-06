@@ -5,6 +5,7 @@ defmodule Camelot.Board.Changes.CheckPrStatusTest do
   alias Camelot.Board.Changes.CheckPrStatus
   alias Camelot.Board.Task
   alias Camelot.Github.Installation
+  alias Camelot.Projects.Project
 
   @commit "2026-07-09T13:42:09Z"
 
@@ -154,15 +155,114 @@ defmodule Camelot.Board.Changes.CheckPrStatusTest do
     end
   end
 
+  describe "merge_review_feedback/3" do
+    test "folds inline review comments into the comment set" do
+      review_comment = %{
+        "created_at" => "2026-07-10T05:19:45Z",
+        "user" => %{"login" => "T0ha"},
+        "body" => "is_list is not needed here.",
+        "path" => "lib/foo.ex",
+        "line" => 12
+      }
+
+      assert [%{"body" => "is_list is not needed here."}] =
+               CheckPrStatus.merge_review_feedback([], [review_comment], [])
+    end
+
+    test "folds a COMMENTED review body into the comment set" do
+      review = %{
+        "state" => "COMMENTED",
+        "submitted_at" => "2026-07-10T05:19:45Z",
+        "user" => %{"login" => "T0ha"},
+        "body" => "Please tidy this up."
+      }
+
+      assert [%{"created_at" => "2026-07-10T05:19:45Z", "body" => "Please tidy this up."}] =
+               CheckPrStatus.merge_review_feedback([], [], [review])
+    end
+
+    test "drops empty-body reviews (inline-only reviews carry no body)" do
+      review = %{
+        "state" => "COMMENTED",
+        "submitted_at" => "2026-07-10T05:19:45Z",
+        "user" => %{"login" => "T0ha"},
+        "body" => ""
+      }
+
+      assert CheckPrStatus.merge_review_feedback([], [], [review]) == []
+    end
+
+    test "keeps existing issue comments alongside review feedback" do
+      issue = comment("2026-07-10T05:00:00Z")
+      review_comment = %{"created_at" => "2026-07-10T05:19:45Z", "user" => %{}, "body" => "x"}
+
+      merged = CheckPrStatus.merge_review_feedback([issue], [review_comment], [])
+
+      assert length(merged) == 2
+    end
+
+    test "an inline review comment newer than the last commit triggers detection" do
+      review_comment = %{"created_at" => "2026-07-10T05:19:45Z", "user" => %{}, "body" => "x"}
+      merged = CheckPrStatus.merge_review_feedback([], [review_comment], [])
+
+      assert CheckPrStatus.new_comments?(merged, @commit, nil)
+    end
+  end
+
+  describe "auto_fix_available?/1" do
+    test "allows fixes below the cap of 2" do
+      assert CheckPrStatus.auto_fix_available?(%Task{pr_auto_fix_attempts: 0})
+      assert CheckPrStatus.auto_fix_available?(%Task{pr_auto_fix_attempts: 1})
+    end
+
+    test "stops once the cap of 2 is reached" do
+      refute CheckPrStatus.auto_fix_available?(%Task{pr_auto_fix_attempts: 2})
+      refute CheckPrStatus.auto_fix_available?(%Task{pr_auto_fix_attempts: 3})
+    end
+  end
+
+  describe "best_effort_check_runs/1" do
+    test "passes a successful fetch through unchanged" do
+      runs = [%{"status" => "completed", "conclusion" => "success"}]
+
+      assert CheckPrStatus.best_effort_check_runs({:ok, runs}) == {:ok, runs}
+    end
+
+    test "degrades an error to no checks so the poll never aborts" do
+      # Regression: a missing Checks permission 403s the check-runs
+      # endpoint; that must not take down the whole PR reconciliation.
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert CheckPrStatus.best_effort_check_runs({:error, {:http_error, 403, %{"message" => "no"}}}) == {:ok, []}
+        end)
+
+      assert log =~ "check-runs unavailable"
+    end
+  end
+
   describe "installation_id/1" do
     test "resolves the task creator's connected installation id" do
-      task = %Task{creator: %User{github_installation: %Installation{installation_id: 42}}}
+      task = %Task{creator: %User{github_installations: [%Installation{installation_id: 42, account_login: "acme-org"}]}}
       assert CheckPrStatus.installation_id(task) == 42
     end
 
     test "is nil when the creator has no connected installation" do
-      task = %Task{creator: %User{github_installation: nil}}
+      task = %Task{creator: %User{github_installations: []}}
       assert is_nil(CheckPrStatus.installation_id(task))
+    end
+
+    test "resolves the installation matching the task's project github_owner when the creator has several" do
+      task = %Task{
+        project: %Project{github_owner: "other-org"},
+        creator: %User{
+          github_installations: [
+            %Installation{installation_id: 1, account_login: "acme-org"},
+            %Installation{installation_id: 2, account_login: "other-org"}
+          ]
+        }
+      }
+
+      assert CheckPrStatus.installation_id(task) == 2
     end
   end
 end

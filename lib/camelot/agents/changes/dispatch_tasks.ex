@@ -9,6 +9,7 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
   alias Camelot.Agents.Agent
   alias Camelot.Board.Task
   alias Camelot.Github.Client
+  alias Camelot.Github.Resolver
   alias Camelot.Prompts.Renderer
   alias Camelot.Runtime.AgentProcess
   alias Camelot.Runtime.AgentRegistry
@@ -49,7 +50,7 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
   defp find_next_task(project_id) do
     Task
     |> Ash.read!(
-      load: [:messages, :attachments, :project, creator: [:github_installation]],
+      load: [:messages, :attachments, :project, creator: [:github_installations]],
       authorize?: false
     )
     |> Enum.filter(fn task ->
@@ -101,8 +102,14 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
   creator's connected installation, if any.
   """
   @spec installation_id(map()) :: integer() | nil
-  def installation_id(%{creator: %{github_installation: %{installation_id: id}}}), do: id
+  def installation_id(%{creator: %{github_installations: installations}} = task) do
+    Resolver.installation_id(installations, github_owner(task))
+  end
+
   def installation_id(_task), do: nil
+
+  defp github_owner(%{project: %{github_owner: owner}}), do: owner
+  defp github_owner(_task), do: nil
 
   defp ensure_agent_process(agent_id) do
     case AgentRegistry.lookup(agent_id) do
@@ -198,23 +205,41 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
 
   defp fetch_pr_comments(task) do
     project = task.project
+    opts = [installation_id: installation_id(task)]
+    owner = project.github_owner
+    repo = project.github_repo
+    pr = task.pr_number
 
-    case Client.list_pull_request_comments(
-           project.github_owner,
-           project.github_repo,
-           task.pr_number,
-           installation_id: installation_id(task)
-         ) do
-      {:ok, comments} ->
-        Enum.map_join(comments, "\n\n---\n\n", fn c ->
-          "@#{get_in(c, ["user", "login"])}: " <>
-            (c["body"] || "")
-        end)
+    issue = list_or_empty(Client.list_pull_request_comments(owner, repo, pr, opts))
+    review = list_or_empty(Client.list_pull_request_review_comments(owner, repo, pr, opts))
 
-      {:error, _} ->
-        ""
-    end
+    (issue ++ review)
+    |> Enum.sort_by(& &1["created_at"])
+    |> Enum.map_join("\n\n---\n\n", &format_pr_comment/1)
   end
+
+  defp list_or_empty({:ok, comments}), do: comments
+  defp list_or_empty({:error, _reason}), do: []
+
+  # Inline review comments carry path/line; surface them so the agent
+  # knows which code each note refers to.
+  defp format_pr_comment(comment) do
+    login = get_in(comment, ["user", "login"])
+    "@#{login}#{comment_location(comment)}: " <> (comment["body"] || "")
+  end
+
+  @doc """
+  Renders the ` (path:line)` locator for an inline review comment.
+
+  Top-level issue comments have no `path` and render to an empty
+  string; a review comment on an outdated line has `line == nil` and
+  renders just the path.
+  """
+  @spec comment_location(map()) :: String.t()
+  def comment_location(%{"path" => nil}), do: ""
+  def comment_location(%{"path" => path, "line" => nil}), do: " (#{path})"
+  def comment_location(%{"path" => path, "line" => line}), do: " (#{path}:#{line})"
+  def comment_location(_comment), do: ""
 
   defp append_conversation(prompt, messages) when is_list(messages) and messages != [] do
     sorted = Enum.sort_by(messages, & &1.inserted_at)

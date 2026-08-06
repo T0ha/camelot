@@ -32,6 +32,7 @@ defmodule Camelot.Runtime.AgentProcess do
   alias Camelot.Github.AppConfig
   alias Camelot.Github.Client
   alias Camelot.Github.InstallationTokenCache
+  alias Camelot.Github.Resolver
   alias Camelot.Runtime.AgentConfig
   alias Camelot.Runtime.AgentRegistry
   alias Camelot.Runtime.EnvVarResolver
@@ -523,7 +524,10 @@ defmodule Camelot.Runtime.AgentProcess do
 
     task =
       session.task_id &&
-        Ash.get!(Task, session.task_id, load: [:attachments, creator: [:github_installation]], authorize?: false)
+        Ash.get!(Task, session.task_id,
+          load: [:project, :attachments, creator: [:github_installations]],
+          authorize?: false
+        )
 
     config = AgentConfig.resolve(agent)
 
@@ -574,7 +578,10 @@ defmodule Camelot.Runtime.AgentProcess do
 
     task =
       state.current_task_id &&
-        Ash.get!(Task, state.current_task_id, load: [:attachments, creator: [:github_installation]], authorize?: false)
+        Ash.get!(Task, state.current_task_id,
+          load: [:project, :attachments, creator: [:github_installations]],
+          authorize?: false
+        )
 
     config = AgentConfig.resolve(agent)
 
@@ -750,8 +757,14 @@ defmodule Camelot.Runtime.AgentProcess do
     end
   end
 
-  defp installation_id(%Task{creator: %{github_installation: %{installation_id: id}}}), do: id
+  defp installation_id(%Task{creator: %{github_installations: installations}} = task) do
+    Resolver.installation_id(installations, github_owner(task))
+  end
+
   defp installation_id(_task), do: nil
+
+  defp github_owner(%Task{project: %{github_owner: owner}}), do: owner
+  defp github_owner(_task), do: nil
 
   defp append_github_app_token(secrets, installation_id, task_id) do
     if AppConfig.configured?() do
@@ -1090,7 +1103,7 @@ defmodule Camelot.Runtime.AgentProcess do
   end
 
   defp github_pr_fallback(task) do
-    task = Ash.load!(task, [:project, creator: [:github_installation]], authorize?: false)
+    task = Ash.load!(task, [:project, creator: [:github_installations]], authorize?: false)
     find_pr_on_github(task)
   end
 

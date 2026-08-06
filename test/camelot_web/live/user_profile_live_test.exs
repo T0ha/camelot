@@ -145,20 +145,56 @@ defmodule CamelotWeb.UserProfileLiveTest do
       {:ok, _view, html} = live(conn, ~p"/profile")
       assert html =~ "acme-org"
       assert html =~ "Disconnect"
+      assert html =~ "Connect another organization"
     end
 
-    test "disconnecting removes the installation and shows the connect link again", %{
+    test "connecting two orgs renders both in the list", %{conn: conn, user: user} do
+      put_app_configured()
+      link_installation!(user, "acme-org")
+      link_installation!(user, "other-org")
+
+      {:ok, _view, html} = live(conn, ~p"/profile")
+      assert html =~ "acme-org"
+      assert html =~ "other-org"
+    end
+
+    test "disconnecting one org leaves the other connected and visible", %{
       conn: conn,
       user: user
     } do
       put_app_configured()
-      link_installation!(user, "acme-org")
+      acme = link_installation!(user, "acme-org")
+      link_installation!(user, "other-org")
 
       {:ok, view, _html} = live(conn, ~p"/profile")
 
       html =
         view
-        |> element("button[phx-click=disconnect_github_app]")
+        |> element("button[phx-value-id='#{acme.id}']")
+        |> render_click()
+
+      assert html =~ "GitHub App disconnected"
+      refute html =~ "acme-org"
+      assert html =~ "other-org"
+
+      assert Installation
+             |> Ash.Query.filter(user_id == ^user.id)
+             |> Ash.read!(authorize?: false)
+             |> Enum.map(& &1.account_login) == ["other-org"]
+    end
+
+    test "disconnecting the only installation shows the connect link again", %{
+      conn: conn,
+      user: user
+    } do
+      put_app_configured()
+      installation = link_installation!(user, "acme-org")
+
+      {:ok, view, _html} = live(conn, ~p"/profile")
+
+      html =
+        view
+        |> element("button[phx-value-id='#{installation.id}']")
         |> render_click()
 
       assert html =~ "GitHub App disconnected"

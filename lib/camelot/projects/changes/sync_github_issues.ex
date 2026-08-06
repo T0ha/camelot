@@ -8,6 +8,7 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
   alias Camelot.Board.Task
   alias Camelot.Github.Client
   alias Camelot.Github.IssueAttachments
+  alias Camelot.Github.Resolver
   alias Camelot.Projects.Project
 
   require Logger
@@ -27,7 +28,7 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
 
   defp projects_with_github do
     Project
-    |> Ash.read!(load: [owner_membership: [user: [:github_installation]]], authorize?: false)
+    |> Ash.read!(load: [owner_membership: [user: [:github_installations]]], authorize?: false)
     |> Enum.filter(fn p ->
       p.github_owner && p.github_repo && p.owner_membership
     end)
@@ -84,6 +85,9 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
   project owner's connected installation, if any.
   """
   @spec installation_id(Project.t()) :: integer() | nil
-  def installation_id(%{owner_membership: %{user: %{github_installation: %{installation_id: id}}}}), do: id
+  def installation_id(%{owner_membership: %{user: %{github_installations: installations}}} = project) do
+    Resolver.installation_id(installations, project.github_owner)
+  end
+
   def installation_id(_project), do: nil
 end

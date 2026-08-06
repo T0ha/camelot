@@ -109,10 +109,20 @@ jobs:
             -t ${{ env.IMAGE }}:${{ github.sha }} \
             $(printf '${{ env.IMAGE }}@sha256:%s ' *)
 
+      # Pin the caprover CLI: the caprover/deploy-from-github action
+      # installs it unpinned, and caprover 2.4.0 (2026-08-05) bumped
+      # commander (duplicate -t flag crash) and update-notifier (ESM
+      # require crash), breaking every deploy. 2.3.1 is the last good
+      # release. --caproverUrl auto-prepends https://captain. to the
+      # root domain.
       - name: Deploy Image to CapRover (test)
-        uses: caprover/deploy-from-github@v1.1.2
-        with:
-          server: "${{ vars.CAPROVER_SERVER }}"
-          app: "${{ vars.APP_NAME }}"
-          token: "${{ secrets.APP_TOKEN }}"
-          image: "${{ env.IMAGE }}:${{ github.sha }}"
+        env:
+          CAPROVER_URL: "${{ vars.CAPROVER_SERVER }}"
+          CAPROVER_APP_TOKEN: "${{ secrets.APP_TOKEN }}"
+          CAPROVER_IMAGE_NAME: "${{ env.IMAGE }}:${{ github.sha }}"
+        run: |
+          npx --yes caprover@2.3.1 deploy \
+            --caproverUrl "$CAPROVER_URL" \
+            --appToken "$CAPROVER_APP_TOKEN" \
+            --appName "${{ vars.APP_NAME }}" \
+            --imageName "$CAPROVER_IMAGE_NAME"

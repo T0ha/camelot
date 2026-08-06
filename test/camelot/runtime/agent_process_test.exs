@@ -201,8 +201,12 @@ defmodule Camelot.Runtime.AgentProcessTest do
     end
 
     defp task_with_installation(installation_id) do
-      installation = installation_id && %Installation{installation_id: installation_id}
-      %Task{creator: %User{github_installation: installation}}
+      installations =
+        if installation_id,
+          do: [%Installation{installation_id: installation_id, account_login: "acme-org"}],
+          else: []
+
+      %Task{creator: %User{github_installations: installations}}
     end
 
     test "appends a github_app_token secret when the creator has a linked installation and the App is configured" do
@@ -237,6 +241,27 @@ defmodule Camelot.Runtime.AgentProcessTest do
       id = System.unique_integer([:positive])
 
       assert AgentProcess.maybe_append_github_app_token([], task_with_installation(id), "task-1") == []
+    end
+
+    test "resolves the installation matching the task's project github_owner when the creator has several" do
+      put_app_configured()
+      matching_id = System.unique_integer([:positive])
+      other_id = System.unique_integer([:positive])
+      seed_cached_token(matching_id, "matching-token")
+      seed_cached_token(other_id, "other-token")
+
+      task = %Task{
+        project: %Project{github_owner: "other-org"},
+        creator: %User{
+          github_installations: [
+            %Installation{installation_id: other_id, account_login: "acme-org"},
+            %Installation{installation_id: matching_id, account_login: "other-org"}
+          ]
+        }
+      }
+
+      assert [%{kind: :github_app_token, value: "matching-token"}] =
+               AgentProcess.maybe_append_github_app_token([], task, "task-1")
     end
 
     test "preserves already-built secrets, appending after them" do
