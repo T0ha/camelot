@@ -19,10 +19,24 @@ GitHub App installation).
 On github.com, create a new GitHub App (either a personal or org App) with:
 
 - **Permissions**: Repository — Contents (read/write), Pull requests
-  (read/write), Issues (read/write), Metadata (read).
+  (read/write), Issues (read/write), Checks (read), Metadata (read).
 - **Webhook events**: `installation`, `installation_repositories`.
 - **Setup URL**: `https://<your-camelot-host>/github/setup`
 - **Webhook URL**: `https://<your-camelot-host>/github/webhooks`
+
+**Checks (read) is required** for PR CI-status polling — Camelot reads
+`commits/{sha}/check-runs` to auto-fix a task when CI fails. Without it that
+endpoint returns `403 "Resource not accessible by integration"`. Camelot now
+degrades gracefully (CI-failure detection is skipped; merge-conflict, review,
+and comment handling keep working), so it is safe to omit, but CI-failure
+auto-fix stays off until the permission is granted.
+
+> **Changing permissions on an already-installed App does not take effect
+> immediately.** GitHub raises a *pending permission request* that the
+> account/org owner must approve (Settings → Installed GitHub Apps → the App →
+> "Review request"), and Camelot caches installation access tokens for up to
+> ~1h — so a newly granted permission can take up to an hour to apply unless
+> the app is restarted.
 
 Both URLs are also shown on `/admin/settings` once the App is configured
 (see below), so you can copy them from there.
