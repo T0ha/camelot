@@ -24,6 +24,11 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   `<login>@users.noreply.github.com` — and was misclassified as human,
   which wedged the auto-fix indefinitely. See git history to restore it
   with a robust identity check.)
+
+  Those automatic re-dispatches are capped at `@max_auto_fix_attempts`
+  consecutive attempts, so a task the agent cannot fix stops looping and
+  is left for human review. The counter resets on explicit human
+  feedback (changes requested / new comments).
   """
   use Ash.Resource.Change
 
@@ -32,6 +37,11 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   alias Camelot.Github.Resolver
 
   require Logger
+
+  # Cap on consecutive automatic PR fix re-dispatches (merge conflict /
+  # CI failure) before a task is left for human review. Prevents an
+  # unfixable PR from re-queuing the agent every poll forever.
+  @max_auto_fix_attempts 2
 
   @impl true
   @spec change(
@@ -183,25 +193,53 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   end
 
   defp apply_waiting_for_input(task, pr, reviews, comments, commits, check_runs) do
-    cond do
-      merge_conflict?(pr) ->
-        transition_with_seen_at(task, comments)
+    auto_fixable? = merge_conflict?(pr) or ci_failing?(check_runs)
+    maybe_log_auto_fix_cap(task, auto_fixable?)
 
-      ci_failing?(check_runs) ->
-        transition_with_seen_at(task, comments)
+    cond do
+      auto_fixable? and auto_fix_available?(task) ->
+        request_changes(task, comments, task.pr_auto_fix_attempts + 1)
 
       has_review_state?(reviews, "CHANGES_REQUESTED") ->
-        transition_with_seen_at(task, comments)
+        request_changes(task, comments, 0)
 
       has_review_state?(reviews, "APPROVED") ->
         transition(task, :complete)
 
       has_new_comments?(task, comments, commits) ->
-        transition_with_seen_at(task, comments)
+        request_changes(task, comments, 0)
 
       true ->
         :ok
     end
+  end
+
+  @doc """
+  Whether the task still has automatic PR fix attempts left.
+
+  Merge-conflict and CI-failure auto-fixes re-dispatch the agent, capped
+  at `#{@max_auto_fix_attempts}` consecutive attempts so a PR the agent
+  cannot fix stops looping. The counter resets on explicit human
+  feedback (changes requested / new comments).
+  """
+  @spec auto_fix_available?(Task.t()) :: boolean()
+  def auto_fix_available?(%{pr_auto_fix_attempts: attempts}) do
+    attempts < @max_auto_fix_attempts
+  end
+
+  def auto_fix_available?(_task), do: true
+
+  defp maybe_log_auto_fix_cap(task, true), do: log_auto_fix_cap(task, auto_fix_available?(task))
+  defp maybe_log_auto_fix_cap(_task, false), do: :ok
+
+  defp log_auto_fix_cap(_task, true), do: :ok
+
+  defp log_auto_fix_cap(task, false) do
+    Logger.info(
+      "Task #{task.id}: PR issue persists after " <>
+        "#{@max_auto_fix_attempts} auto-fix attempts; " <>
+        "leaving for human review"
+    )
   end
 
   @doc """
@@ -283,7 +321,7 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
     |> Enum.max(fn -> nil end)
   end
 
-  defp transition_with_seen_at(task, comments) do
+  defp request_changes(task, comments, attempts) do
     seen_at =
       case latest_comment_date(comments) do
         nil -> DateTime.utc_now()
@@ -292,7 +330,7 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
 
     case Ash.update(
            task,
-           %{pr_comments_seen_at: seen_at},
+           %{pr_comments_seen_at: seen_at, pr_auto_fix_attempts: attempts},
            action: :request_pr_changes
          ) do
       {:ok, updated} ->

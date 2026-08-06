@@ -209,6 +209,18 @@ defmodule Camelot.Board.Changes.CheckPrStatusTest do
     end
   end
 
+  describe "auto_fix_available?/1" do
+    test "allows fixes below the cap of 2" do
+      assert CheckPrStatus.auto_fix_available?(%Task{pr_auto_fix_attempts: 0})
+      assert CheckPrStatus.auto_fix_available?(%Task{pr_auto_fix_attempts: 1})
+    end
+
+    test "stops once the cap of 2 is reached" do
+      refute CheckPrStatus.auto_fix_available?(%Task{pr_auto_fix_attempts: 2})
+      refute CheckPrStatus.auto_fix_available?(%Task{pr_auto_fix_attempts: 3})
+    end
+  end
+
   describe "best_effort_check_runs/1" do
     test "passes a successful fetch through unchanged" do
       runs = [%{"status" => "completed", "conclusion" => "success"}]
