@@ -17,10 +17,18 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   body of a `COMMENTED` review — a reviewer who leaves inline notes or
   a plain "Comment" review (not "Request changes") is acted on too.
 
-  Merge-conflict and CI-failure auto-fixes are suppressed while a human
-  authored the latest commit: a reviewer hand-fixing the branch during
-  review is re-verified, not fought. The agent's own commits (authored
-  by the Camelot agent) never count as human activity.
+  Merge-conflict and CI-failure auto-fixes fire whenever the PR is in
+  that state, regardless of who authored the latest commit. (A previous
+  "suppress while a human pushed last" guard was removed: the agent's
+  own commit identity varies by deployment — e.g. the GitHub App bot's
+  `<login>@users.noreply.github.com` — and was misclassified as human,
+  which wedged the auto-fix indefinitely. See git history to restore it
+  with a robust identity check.)
+
+  Those automatic re-dispatches are capped at `@max_auto_fix_attempts`
+  consecutive attempts, so a task the agent cannot fix stops looping and
+  is left for human review. The counter resets on explicit human
+  feedback (changes requested / new comments).
   """
   use Ash.Resource.Change
 
@@ -29,6 +37,11 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   alias Camelot.Github.Resolver
 
   require Logger
+
+  # Cap on consecutive automatic PR fix re-dispatches (merge conflict /
+  # CI failure) before a task is left for human review. Prevents an
+  # unfixable PR from re-queuing the agent every poll forever.
+  @max_auto_fix_attempts 2
 
   @impl true
   @spec change(
@@ -89,9 +102,37 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
 
   defp fetch_check_runs(owner, repo, pr_data, opts) do
     case get_in(pr_data, ["head", "sha"]) do
-      nil -> {:ok, []}
-      sha -> Client.list_check_runs(owner, repo, sha, opts)
+      nil ->
+        {:ok, []}
+
+      sha ->
+        owner
+        |> Client.list_check_runs(repo, sha, opts)
+        |> best_effort_check_runs()
     end
+  end
+
+  @doc """
+  Coerces a check-runs fetch into an always-`{:ok, runs}` result.
+
+  CI status only *enriches* PR reconciliation (a failing run queues an
+  auto-fix); it must never block it. A missing **Checks** permission on
+  the App installation 403s the check-runs endpoint — degrade that to
+  "no checks" so merge-conflict, review, and comment handling still run,
+  mirroring `fetch_review_comments/4`. The trade-off is intentional: CI
+  failures simply go undetected until the permission is granted.
+  """
+  @spec best_effort_check_runs({:ok, [map()]} | {:error, term()}) ::
+          {:ok, [map()]}
+  def best_effort_check_runs({:ok, runs}), do: {:ok, runs}
+
+  def best_effort_check_runs({:error, reason}) do
+    Logger.warning(
+      "check-runs unavailable (#{inspect(reason)}); treating as " <>
+        "no checks"
+    )
+
+    {:ok, []}
   end
 
   # Best-effort: inline review comments enrich detection but must never
@@ -152,31 +193,53 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   end
 
   defp apply_waiting_for_input(task, pr, reviews, comments, commits, check_runs) do
-    # A human hand-fixing the branch during review is re-verified, not
-    # fought: suppress the CI/merge auto-fix while a human authored the
-    # latest commit. Explicit feedback (changes requested / comments)
-    # still wakes the agent regardless of who pushed last.
-    human_pushed_last? = latest_commit_human?(commits)
+    auto_fixable? = merge_conflict?(pr) or ci_failing?(check_runs)
+    maybe_log_auto_fix_cap(task, auto_fixable?)
 
     cond do
-      not human_pushed_last? and merge_conflict?(pr) ->
-        transition_with_seen_at(task, comments)
-
-      not human_pushed_last? and ci_failing?(check_runs) ->
-        transition_with_seen_at(task, comments)
+      auto_fixable? and auto_fix_available?(task) ->
+        request_changes(task, comments, task.pr_auto_fix_attempts + 1)
 
       has_review_state?(reviews, "CHANGES_REQUESTED") ->
-        transition_with_seen_at(task, comments)
+        request_changes(task, comments, 0)
 
       has_review_state?(reviews, "APPROVED") ->
         transition(task, :complete)
 
       has_new_comments?(task, comments, commits) ->
-        transition_with_seen_at(task, comments)
+        request_changes(task, comments, 0)
 
       true ->
         :ok
     end
+  end
+
+  @doc """
+  Whether the task still has automatic PR fix attempts left.
+
+  Merge-conflict and CI-failure auto-fixes re-dispatch the agent, capped
+  at `#{@max_auto_fix_attempts}` consecutive attempts so a PR the agent
+  cannot fix stops looping. The counter resets on explicit human
+  feedback (changes requested / new comments).
+  """
+  @spec auto_fix_available?(Task.t()) :: boolean()
+  def auto_fix_available?(%{pr_auto_fix_attempts: attempts}) do
+    attempts < @max_auto_fix_attempts
+  end
+
+  def auto_fix_available?(_task), do: true
+
+  defp maybe_log_auto_fix_cap(task, true), do: log_auto_fix_cap(task, auto_fix_available?(task))
+  defp maybe_log_auto_fix_cap(_task, false), do: :ok
+
+  defp log_auto_fix_cap(_task, true), do: :ok
+
+  defp log_auto_fix_cap(task, false) do
+    Logger.info(
+      "Task #{task.id}: PR issue persists after " <>
+        "#{@max_auto_fix_attempts} auto-fix attempts; " <>
+        "leaving for human review"
+    )
   end
 
   @doc """
@@ -251,33 +314,6 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
     end
   end
 
-  # The Camelot agent authors commits under these git identities; a
-  # commit touched by either (as author or committer) is agent work,
-  # never a human hand-fix.
-  @agent_emails ~w(camelot-agent@anthropic.com noreply@anthropic.com)
-
-  @doc """
-  True if the latest commit on the PR was authored by a human.
-
-  Used to suppress CI/merge auto-fixes while a reviewer is hand-fixing
-  the branch. An empty commit list is not human, so the agent's own
-  self-heal path is preserved when no commits have landed yet.
-  """
-  @spec latest_commit_human?([map()]) :: boolean()
-  def latest_commit_human?(commits) do
-    case List.last(commits) do
-      nil -> false
-      commit -> human_commit?(commit)
-    end
-  end
-
-  defp human_commit?(commit) do
-    author = get_in(commit, ["commit", "author", "email"])
-    committer = get_in(commit, ["commit", "committer", "email"])
-
-    author not in @agent_emails and committer not in @agent_emails
-  end
-
   defp latest_comment_date(comments) do
     comments
     |> Enum.map(& &1["created_at"])
@@ -285,7 +321,7 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
     |> Enum.max(fn -> nil end)
   end
 
-  defp transition_with_seen_at(task, comments) do
+  defp request_changes(task, comments, attempts) do
     seen_at =
       case latest_comment_date(comments) do
         nil -> DateTime.utc_now()
@@ -294,7 +330,7 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
 
     case Ash.update(
            task,
-           %{pr_comments_seen_at: seen_at},
+           %{pr_comments_seen_at: seen_at, pr_auto_fix_attempts: attempts},
            action: :request_pr_changes
          ) do
       {:ok, updated} ->

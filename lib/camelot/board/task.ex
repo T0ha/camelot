@@ -97,6 +97,18 @@ defmodule Camelot.Board.Task do
       public?(true)
     end
 
+    attribute :pr_auto_fix_attempts, :integer do
+      allow_nil?(false)
+      public?(true)
+      default(0)
+
+      description(
+        "Consecutive automatic PR fix re-dispatches (merge conflict / " <>
+          "CI failure). Capped so a task the agent cannot fix stops " <>
+          "looping; reset on explicit human feedback."
+      )
+    end
+
     attribute :allowed_tools, {:array, :string} do
       allow_nil?(false)
       public?(true)
@@ -353,7 +365,7 @@ defmodule Camelot.Board.Task do
     end
 
     update :request_pr_changes do
-      accept([:pr_comments_seen_at])
+      accept([:pr_comments_seen_at, :pr_auto_fix_attempts])
 
       validate(attribute_equals(:stage, :pr))
       validate(attribute_equals(:state, :waiting_for_input))
@@ -402,6 +414,6 @@ defmodule Camelot.Board.Task do
   """
   @spec column_stages() :: [atom()]
   def column_stages do
-    @stages -- [:cancelled]
+    @stages -- [:cancelled, :draft]
   end
 end

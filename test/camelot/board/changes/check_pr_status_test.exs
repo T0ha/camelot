@@ -209,62 +209,34 @@ defmodule Camelot.Board.Changes.CheckPrStatusTest do
     end
   end
 
-  describe "latest_commit_human?/1" do
-    defp agent_commit do
-      %{
-        "commit" => %{
-          "author" => %{"email" => "camelot-agent@anthropic.com"},
-          "committer" => %{"email" => "camelot-agent@anthropic.com"}
-        }
-      }
+  describe "auto_fix_available?/1" do
+    test "allows fixes below the cap of 2" do
+      assert CheckPrStatus.auto_fix_available?(%Task{pr_auto_fix_attempts: 0})
+      assert CheckPrStatus.auto_fix_available?(%Task{pr_auto_fix_attempts: 1})
     end
 
-    defp human_commit(email \\ "anton@rollhub.com") do
-      %{
-        "commit" => %{
-          "author" => %{"email" => email},
-          "committer" => %{"email" => email}
-        }
-      }
+    test "stops once the cap of 2 is reached" do
+      refute CheckPrStatus.auto_fix_available?(%Task{pr_auto_fix_attempts: 2})
+      refute CheckPrStatus.auto_fix_available?(%Task{pr_auto_fix_attempts: 3})
+    end
+  end
+
+  describe "best_effort_check_runs/1" do
+    test "passes a successful fetch through unchanged" do
+      runs = [%{"status" => "completed", "conclusion" => "success"}]
+
+      assert CheckPrStatus.best_effort_check_runs({:ok, runs}) == {:ok, runs}
     end
 
-    test "a human-authored last commit is human" do
-      assert CheckPrStatus.latest_commit_human?([agent_commit(), human_commit()])
-    end
+    test "degrades an error to no checks so the poll never aborts" do
+      # Regression: a missing Checks permission 403s the check-runs
+      # endpoint; that must not take down the whole PR reconciliation.
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert CheckPrStatus.best_effort_check_runs({:error, {:http_error, 403, %{"message" => "no"}}}) == {:ok, []}
+        end)
 
-    test "an agent-authored last commit is not human" do
-      refute CheckPrStatus.latest_commit_human?([human_commit(), agent_commit()])
-    end
-
-    test "only the last commit decides" do
-      refute CheckPrStatus.latest_commit_human?([human_commit(), agent_commit()])
-      assert CheckPrStatus.latest_commit_human?([agent_commit(), human_commit()])
-    end
-
-    test "no commits is not human (preserves agent self-heal path)" do
-      refute CheckPrStatus.latest_commit_human?([])
-    end
-
-    test "the Claude co-author noreply email counts as agent" do
-      commit = %{
-        "commit" => %{
-          "author" => %{"email" => "noreply@anthropic.com"},
-          "committer" => %{"email" => "noreply@anthropic.com"}
-        }
-      }
-
-      refute CheckPrStatus.latest_commit_human?([commit])
-    end
-
-    test "an agent author with a human committer is still agent" do
-      commit = %{
-        "commit" => %{
-          "author" => %{"email" => "camelot-agent@anthropic.com"},
-          "committer" => %{"email" => "anton@rollhub.com"}
-        }
-      }
-
-      refute CheckPrStatus.latest_commit_human?([commit])
+      assert log =~ "check-runs unavailable"
     end
   end
 
