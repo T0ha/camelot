@@ -209,65 +209,6 @@ defmodule Camelot.Board.Changes.CheckPrStatusTest do
     end
   end
 
-  describe "latest_commit_human?/1" do
-    defp agent_commit do
-      %{
-        "commit" => %{
-          "author" => %{"email" => "camelot-agent@anthropic.com"},
-          "committer" => %{"email" => "camelot-agent@anthropic.com"}
-        }
-      }
-    end
-
-    defp human_commit(email \\ "anton@rollhub.com") do
-      %{
-        "commit" => %{
-          "author" => %{"email" => email},
-          "committer" => %{"email" => email}
-        }
-      }
-    end
-
-    test "a human-authored last commit is human" do
-      assert CheckPrStatus.latest_commit_human?([agent_commit(), human_commit()])
-    end
-
-    test "an agent-authored last commit is not human" do
-      refute CheckPrStatus.latest_commit_human?([human_commit(), agent_commit()])
-    end
-
-    test "only the last commit decides" do
-      refute CheckPrStatus.latest_commit_human?([human_commit(), agent_commit()])
-      assert CheckPrStatus.latest_commit_human?([agent_commit(), human_commit()])
-    end
-
-    test "no commits is not human (preserves agent self-heal path)" do
-      refute CheckPrStatus.latest_commit_human?([])
-    end
-
-    test "the Claude co-author noreply email counts as agent" do
-      commit = %{
-        "commit" => %{
-          "author" => %{"email" => "noreply@anthropic.com"},
-          "committer" => %{"email" => "noreply@anthropic.com"}
-        }
-      }
-
-      refute CheckPrStatus.latest_commit_human?([commit])
-    end
-
-    test "an agent author with a human committer is still agent" do
-      commit = %{
-        "commit" => %{
-          "author" => %{"email" => "camelot-agent@anthropic.com"},
-          "committer" => %{"email" => "anton@rollhub.com"}
-        }
-      }
-
-      refute CheckPrStatus.latest_commit_human?([commit])
-    end
-  end
-
   describe "best_effort_check_runs/1" do
     test "passes a successful fetch through unchanged" do
       runs = [%{"status" => "completed", "conclusion" => "success"}]

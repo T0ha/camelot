@@ -17,10 +17,13 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   body of a `COMMENTED` review — a reviewer who leaves inline notes or
   a plain "Comment" review (not "Request changes") is acted on too.
 
-  Merge-conflict and CI-failure auto-fixes are suppressed while a human
-  authored the latest commit: a reviewer hand-fixing the branch during
-  review is re-verified, not fought. The agent's own commits (authored
-  by the Camelot agent) never count as human activity.
+  Merge-conflict and CI-failure auto-fixes fire whenever the PR is in
+  that state, regardless of who authored the latest commit. (A previous
+  "suppress while a human pushed last" guard was removed: the agent's
+  own commit identity varies by deployment — e.g. the GitHub App bot's
+  `<login>@users.noreply.github.com` — and was misclassified as human,
+  which wedged the auto-fix indefinitely. See git history to restore it
+  with a robust identity check.)
   """
   use Ash.Resource.Change
 
@@ -180,17 +183,11 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   end
 
   defp apply_waiting_for_input(task, pr, reviews, comments, commits, check_runs) do
-    # A human hand-fixing the branch during review is re-verified, not
-    # fought: suppress the CI/merge auto-fix while a human authored the
-    # latest commit. Explicit feedback (changes requested / comments)
-    # still wakes the agent regardless of who pushed last.
-    human_pushed_last? = latest_commit_human?(commits)
-
     cond do
-      not human_pushed_last? and merge_conflict?(pr) ->
+      merge_conflict?(pr) ->
         transition_with_seen_at(task, comments)
 
-      not human_pushed_last? and ci_failing?(check_runs) ->
+      ci_failing?(check_runs) ->
         transition_with_seen_at(task, comments)
 
       has_review_state?(reviews, "CHANGES_REQUESTED") ->
@@ -277,33 +274,6 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
       nil -> nil
       commit -> get_in(commit, ["commit", "committer", "date"])
     end
-  end
-
-  # The Camelot agent authors commits under these git identities; a
-  # commit touched by either (as author or committer) is agent work,
-  # never a human hand-fix.
-  @agent_emails ~w(camelot-agent@anthropic.com noreply@anthropic.com)
-
-  @doc """
-  True if the latest commit on the PR was authored by a human.
-
-  Used to suppress CI/merge auto-fixes while a reviewer is hand-fixing
-  the branch. An empty commit list is not human, so the agent's own
-  self-heal path is preserved when no commits have landed yet.
-  """
-  @spec latest_commit_human?([map()]) :: boolean()
-  def latest_commit_human?(commits) do
-    case List.last(commits) do
-      nil -> false
-      commit -> human_commit?(commit)
-    end
-  end
-
-  defp human_commit?(commit) do
-    author = get_in(commit, ["commit", "author", "email"])
-    committer = get_in(commit, ["commit", "committer", "email"])
-
-    author not in @agent_emails and committer not in @agent_emails
   end
 
   defp latest_comment_date(comments) do
