@@ -470,6 +470,41 @@ defmodule Camelot.Runtime.AgentProcessTest do
     end
   end
 
+  describe "empty_result?/1" do
+    defp parsed(overrides) do
+      base = %{result_text: "", structured: nil, assistant_texts: [], permission_denials: []}
+      {:ok, Map.merge(base, Map.new(overrides))}
+    end
+
+    test "true when there is no result, structured, denials, or assistant text" do
+      assert AgentProcess.empty_result?(parsed([]))
+    end
+
+    test "false when there is result text" do
+      refute AgentProcess.empty_result?(parsed(result_text: "done"))
+    end
+
+    test "false when there is a structured payload" do
+      refute AgentProcess.empty_result?(parsed(structured: %{"decision" => "plan"}))
+    end
+
+    test "false when there are permission denials" do
+      refute AgentProcess.empty_result?(parsed(permission_denials: [%{"tool_name" => "Bash"}]))
+    end
+
+    test "false when an assistant turn has content" do
+      refute AgentProcess.empty_result?(parsed(assistant_texts: ["I did the thing"]))
+    end
+
+    test "true when assistant turns are all blank" do
+      assert AgentProcess.empty_result?(parsed(assistant_texts: ["", "  "]))
+    end
+
+    test "false for a runner-death/error parse" do
+      refute AgentProcess.empty_result?({:error, "runner died"})
+    end
+  end
+
   describe "finish_session/4" do
     test "is a no-op when there is no current session" do
       state = %AgentProcess{agent_id: "a", current_session_id: nil, output_buffer: ""}

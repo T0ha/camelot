@@ -345,25 +345,70 @@ defmodule Camelot.Runtime.AgentProcess do
   defp finalize_runner_exit(state, exit_code, died_reason) do
     parsed = parsed_for_exit(state, died_reason)
     denials = extract_denials(parsed)
-    finish_session(state, exit_code, parsed, denials)
+    empty? = exit_code == 0 and empty_result?(parsed)
+    finish_session(state, exit_code, parsed, denials, empty?)
     if state.current_session_id, do: SessionRegistry.unregister(state.current_session_id)
 
     failed? = exit_code != 0 or match?({:error, _}, parsed)
 
-    if failed? and state.retry_count < state.max_retries do
+    # A clean-but-empty run (agent produced nothing actionable) is retried
+    # on the same footing as a failure — bounded by the agent's
+    # `max_retries` — instead of silently parking the task.
+    if (failed? or empty?) and state.retry_count < state.max_retries do
       release_pool_slot(state)
       schedule_retry(state)
     else
+      finalize_terminal(state, exit_code, parsed, denials, failed?, empty?)
+    end
+  end
+
+  # Terminal handling once retries are exhausted (or none configured). An
+  # empty run bypasses the stage handlers and errors the task with a clear
+  # reason, so it never lands in a message-less `waiting_for_input`.
+  defp finalize_terminal(state, exit_code, parsed, denials, failed?, empty?) do
+    if empty? do
+      mark_task_error(state.current_task_id, empty_error_reason(state))
+    else
       handle_cli_exit(state, exit_code, parsed)
       if failed?, do: mark_task_error(state.current_task_id, parsed_error(parsed))
-      release_and_idle(state)
-
-      if denials == [] do
-        {:noreply, reset_runner(state)}
-      else
-        {:noreply, clear_runner(state)}
-      end
     end
+
+    release_and_idle(state)
+
+    if denials == [] do
+      {:noreply, reset_runner(state)}
+    else
+      {:noreply, clear_runner(state)}
+    end
+  end
+
+  @doc """
+  Whether a parsed run produced nothing actionable: no result text, no
+  structured payload, no permission denials, and no non-blank assistant
+  turns. Such a run is retried (up to the agent's `max_retries`) and its
+  session is marked `:empty`, rather than silently parking the task in
+  `waiting_for_input`.
+  """
+  @spec empty_result?(term()) :: boolean()
+  def empty_result?({:ok, parsed}) do
+    blank?(parsed.result_text) and is_nil(parsed.structured) and
+      (parsed.permission_denials || []) == [] and
+      Enum.all?(parsed.assistant_texts || [], &blank?/1)
+  end
+
+  def empty_result?(_parsed), do: false
+
+  defp blank?(nil), do: true
+  defp blank?(text) when is_binary(text), do: String.trim(text) == ""
+  defp blank?(_other), do: false
+
+  defp empty_error_reason(%{max_retries: 0}) do
+    "Agent finished without producing any output."
+  end
+
+  defp empty_error_reason(%{max_retries: retries}) do
+    "Agent finished without producing any output after " <>
+      "#{retries + 1} attempts."
   end
 
   defp parsed_for_exit(state, nil) do
@@ -969,11 +1014,26 @@ defmodule Camelot.Runtime.AgentProcess do
         request_user_input(task, result.text, task_id)
 
       true ->
-        transition(task, :request_input)
+        request_user_input(task, pr_review_message(result), task_id)
     end
   end
 
   defp handle_task_result(_state, _task, _result, _task_id), do: :ok
+
+  # A clean PR-stage run with no question and no denials: surface the
+  # agent's summary so the waiting-for-input email always corresponds to a
+  # visible message. A genuinely empty run never reaches here — it is
+  # retried and marked `:empty` in `finalize_runner_exit`.
+  defp pr_review_message(result) do
+    case String.trim(result.text) do
+      "" ->
+        "I finished reviewing the PR. Please review the changes, or " <>
+          "reply with further guidance."
+
+      text ->
+        text
+    end
+  end
 
   @doc """
   Decides the planning-stage outcome from a parsed runner result.
@@ -1216,14 +1276,16 @@ defmodule Camelot.Runtime.AgentProcess do
   # DB error (or a session deleted out from under us) logs and returns
   # instead of crashing AgentProcess mid-finalisation — which would
   # strand the session as :running until the Reconciler swept it.
-  @spec finish_session(t(), integer(), term(), [map()]) :: :ok
-  def finish_session(%__MODULE__{current_session_id: nil}, _exit_code, _parsed, _denials) do
+  @spec finish_session(t(), integer(), term(), [map()], boolean()) :: :ok
+  def finish_session(state, exit_code, parsed, denials, empty? \\ false)
+
+  def finish_session(%__MODULE__{current_session_id: nil}, _exit_code, _parsed, _denials, _empty?) do
     :ok
   end
 
-  def finish_session(state, exit_code, parsed, denials) do
+  def finish_session(state, exit_code, parsed, denials, empty?) do
     session = Ash.get!(Session, state.current_session_id)
-    action = session_action(exit_code)
+    action = session_action(exit_code, empty?)
 
     case Ash.update(
            session,
@@ -1254,8 +1316,9 @@ defmodule Camelot.Runtime.AgentProcess do
       :ok
   end
 
-  defp session_action(0), do: :complete
-  defp session_action(_exit_code), do: :fail
+  defp session_action(_exit_code, true), do: :mark_empty
+  defp session_action(0, false), do: :complete
+  defp session_action(_exit_code, false), do: :fail
 
   defp parsed_error({:error, msg}), do: msg
   defp parsed_error(_parsed), do: nil

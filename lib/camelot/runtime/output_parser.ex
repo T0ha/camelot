@@ -145,14 +145,32 @@ defmodule Camelot.Runtime.OutputParser do
   # already include the earlier invocations). Sub-agent streams are inlined
   # with a non-nil `parent_tool_use_id`; skip them so a sub-agent result can
   # never masquerade as the session result.
+  #
+  # Prefer the last top-level result event with a non-blank `result`: a
+  # resumed session's final invocation is sometimes a wake/yield turn that
+  # emits an empty result, which would otherwise discard the real answer
+  # produced by an earlier invocation (still present in the log). Fall back
+  # to the plain last event when every result is blank.
   defp last_result_event(objects) do
-    objects
-    |> Enum.filter(&(result_event?(&1) and top_level?(&1)))
-    |> List.last()
+    top_level = Enum.filter(objects, &(result_event?(&1) and top_level?(&1)))
+
+    top_level
+    |> Enum.reverse()
+    |> Enum.find(&result_present?/1)
+    |> case do
+      nil -> List.last(top_level)
+      event -> event
+    end
   end
 
   defp result_event?(%{"type" => "result"}), do: true
   defp result_event?(_), do: false
+
+  defp result_present?(%{"result" => result}) when is_binary(result) do
+    String.trim(result) != ""
+  end
+
+  defp result_present?(_), do: false
 
   defp top_level?(%{"parent_tool_use_id" => nil}), do: true
   defp top_level?(%{"parent_tool_use_id" => _id}), do: false
