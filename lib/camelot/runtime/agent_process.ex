@@ -972,7 +972,7 @@ defmodule Camelot.Runtime.AgentProcess do
   defp handle_task_result(state, %{stage: :planning} = task, result, task_id) do
     case planning_action(state, result) do
       {:submit_plan, plan} ->
-        submit_plan(task, plan, task_id)
+        submit_plan(task, plan, fetch_referenced_plan(plan, task_id), task_id)
 
       {:request_input, text} ->
         request_user_input(task, text, task_id)
@@ -1221,8 +1221,14 @@ defmodule Camelot.Runtime.AgentProcess do
 
   defp extract_pr_info(_state, _), do: {nil, nil}
 
-  defp submit_plan(task, plan_text, task_id) do
-    case Ash.update(task, %{plan: plan_text}, action: :submit_plan) do
+  # `full_plan` is always written — nil clears a stale document left
+  # from a previous planning round after `request_plan_changes`.
+  defp submit_plan(task, plan_text, full_plan, task_id) do
+    case Ash.update(
+           task,
+           %{plan: plan_text, full_plan: full_plan},
+           action: :submit_plan
+         ) do
       {:ok, updated} ->
         broadcast_task_update(updated)
 
@@ -1230,6 +1236,58 @@ defmodule Camelot.Runtime.AgentProcess do
         Logger.warning("Failed to submit plan for task #{task_id}: #{inspect(error)}")
     end
   end
+
+  # Claude Code plan mode writes the complete plan to a file under
+  # `~/.claude/plans/` and returns only a pointer + summary. When the
+  # submitted plan references such a file, fetch the document from the
+  # still-running task workspace; on any failure fall back to nil so
+  # the task submits exactly as it would without this feature.
+  @full_plan_max_bytes 512_000
+
+  defp fetch_referenced_plan(plan, task_id) do
+    case plan_file_reference(plan) do
+      nil -> nil
+      path -> read_plan_file(task_id, path)
+    end
+  end
+
+  defp read_plan_file(task_id, path) do
+    case Runner.read_task_file(task_id, path) do
+      {:ok, content} ->
+        non_empty_capped(content)
+
+      {:error, reason} ->
+        Logger.warning(
+          "Failed to fetch referenced plan file #{path} for task " <>
+            "#{task_id}: #{inspect(reason)}"
+        )
+
+        nil
+    end
+  end
+
+  defp non_empty_capped(content) do
+    case String.trim(content) do
+      "" -> nil
+      trimmed -> binary_slice(trimmed, 0, @full_plan_max_bytes)
+    end
+  end
+
+  @doc """
+  Extracts the first `~/.claude/plans/*.md` file reference from a plan
+  text, or nil. Claude Code plan mode writes the full plan there and
+  returns only a pointer + summary; the path is matched both `~`- and
+  absolute-rooted (e.g. `/home/agent/.claude/plans/foo.md`).
+  """
+  @spec plan_file_reference(String.t() | nil) :: String.t() | nil
+  def plan_file_reference(plan) when is_binary(plan) do
+    case Regex.run(~r{(?:~|(?:/[\w.-]+)+)/\.claude/plans/[\w.-]+\.md}, plan) do
+      [path] -> path
+      nil -> nil
+    end
+  end
+
+  def plan_file_reference(_), do: nil
 
   defp request_user_input(task, text, task_id) do
     Ash.create!(TaskMessage, %{

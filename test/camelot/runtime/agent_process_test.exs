@@ -439,6 +439,43 @@ defmodule Camelot.Runtime.AgentProcessTest do
     end
   end
 
+  describe "plan_file_reference/1" do
+    test "extracts an absolute plan file path from prose" do
+      plan =
+        "See /home/agent/.claude/plans/task-decomission-vectorized.md — " <>
+          "full plan written there.\n\nSummary: deep rewrite."
+
+      assert AgentProcess.plan_file_reference(plan) ==
+               "/home/agent/.claude/plans/task-decomission-vectorized.md"
+    end
+
+    test "extracts a tilde-rooted plan file path" do
+      plan = "Full plan: ~/.claude/plans/my-plan.md"
+
+      assert AgentProcess.plan_file_reference(plan) ==
+               "~/.claude/plans/my-plan.md"
+    end
+
+    test "returns the first reference when several are present" do
+      plan =
+        "~/.claude/plans/first.md and also " <>
+          "/home/agent/.claude/plans/second.md"
+
+      assert AgentProcess.plan_file_reference(plan) ==
+               "~/.claude/plans/first.md"
+    end
+
+    test "nil when the plan has no plan-file reference" do
+      assert AgentProcess.plan_file_reference("Step 1\nStep 2") == nil
+    end
+
+    test "nil for paths outside .claude/plans or non-markdown files" do
+      assert AgentProcess.plan_file_reference("/home/agent/notes/plan.md") == nil
+      assert AgentProcess.plan_file_reference("~/.claude/plans/foo.txt") == nil
+      assert AgentProcess.plan_file_reference(nil) == nil
+    end
+  end
+
   describe "execution_pr_outcome/3" do
     defp exec_state do
       %AgentProcess{
