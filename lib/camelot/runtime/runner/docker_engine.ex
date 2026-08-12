@@ -14,7 +14,7 @@ defmodule Camelot.Runtime.Runner.DockerEngine do
       of the same task reuses the workspace.
     * `stop_task/1` removes the container backing the
       task and stops the TaskContainer. Called by
-      `AgentProcess` when the task hits a terminal stage.
+      `TaskRunner` when the task hits a terminal stage.
   """
   @behaviour Camelot.Runtime.Runner
 

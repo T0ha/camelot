@@ -4,9 +4,11 @@ defmodule Camelot.Projects.EnvVar do
   runner containers.
 
   Each row attaches to exactly one scope — a project, an
-  agent, or a user — or to none, making it a global default.
-  When the same `key` is defined at several scopes for a
-  given runner, the most specific wins in the order
+  agent CLI, or a user — or to none, making it a global
+  default. An `:agent` scoped value applies to every task
+  using that agent CLI, across all projects and users. When
+  the same `key` is defined at several scopes for a given
+  runner, the most specific wins in the order
   **project > agent > user > global** (see
   `Camelot.Runtime.EnvVarResolver`).
 

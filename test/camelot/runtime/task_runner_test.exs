@@ -1,16 +1,15 @@
-defmodule Camelot.Runtime.AgentProcessTest do
+defmodule Camelot.Runtime.TaskRunnerTest do
   use Camelot.DataCase, async: false
 
   alias Camelot.Accounts.Credential
   alias Camelot.Accounts.User
-  alias Camelot.Agents.Agent
   alias Camelot.Board.Task
   alias Camelot.Github.Installation
   alias Camelot.Projects.Membership
   alias Camelot.Projects.Project
   alias Camelot.Runtime.AgentConfig
-  alias Camelot.Runtime.AgentProcess
-  alias Camelot.Runtime.AgentRegistry
+  alias Camelot.Runtime.TaskRegistry
+  alias Camelot.Runtime.TaskRunner
   alias Camelot.Settings.SystemSetting
 
   setup do
@@ -29,90 +28,77 @@ defmodule Camelot.Runtime.AgentProcessTest do
         hashed_password: hashed
       })
 
-    {:ok, agent} =
-      Ash.create(Agent, %{
-        name: "ProcAgent",
-        template_id: agent_template!("claude_code").id,
-        project_id: project.id,
-        user_id: user.id
-      })
-
     {:ok, task} =
       Ash.create(Task, %{
         title: "Process task",
         project_id: project.id,
-        creator_id: user.id
+        creator_id: user.id,
+        agent_id: agent!("claude_code").id
       })
 
-    %{agent: agent, task: task}
+    %{task: task, user: user}
   end
 
   describe "build_secrets/2" do
-    test "always mounts the user's default SSH key, even when " <>
-           "the template does not list :ssh_private_key",
+    test "always mounts the creator's default SSH key, even when " <>
+           "the agent CLI does not list :ssh_private_key",
          ctx do
-      seed_default_ssh_key!(ctx.agent.user_id, "PRIV-default")
+      seed_default_ssh_key!(ctx.task.creator_id, "PRIV-default")
 
       config = build_config(required_credential_kinds: [])
 
       assert [
                %{kind: :ssh_private_key, value: "PRIV-default"}
-             ] = AgentProcess.build_secrets(ctx.agent, config)
+             ] = TaskRunner.build_secrets(ctx.task, config)
     end
 
-    test "appends the default SSH key alongside other template kinds",
+    test "appends the default SSH key alongside other agent CLI kinds",
          ctx do
-      seed_default_ssh_key!(ctx.agent.user_id, "PRIV-default")
+      seed_default_ssh_key!(ctx.task.creator_id, "PRIV-default")
 
       {:ok, _claude} =
         Ash.create(Credential, %{
-          user_id: ctx.agent.user_id,
+          user_id: ctx.task.creator_id,
           kind: :claude_api_key,
           value: "CLAUDE-KEY"
         })
 
       config = build_config(required_credential_kinds: [:claude_api_key])
 
-      secrets = AgentProcess.build_secrets(ctx.agent, config)
+      secrets = TaskRunner.build_secrets(ctx.task, config)
       kinds = secrets |> Enum.map(& &1.kind) |> Enum.sort()
 
       assert kinds == [:claude_api_key, :ssh_private_key]
     end
 
-    test "is a no-op when the user has no default SSH key " <>
-           "and the template doesn't require one",
+    test "is a no-op when the creator has no default SSH key " <>
+           "and the agent CLI doesn't require one",
          ctx do
       config = build_config(required_credential_kinds: [])
-      assert AgentProcess.build_secrets(ctx.agent, config) == []
+      assert TaskRunner.build_secrets(ctx.task, config) == []
     end
 
-    test "dedupes when the template also lists :ssh_private_key " <>
-           "(template-fetched credential wins)",
+    test "dedupes when the agent CLI also lists :ssh_private_key " <>
+           "(agent-fetched credential wins)",
          ctx do
       # Manually-added SSH key (without name="default") — emulates a
       # user who pasted their own pre-feature key.
       {:ok, _manual} =
         Ash.create(Credential, %{
-          user_id: ctx.agent.user_id,
+          user_id: ctx.task.creator_id,
           kind: :ssh_private_key,
           name: "my-pasted",
           value: "PRIV-manual"
         })
 
-      seed_default_ssh_key!(ctx.agent.user_id, "PRIV-default")
+      seed_default_ssh_key!(ctx.task.creator_id, "PRIV-default")
 
       config = build_config(required_credential_kinds: [:ssh_private_key])
 
-      secrets = AgentProcess.build_secrets(ctx.agent, config)
+      secrets = TaskRunner.build_secrets(ctx.task, config)
       assert [%{kind: :ssh_private_key, value: value}] = secrets
-      # First-match dedupe preserves the template-fetched credential.
+      # First-match dedupe preserves the agent-fetched credential.
       assert value in ["PRIV-manual", "PRIV-default"]
-    end
-
-    test "returns [] for an agent with nil user_id (system-owned)", ctx do
-      %Agent{} = agent = ctx.agent
-      orphan = %{agent | user_id: nil}
-      assert AgentProcess.build_secrets(orphan, build_config()) == []
     end
 
     defp build_config(overrides \\ []) do
@@ -142,36 +128,36 @@ defmodule Camelot.Runtime.AgentProcessTest do
   end
 
   describe "node_label_for/1" do
-    defp agent_with(project_label, owner_label) do
+    defp task_with(project_label, owner_label) do
       owner_membership =
         owner_label &&
           %Membership{role: :owner, user: %User{swarm_node_label: owner_label}}
 
-      %Agent{project: %Project{swarm_node_label: project_label, owner_membership: owner_membership}}
+      %Task{project: %Project{swarm_node_label: project_label, owner_membership: owner_membership}}
     end
 
     test "a project pin wins over the owner's and the global default" do
       Ash.Seed.seed!(SystemSetting, %{default_swarm_node_label: "global"})
 
-      assert AgentProcess.node_label_for(agent_with("project-pin", "owner-pin")) ==
+      assert TaskRunner.node_label_for(task_with("project-pin", "owner-pin")) ==
                "project-pin"
     end
 
     test "the owner's pin wins when the project has none" do
       Ash.Seed.seed!(SystemSetting, %{default_swarm_node_label: "global"})
 
-      assert AgentProcess.node_label_for(agent_with(nil, "owner-pin")) ==
+      assert TaskRunner.node_label_for(task_with(nil, "owner-pin")) ==
                "owner-pin"
     end
 
     test "falls back to the global default when neither is set" do
       Ash.Seed.seed!(SystemSetting, %{default_swarm_node_label: "global"})
 
-      assert AgentProcess.node_label_for(agent_with(nil, nil)) == "global"
+      assert TaskRunner.node_label_for(task_with(nil, nil)) == "global"
     end
 
     test "returns nil when nothing is pinned anywhere" do
-      assert AgentProcess.node_label_for(agent_with(nil, nil)) == nil
+      assert TaskRunner.node_label_for(task_with(nil, nil)) == nil
     end
   end
 
@@ -213,17 +199,17 @@ defmodule Camelot.Runtime.AgentProcessTest do
       seed_cached_token(id, "cached-installation-token")
 
       assert [%{kind: :github_app_token, value: "cached-installation-token"}] =
-               AgentProcess.maybe_append_github_app_token([], task_with_installation(id), "task-1")
+               TaskRunner.maybe_append_github_app_token([], task_with_installation(id), "task-1")
     end
 
     test "is a no-op when the creator has no linked installation" do
       put_app_configured()
-      assert AgentProcess.maybe_append_github_app_token([], task_with_installation(nil), "task-1") == []
+      assert TaskRunner.maybe_append_github_app_token([], task_with_installation(nil), "task-1") == []
     end
 
-    test "is a no-op when there is no task (bootstrap session)" do
+    test "is a no-op when there is no task" do
       put_app_configured()
-      assert AgentProcess.maybe_append_github_app_token([], nil, "task-1") == []
+      assert TaskRunner.maybe_append_github_app_token([], nil, "task-1") == []
     end
 
     test "is a no-op when the App isn't configured" do
@@ -231,14 +217,14 @@ defmodule Camelot.Runtime.AgentProcessTest do
       id = System.unique_integer([:positive])
       seed_cached_token(id, "cached-installation-token")
 
-      assert AgentProcess.maybe_append_github_app_token([], task_with_installation(id), "task-1") == []
+      assert TaskRunner.maybe_append_github_app_token([], task_with_installation(id), "task-1") == []
     end
 
     test "logs and skips when minting fails (no such installation)" do
       put_app_configured()
       id = System.unique_integer([:positive])
 
-      assert AgentProcess.maybe_append_github_app_token([], task_with_installation(id), "task-1") == []
+      assert TaskRunner.maybe_append_github_app_token([], task_with_installation(id), "task-1") == []
     end
 
     test "resolves the installation matching the task's project github_owner when the creator has several" do
@@ -259,7 +245,7 @@ defmodule Camelot.Runtime.AgentProcessTest do
       }
 
       assert [%{kind: :github_app_token, value: "matching-token"}] =
-               AgentProcess.maybe_append_github_app_token([], task, "task-1")
+               TaskRunner.maybe_append_github_app_token([], task, "task-1")
     end
 
     test "preserves already-built secrets, appending after them" do
@@ -272,40 +258,25 @@ defmodule Camelot.Runtime.AgentProcessTest do
       assert [
                %{kind: :ssh_private_key},
                %{kind: :github_app_token, value: "cached-installation-token"}
-             ] = AgentProcess.maybe_append_github_app_token(existing, task_with_installation(id), "task-1")
+             ] = TaskRunner.maybe_append_github_app_token(existing, task_with_installation(id), "task-1")
     end
   end
 
   describe "start_link/1" do
     test "starts and registers process", ctx do
       {:ok, pid} =
-        AgentProcess.start_link(agent_id: ctx.agent.id)
+        TaskRunner.start_link(task_id: ctx.task.id)
 
       assert is_pid(pid)
-      assert AgentRegistry.lookup(ctx.agent.id) == pid
-    end
-  end
-
-  describe "status/1" do
-    test "returns idle when no task running", ctx do
-      {:ok, _pid} =
-        AgentProcess.start_link(agent_id: ctx.agent.id)
-
-      assert {:ok, :idle} = AgentProcess.status(ctx.agent.id)
-    end
-
-    test "returns not_found for unknown agent" do
-      assert {:error, :not_found} =
-               AgentProcess.status("nonexistent")
+      assert TaskRegistry.lookup(ctx.task.id) == pid
     end
   end
 
   describe "dispatch/3" do
-    test "returns not_found for unregistered agent" do
+    test "returns not_found for an undispatched task" do
       assert {:error, :not_found} =
-               AgentProcess.dispatch(
+               TaskRunner.dispatch(
                  "nonexistent",
-                 "task-id",
                  "prompt"
                )
     end
@@ -314,7 +285,7 @@ defmodule Camelot.Runtime.AgentProcessTest do
   describe "runner_died_message/1" do
     test "surfaces the transport reason instead of an empty-output guess" do
       reason = %Req.TransportError{reason: :ehostunreach}
-      msg = AgentProcess.runner_died_message(reason)
+      msg = TaskRunner.runner_died_message(reason)
 
       assert msg =~ "runner exited before producing output"
       assert msg =~ "ehostunreach"
@@ -326,7 +297,7 @@ defmodule Camelot.Runtime.AgentProcessTest do
       reason = {:bad_status, 409, %{"message" => "container is not running"}}
       logs = "cloning git@github.com:acme/repo\nERROR: Repository not found."
 
-      msg = AgentProcess.runner_died_message(reason, logs)
+      msg = TaskRunner.runner_died_message(reason, logs)
 
       assert String.starts_with?(msg, logs)
       assert msg =~ "runtime detail: runner exited before producing output"
@@ -335,17 +306,17 @@ defmodule Camelot.Runtime.AgentProcessTest do
 
     test "falls back to the summary when the log tail is nil or blank" do
       reason = %Req.TransportError{reason: :ehostunreach}
-      summary = AgentProcess.runner_died_message(reason)
+      summary = TaskRunner.runner_died_message(reason)
 
-      assert AgentProcess.runner_died_message(reason, nil) == summary
-      assert AgentProcess.runner_died_message(reason, "   \n ") == summary
+      assert TaskRunner.runner_died_message(reason, nil) == summary
+      assert TaskRunner.runner_died_message(reason, "   \n ") == summary
     end
   end
 
   describe "planning_action/2" do
     defp planning_state do
-      %AgentProcess{
-        agent_id: "a",
+      %TaskRunner{
+        task_id: "t",
         config: %AgentConfig{
           parser: :claude_code_json,
           executable: "claude",
@@ -366,7 +337,7 @@ defmodule Camelot.Runtime.AgentProcessTest do
       structured = %{"decision" => "plan", "plan" => "Step 1\nStep 2"}
 
       assert {:submit_plan, "Step 1\nStep 2"} =
-               AgentProcess.planning_action(
+               TaskRunner.planning_action(
                  planning_state(),
                  result(structured: structured)
                )
@@ -379,7 +350,7 @@ defmodule Camelot.Runtime.AgentProcessTest do
       }
 
       assert {:request_input, text} =
-               AgentProcess.planning_action(
+               TaskRunner.planning_action(
                  planning_state(),
                  result(structured: structured)
                )
@@ -400,7 +371,7 @@ defmodule Camelot.Runtime.AgentProcessTest do
         )
 
       assert {:request_input, "- Which DB?"} =
-               AgentProcess.planning_action(planning_state(), res)
+               TaskRunner.planning_action(planning_state(), res)
     end
 
     test "without structured output, a free-text question routes to input" do
@@ -414,7 +385,7 @@ defmodule Camelot.Runtime.AgentProcessTest do
         )
 
       assert {:request_input, text} =
-               AgentProcess.planning_action(planning_state(), res)
+               TaskRunner.planning_action(planning_state(), res)
 
       # Uses the FULL transcript, not just the trailing sentence.
       assert text =~ "could you confirm the database name"
@@ -424,25 +395,25 @@ defmodule Camelot.Runtime.AgentProcessTest do
       res = result(assistant_texts: ["Here is the concrete implementation plan."])
 
       assert {:submit_plan, "Here is the concrete implementation plan."} =
-               AgentProcess.planning_action(planning_state(), res)
+               TaskRunner.planning_action(planning_state(), res)
     end
 
     test "empty output yields :empty" do
-      assert :empty = AgentProcess.planning_action(planning_state(), result([]))
+      assert :empty = TaskRunner.planning_action(planning_state(), result([]))
     end
 
     test "a non-internal permission denial routes to input" do
       res = result(denials: [%{"tool_name" => "Bash", "tool_input" => %{}}])
 
       assert {:request_input, _} =
-               AgentProcess.planning_action(planning_state(), res)
+               TaskRunner.planning_action(planning_state(), res)
     end
   end
 
   describe "execution_pr_outcome/3" do
     defp exec_state do
-      %AgentProcess{
-        agent_id: "a",
+      %TaskRunner{
+        task_id: "t",
         config: %AgentConfig{
           parser: :claude_code_json,
           executable: "claude",
@@ -455,14 +426,14 @@ defmodule Camelot.Runtime.AgentProcessTest do
       text = "All done. Opened https://github.com/T0ha/camelot/pull/42 for review."
 
       assert {:pr, "https://github.com/T0ha/camelot/pull/42", 42} =
-               AgentProcess.execution_pr_outcome(exec_state(), ctx.task, text)
+               TaskRunner.execution_pr_outcome(exec_state(), ctx.task, text)
     end
 
     test "returns :no_pr when no URL and the project has no GitHub repo", ctx do
       # setup project is created without github_owner/repo, so the
       # GitHub fallback short-circuits without a network call.
       assert :no_pr =
-               AgentProcess.execution_pr_outcome(
+               TaskRunner.execution_pr_outcome(
                  exec_state(),
                  ctx.task,
                  "Finished, but I did not open a PR."
@@ -472,20 +443,20 @@ defmodule Camelot.Runtime.AgentProcessTest do
 
   describe "finish_session/4" do
     test "is a no-op when there is no current session" do
-      state = %AgentProcess{agent_id: "a", current_session_id: nil, output_buffer: ""}
-      assert :ok = AgentProcess.finish_session(state, 0, nil, [])
+      state = %TaskRunner{task_id: "a", current_session_id: nil, output_buffer: ""}
+      assert :ok = TaskRunner.finish_session(state, 0, nil, [])
     end
 
     test "does not crash when the session row is missing" do
-      state = %AgentProcess{
-        agent_id: "a",
+      state = %TaskRunner{
+        task_id: "a",
         current_session_id: Ecto.UUID.generate(),
         output_buffer: "some output"
       }
 
       # Ash.get! raises for the missing row; the rescue must swallow it
-      # so AgentProcess survives instead of stranding the session.
-      assert :ok = AgentProcess.finish_session(state, 1, {:error, "boom"}, [])
+      # so TaskRunner survives instead of stranding the session.
+      assert :ok = TaskRunner.finish_session(state, 1, {:error, "boom"}, [])
     end
   end
 end

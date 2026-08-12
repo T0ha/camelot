@@ -2,7 +2,8 @@ defmodule Camelot.Runtime.EnvVarResolver do
   @moduledoc """
   Resolves the effective environment for a runner by
   collecting every `Camelot.Projects.EnvVar` that applies to
-  an agent and merging them by scope precedence.
+  a task's agent CLI, project, and creator, then merging them
+  by scope precedence.
 
   Precedence, least to most specific (later wins on a key
   collision): **global → user → agent → project**. A project
@@ -13,13 +14,12 @@ defmodule Camelot.Runtime.EnvVarResolver do
   returned as a plain `%{key => value}` map ready to merge into
   `Camelot.Runtime.Runner.Spec` `env`. Values are never logged.
   """
-  alias Camelot.Agents.Agent
   alias Camelot.Projects.EnvVar
 
   require Ash.Query
 
-  @spec resolve(Agent.t()) :: %{String.t() => String.t()}
-  def resolve(%Agent{id: agent_id, project_id: project_id, user_id: user_id}) do
+  @spec resolve(String.t(), String.t() | nil, String.t() | nil) :: %{String.t() => String.t()}
+  def resolve(agent_id, project_id, user_id) do
     %{}
     |> merge(global_vars())
     |> merge(user_vars(user_id))

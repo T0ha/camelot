@@ -1,8 +1,8 @@
-defmodule Camelot.Agents.Changes.DispatchTasksTest do
+defmodule Camelot.Board.Changes.DispatchTasksTest do
   use ExUnit.Case, async: true
 
   alias Camelot.Accounts.User
-  alias Camelot.Agents.Changes.DispatchTasks
+  alias Camelot.Board.Changes.DispatchTasks
   alias Camelot.Board.Task
   alias Camelot.Github.Installation
   alias Camelot.Projects.Project

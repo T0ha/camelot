@@ -93,13 +93,13 @@ isn't reachable.
 Open <http://localhost:4000>. Sign in via magic link — the email lands
 in the dev mailbox at <http://localhost:4000/dev/mailbox>.
 
-## 5. Create an AgentTemplate
+## 5. Create an Agent CLI
 
-Use the smoke template (alpine) or the real one (claude). In an IEx
+Use the smoke Agent CLI (alpine) or the real one (claude). In an IEx
 shell:
 
 ```iex
-iex> Ash.create!(Camelot.Agents.AgentTemplate, %{
+iex> Ash.create!(Camelot.Agents.Agent, %{
 ...>   slug: "alpine-echo",
 ...>   name: "Alpine smoke test",
 ...>   executable: "/bin/sh",
@@ -115,7 +115,7 @@ iex> Ash.create!(Camelot.Agents.AgentTemplate, %{
 For Claude Code:
 
 ```iex
-iex> Ash.create!(Camelot.Agents.AgentTemplate, %{
+iex> Ash.create!(Camelot.Agents.Agent, %{
 ...>   slug: "claude_code",
 ...>   name: "Claude Code",
 ...>   executable: "claude",
@@ -130,14 +130,14 @@ iex> Ash.create!(Camelot.Agents.AgentTemplate, %{
 ...> })
 ```
 
-(Or use the existing `/agent-templates/new` UI, then set
+(Or use the existing `/agents/new` UI, then set
 `runner_image` etc. via the form.)
 
 To pin a single project to a different image without touching the
-shared template, set that project's `runner_image_override` (via the
+shared Agent CLI, set that project's `runner_image_override` (via the
 project's edit form, or `Ash.update!/2`). It takes precedence over
-`AgentTemplate.runner_image` for every agent in that project; leaving
-it blank falls back to the template default.
+`Agent.runner_image` for every task in that project; leaving it blank
+falls back to the Agent CLI's default.
 
 ## 6. Create a Project
 
@@ -165,7 +165,7 @@ Then `path` on the project drives the BEAM's `cd` for the CLI.
 
 Visit <http://localhost:4000/profile>:
 
-- Add credentials for whatever the AgentTemplate's
+- Add credentials for whatever the Agent CLI's
   `required_credential_kinds` lists (e.g. `:claude_api_key`).
 - (Optional) set your swarm node label — not used by the DockerEngine
   backend, but you can populate it now so the model is the same as the
@@ -177,28 +177,21 @@ Visit <http://localhost:4000/profile>:
 > image reads from `/run/secrets/...` first; we'll likely add an env
 > fallback there in a follow-up. For now this means:
 > - **Alpine smoke test**: no credentials needed.
-> - **Claude test**: pass the API key via the AgentTemplate's
+> - **Claude test**: pass the API key via the Agent CLI's
 >   `env_vars` map for now, e.g.
 >   `env_vars: %{"ANTHROPIC_API_KEY" => "sk-..."}`, until env-fallback
 >   lands.
 
-## 8. Wire an Agent to a User
+## 8. Note your Agent CLI's id
 
-The `User → Agent → Project → Template` graph must be complete.
-Backfill the `user_id` on agents (legacy rows allowed null user_id;
-the migration didn't auto-fill):
+There's no more per-project Agent row to wire up — a task carries its
+own fixed `agent_id`, chosen from an explicit "CLI Agent" dropdown on
+the board's "New Task" modal at creation time. If you want the id
+handy for the IEx dispatch walkthrough below, grab it with:
 
 ```iex
-iex> user = Ash.read_first!(Camelot.Accounts.User)
 iex> agent = Ash.read_first!(Camelot.Agents.Agent)
-iex> Camelot.Repo.update_all(
-...>   Ecto.Query.from(a in Camelot.Agents.Agent, where: a.id == ^agent.id),
-...>   set: [user_id: user.id]
-...> )
 ```
-
-(New agents created through the UI will need a `user_id` argument
-passed to the create action.)
 
 ## 9. Dispatch a task and watch the container
 
@@ -218,13 +211,14 @@ docker logs -f $(docker ps -q --filter "name=camelot-runner-")
 
 Then in the Camelot UI:
 
-1. Open `/` (the board), create a new task on your project.
+1. Open `/` (the board), create a new task on your project — pick your
+   Agent CLI from the "CLI Agent" dropdown on the "New Task" modal.
 2. Drag it to "Todo".
-3. The agent picks it up via the Oban `dispatch_tasks` job (runs every
+3. It gets picked up via the Oban `dispatch_tasks` job (runs every
    minute). To skip the wait, manually dispatch in IEx:
    ```iex
-   iex> Camelot.Runtime.AgentSupervisor.start_agent(agent.id)
-   iex> Camelot.Runtime.AgentProcess.dispatch(agent.id, task.id, "do something", [])
+   iex> Camelot.Runtime.TaskRunnerSupervisor.start_task_runner(task.id)
+   iex> Camelot.Runtime.TaskRunner.dispatch(task.id, "do something", [])
    ```
 
 You should see:
@@ -286,20 +280,20 @@ Quit (`Ctrl+C` twice) and relaunch with the env var prefix.
 
 - Check `docker inspect <name>` — the `State.Error` field usually
   explains it.
-- For `alpine:latest`, make sure the AgentTemplate's `executable` is
+- For `alpine:latest`, make sure the Agent CLI's `executable` is
   something that actually exists in the image (`/bin/sh`, not
   `claude`).
 
 ### Session never transitions out of `:queued`
 
 - `RunnerPool` may be at its `per_user_max` cap. Check `/profile`.
-- The pool monitors the AgentProcess pid — if your IEx node restarted,
+- The pool monitors the TaskRunner pid — if your IEx node restarted,
   the monitor fires and the slot frees, but the queued sessions may
   still be in the DB. Run the DB reset from step 10.
 
 ### Logs not streaming into the LiveView
 
-- LocalPort uses `Phoenix.PubSub` topic `agent:<agent_id>` — same as
+- LocalPort uses `Phoenix.PubSub` topic `task:<task_id>` — same as
   DockerEngine. Verify the LiveView subscribes there. If you wired in
   custom UI, double-check.
 

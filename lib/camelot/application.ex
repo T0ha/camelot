@@ -23,7 +23,7 @@ defmodule Camelot.Application do
          Application.fetch_env!(:camelot, Oban)
        )},
       {AshAuthentication.Supervisor, otp_app: :camelot},
-      Camelot.Runtime.AgentRegistry,
+      Camelot.Runtime.TaskRegistry,
       Camelot.Runtime.SessionRegistry,
       {Registry, keys: :unique, name: Camelot.Runtime.Runner.Swarm.TaskRegistry},
       {DynamicSupervisor, name: Camelot.Runtime.Runner.Swarm.TaskSupervisor, strategy: :one_for_one},
@@ -32,7 +32,7 @@ defmodule Camelot.Application do
       Camelot.Github.InstallationTokenCache,
       Camelot.Runtime.RunnerPool,
       Camelot.Runtime.SecretSync,
-      Camelot.Runtime.AgentSupervisor,
+      Camelot.Runtime.TaskRunnerSupervisor,
       Camelot.Runtime.Reconciler,
       CamelotWeb.Endpoint
     ]

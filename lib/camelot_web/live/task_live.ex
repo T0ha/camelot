@@ -11,6 +11,8 @@ defmodule CamelotWeb.TaskLive do
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
   alias Camelot.Board.TaskMessage
+  alias Camelot.Runtime.TaskRegistry
+  alias Camelot.Runtime.TaskRunnerSupervisor
   alias CamelotWeb.Scope
 
   require Ash.Query
@@ -35,16 +37,13 @@ defmodule CamelotWeb.TaskLive do
         end
 
         socket =
-          socket
-          |> assign(
+          assign(socket,
             page_title: task.title,
             task: task,
             message_input: "",
             live_output: "",
-            subscribed_agent_id: nil,
             focused_column: :none
           )
-          |> maybe_subscribe_agent(task)
 
         {:ok, socket}
 
@@ -82,22 +81,14 @@ defmodule CamelotWeb.TaskLive do
     {:noreply,
      socket
      |> assign(task: task)
-     |> maybe_subscribe_agent(task)
      |> reset_live_output_unless_running(task)}
   end
 
   # Live agent output (one NDJSON chunk per broadcast). Accumulate,
   # bounded, for the running-session panel.
-  def handle_info({:agent_output, _agent_id, chunk}, socket) do
+  def handle_info({:agent_output, _task_id, chunk}, socket) do
     combined = socket.assigns.live_output <> to_string(chunk)
     {:noreply, assign(socket, live_output: cap_tail(combined, 20_000))}
-  end
-
-  # The assigned agent changed status (e.g. :idle <-> :busy). We
-  # subscribe to its topic, so refresh the copy embedded in the task
-  # to keep the card in sync (input controls key off agent.status).
-  def handle_info({:agent_updated, agent}, socket) do
-    {:noreply, assign(socket, task: %{socket.assigns.task | agent: agent})}
   end
 
   # Never crash the card on an unexpected PubSub message.
@@ -245,13 +236,7 @@ defmodule CamelotWeb.TaskLive do
   end
 
   def handle_event("reset_task", _params, socket) do
-    task = socket.assigns.task
-
-    if not Ash.Resource.loaded?(task, :agent) or is_nil(task.agent) do
-      {:noreply, put_flash(socket, :error, "No agent assigned")}
-    else
-      reset_task_and_agent(socket, task)
-    end
+    reset_task_and_runner(socket, socket.assigns.task)
   end
 
   def handle_event("cancel", _params, socket) do
@@ -302,36 +287,33 @@ defmodule CamelotWeb.TaskLive do
   defp column_hidden?(:right, :left), do: true
   defp column_hidden?(_col, _focused), do: false
 
-  defp reset_task_and_agent(socket, task) do
-    stop_agent_process(task.agent.id)
+  defp reset_task_and_runner(socket, task) do
+    stop_task_runner(task.id)
 
-    with {:ok, _agent} <- Ash.update(task.agent, %{}, action: :mark_idle),
-         {:ok, updated} <- Ash.update(task, %{}, action: :reset) do
-      broadcast_update(updated)
-      updated = Ash.load!(updated, @task_load)
+    case Ash.update(task, %{}, action: :reset) do
+      {:ok, updated} ->
+        broadcast_update(updated)
+        updated = Ash.load!(updated, @task_load)
 
-      {:noreply,
-       socket
-       |> assign(task: updated)
-       |> put_flash(:info, "Task reset — work will resume shortly")}
-    else
+        {:noreply,
+         socket
+         |> assign(task: updated)
+         |> put_flash(:info, "Task reset — work will resume shortly")}
+
       {:error, _} ->
         {:noreply, put_flash(socket, :error, "Failed to reset task")}
     end
   end
 
-  defp stop_agent_process(agent_id) do
-    case Camelot.Runtime.AgentSupervisor.stop_agent(agent_id) do
+  defp stop_task_runner(task_id) do
+    case TaskRunnerSupervisor.stop_task_runner(task_id) do
       :ok -> :ok
       {:error, :not_found} -> :ok
     end
   end
 
-  defp agent_stuck?(task) do
-    Ash.Resource.loaded?(task, :agent) &&
-      task.agent != nil &&
-      task.agent.status == :busy &&
-      task.state == :in_progress
+  defp task_runner_stuck?(task) do
+    task.state == :in_progress && TaskRegistry.lookup(task.id) == nil
   end
 
   defp broadcast_update(task) do
@@ -397,7 +379,7 @@ defmodule CamelotWeb.TaskLive do
             {label}
           </button>
           <button
-            :if={agent_stuck?(@task)}
+            :if={task_runner_stuck?(@task)}
             phx-click="reset_task"
             data-confirm="Reset task and agent? Work will resume from this stage."
             class="btn btn-sm btn-ghost text-warning"
@@ -748,23 +730,6 @@ defmodule CamelotWeb.TaskLive do
     else
       []
     end
-  end
-
-  # Subscribe to the running agent's live-output topic once the task
-  # has an agent. Idempotent per agent id so a re-render/reassign
-  # doesn't double-subscribe (which would duplicate every chunk).
-  defp maybe_subscribe_agent(socket, %Task{agent_id: nil}), do: socket
-
-  defp maybe_subscribe_agent(%{assigns: %{subscribed_agent_id: id}} = socket, %Task{agent_id: id}) do
-    socket
-  end
-
-  defp maybe_subscribe_agent(socket, %Task{agent_id: agent_id}) do
-    if connected?(socket) do
-      Phoenix.PubSub.subscribe(Camelot.PubSub, "agent:#{agent_id}")
-    end
-
-    assign(socket, subscribed_agent_id: agent_id)
   end
 
   # The live buffer is only meaningful while a session is actively

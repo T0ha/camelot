@@ -88,8 +88,8 @@ Visit [`localhost:4000`](http://localhost:4000).
 
 1. Sign in with a magic link sent to your email
 2. Create a project pointing to a local git repository
-3. Add an agent (Claude Code or Codex)
-4. Create a task and watch it flow through the board
+3. Create a task, pick a CLI Agent (Claude Code or Codex) from the
+   dropdown, and watch it flow through the board
 
 ## Configuration
 
@@ -126,21 +126,21 @@ bin/camelot eval 'Mix.Tasks.Camelot.CreateUser.run(["me@example.com"])'
 ## Architecture
 
 ```
-Projects ──→ Agents ──→ Sessions
-    │            │
-    └── Tasks ───┘
-         │
-    PromptTemplates
+Agent CLI ──→ Tasks ──→ Sessions
+                 │
+Projects ────────┤
+                 │
+           PromptTemplates
 ```
 
 - **Projects** map to local git repositories with optional GitHub integration
-- **Agents** wrap a CLI tool (Claude Code or Codex), managed as OTP GenServer processes
-- **Tasks** flow through a state machine: draft → todo → planning → executing → pr → done
-- **Sessions** record each agent execution with full output logs
+- **Agent CLI** configs wrap a CLI tool (Claude Code or Codex) — executable, args, parser, runner image — configured once (admin-only) and picked per task
+- **Tasks** pick a fixed Agent CLI at creation and flow through a state machine: draft → todo → planning → executing → pr → done
+- **Sessions** record each execution of a task, driven by a `TaskRunner` process, with full output logs
 - **Prompt Templates** are customizable per-project with variable interpolation
 
 Key modules: `Camelot.Board.Task`, `Camelot.Agents.Agent`,
-`Camelot.Runtime.AgentProcess`, `Camelot.Projects.Project`,
+`Camelot.Runtime.TaskRunner`, `Camelot.Projects.Project`,
 `Camelot.Prompts.PromptTemplate`
 
 ## Development

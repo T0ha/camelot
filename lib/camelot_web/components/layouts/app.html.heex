@@ -19,15 +19,10 @@
           Projects
         </a>
       </li>
-      <li>
-        <a href="/agents" class="btn btn-ghost btn-sm">
-          Agents
-        </a>
-      </li>
       <%= if match?(%{role: :admin}, assigns[:current_user]) do %>
         <li>
-          <a href="/agent-templates" class="btn btn-ghost btn-sm">
-            Templates
+          <a href="/agents" class="btn btn-ghost btn-sm">
+            Agent CLI
           </a>
         </li>
       <% end %>

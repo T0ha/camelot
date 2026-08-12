@@ -202,6 +202,18 @@
       "type": "bigint"
     },
     {
+      "allow_nil?": false,
+      "default": "3",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "max_retries",
+      "type": "bigint"
+    },
+    {
       "allow_nil?": true,
       "default": "nil",
       "generated?": false,
@@ -237,7 +249,7 @@
       "source": "required_credential_kinds",
       "type": [
         "array",
-        "text"
+        "string"
       ]
     },
     {
@@ -271,12 +283,12 @@
   "custom_indexes": [],
   "custom_statements": [],
   "has_create_action": true,
-  "hash": "07FE34F17575CCD1986C4CF7D1E0679FB8D1AEC3DFFDAD1923133D267FE4EAFB",
+  "hash": "3EEDC79544C016FDB18EFFB82C4928F7E670F5E5CA416B49CA18795968BECABC",
   "identities": [
     {
       "all_tenants?": false,
       "base_filter": null,
-      "index_name": "agent_templates_unique_slug_index",
+      "index_name": "agents_unique_slug_index",
       "keys": [
         {
           "type": "atom",
@@ -295,5 +307,5 @@
   },
   "repo": "Elixir.Camelot.Repo",
   "schema": null,
-  "table": "agent_templates"
+  "table": "agents"
 }

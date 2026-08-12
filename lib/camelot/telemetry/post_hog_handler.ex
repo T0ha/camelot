@@ -22,8 +22,7 @@ defmodule Camelot.Telemetry.PostHogHandler do
     {Camelot.Board.Task, :complete} => "task_completed",
     {Camelot.Board.Task, :cancel} => "task_cancelled",
     {Camelot.Board.Task, :mark_error} => "task_errored",
-    {Camelot.Projects.Project, :create} => "project_created",
-    {Camelot.Agents.Agent, :create} => "agent_created"
+    {Camelot.Projects.Project, :create} => "project_created"
   }
 
   @doc """

@@ -31,7 +31,8 @@ defmodule Camelot.Board.Workers.SendTaskStateEmailTest do
         Ash.create(Task, %{
           title: "Needs attention",
           project_id: ctx.project.id,
-          creator_id: creator.id
+          creator_id: creator.id,
+          agent_id: agent!("claude_code").id
         })
 
       assert :ok = SendTaskStateEmail.perform(job(task, "error"))
@@ -49,7 +50,8 @@ defmodule Camelot.Board.Workers.SendTaskStateEmailTest do
         Ash.create(Task, %{
           title: "Needs attention",
           project_id: ctx.project.id,
-          creator_id: creator.id
+          creator_id: creator.id,
+          agent_id: agent!("claude_code").id
         })
 
       assert :ok = SendTaskStateEmail.perform(job(task, "error"))
@@ -68,7 +70,8 @@ defmodule Camelot.Board.Workers.SendTaskStateEmailTest do
         Ash.create(Task, %{
           title: "Done task",
           project_id: ctx.project.id,
-          creator_id: creator.id
+          creator_id: creator.id,
+          agent_id: agent!("claude_code").id
         })
 
       assert :ok = SendTaskStateEmail.perform(job(task, "waiting_for_input"))

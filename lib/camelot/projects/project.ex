@@ -80,9 +80,51 @@ defmodule Camelot.Projects.Project do
       description(
         "Per-project override of the runner OCI image, e.g. " <>
           "`ghcr.io/t0ha/camelot-runner-elixir:1.19`. Wins over the " <>
-          "agent type's `AgentTemplate.runner_image` when non-nil; " <>
-          "nil falls back to the template default."
+          "agent CLI's `Agent.runner_image` when non-nil; " <>
+          "nil falls back to the agent CLI default."
       )
+    end
+
+    attribute :command_prefix_override, :string do
+      allow_nil?(true)
+      public?(true)
+      description("Per-project override of the agent CLI's command_prefix")
+    end
+
+    attribute :executable_override, :string do
+      allow_nil?(true)
+      public?(true)
+      description("Per-project override of the agent CLI's executable")
+    end
+
+    attribute :base_args_override, {:array, :string} do
+      allow_nil?(true)
+      public?(true)
+      description("Per-project override of the agent CLI's base_args")
+    end
+
+    attribute :env_vars_override, :map do
+      allow_nil?(true)
+      public?(true)
+      description("Per-project override of the agent CLI's env_vars")
+    end
+
+    attribute :permission_args_by_stage_override, :map do
+      allow_nil?(true)
+      public?(true)
+      description("Per-project override of the agent CLI's permission_args_by_stage")
+    end
+
+    attribute :internal_tools_override, {:array, :string} do
+      allow_nil?(true)
+      public?(true)
+      description("Per-project override of the agent CLI's internal_tools")
+    end
+
+    attribute :base_retry_delay_ms_override, :integer do
+      allow_nil?(true)
+      public?(true)
+      description("Per-project override of the agent CLI's base_retry_delay_ms")
     end
 
     attribute :status, :atom do
@@ -143,7 +185,14 @@ defmodule Camelot.Projects.Project do
         :github_repo_url,
         :github_owner,
         :github_repo,
-        :runner_image_override
+        :runner_image_override,
+        :command_prefix_override,
+        :executable_override,
+        :base_args_override,
+        :env_vars_override,
+        :permission_args_by_stage_override,
+        :internal_tools_override,
+        :base_retry_delay_ms_override
       ])
 
       change(Camelot.Projects.Project.Changes.AddActorAsMember)
@@ -160,6 +209,13 @@ defmodule Camelot.Projects.Project do
         :github_owner,
         :github_repo,
         :runner_image_override,
+        :command_prefix_override,
+        :executable_override,
+        :base_args_override,
+        :env_vars_override,
+        :permission_args_by_stage_override,
+        :internal_tools_override,
+        :base_retry_delay_ms_override,
         :status
       ])
     end

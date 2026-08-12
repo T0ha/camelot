@@ -1,11 +1,11 @@
 defmodule Camelot.Runtime.SessionRegistry do
   @moduledoc """
-  Registry mapping `session_id` → owning `AgentProcess`
+  Registry mapping `session_id` → owning `TaskRunner`
   pid. Lets the Reconciler tell genuinely abandoned
   sessions apart from ones that are still running with a
   live BEAM process behind them.
 
-  AgentProcess registers itself on the `:runner_slot`
+  TaskRunner registers itself on the `:runner_slot`
   transition and unregisters on session exit (success,
   failure, cancel, or process termination — the Registry
   auto-removes entries when the owning pid dies).
