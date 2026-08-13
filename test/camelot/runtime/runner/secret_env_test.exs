@@ -30,6 +30,13 @@ defmodule Camelot.Runtime.Runner.SecretEnvTest do
              ]
     end
 
+    test "github_token_clear blanks GH_TOKEN and GITHUB_TOKEN so a stale baked-in token is never used" do
+      assert SecretEnv.to_env(%{kind: :github_token_clear, name: "", value: ""}) == [
+               "GH_TOKEN=",
+               "GITHUB_TOKEN="
+             ]
+    end
+
     test "unknown kinds fall back to a generic CAMELOT_SECRET_<KIND> var" do
       assert SecretEnv.to_env(%{kind: :ssh_private_key, value: "pk"}) == ["CAMELOT_SECRET_SSH_PRIVATE_KEY=pk"]
       assert SecretEnv.to_env(%{kind: :generic, value: "v"}) == ["CAMELOT_SECRET_GENERIC=v"]

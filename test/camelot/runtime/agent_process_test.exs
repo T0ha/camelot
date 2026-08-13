@@ -193,11 +193,6 @@ defmodule Camelot.Runtime.AgentProcessTest do
       )
     end
 
-    defp seed_cached_token(installation_id, token) do
-      far_future = DateTime.add(DateTime.utc_now(), 3_600, :second)
-      :ets.insert(Camelot.Github.InstallationTokenCache, {installation_id, token, far_future})
-    end
-
     defp task_with_installation(installation_id) do
       installations =
         if installation_id,
@@ -207,13 +202,54 @@ defmodule Camelot.Runtime.AgentProcessTest do
       %Task{creator: %User{github_installations: installations}}
     end
 
-    test "appends a github_app_token secret when the creator has a linked installation and the App is configured" do
+    # The runner's GitHub token is force-minted fresh per session (never
+    # served from the shared cache) so a revoked-but-unexpired cached
+    # token can't reach the container. With a fake signing key the mint
+    # can't succeed here, so these tests exercise the failure branch: a
+    # `:github_token_clear` marker that blanks GH_TOKEN in the runner
+    # rather than letting it fall back to a stale token baked into the
+    # container. The mint success path is covered by the
+    # InstallationTokenCache tests.
+
+    test "clears GH_TOKEN when a fresh token can't be minted for a linked installation" do
       put_app_configured()
       id = System.unique_integer([:positive])
-      seed_cached_token(id, "cached-installation-token")
 
-      assert [%{kind: :github_app_token, value: "cached-installation-token"}] =
+      assert [%{kind: :github_token_clear}] =
                AgentProcess.maybe_append_github_app_token([], task_with_installation(id), "task-1")
+    end
+
+    test "appends the clear marker after already-built secrets, preserving them" do
+      put_app_configured()
+      id = System.unique_integer([:positive])
+
+      existing = [%{kind: :ssh_private_key, name: "n", value: "v"}]
+
+      assert [
+               %{kind: :ssh_private_key},
+               %{kind: :github_token_clear}
+             ] = AgentProcess.maybe_append_github_app_token(existing, task_with_installation(id), "task-1")
+    end
+
+    test "flows a multi-installation task through resolution without crashing" do
+      # Selection correctness lives in Camelot.Github.ResolverTest; here we
+      # only assert the multi-installation path reaches a single decision.
+      put_app_configured()
+      matching_id = System.unique_integer([:positive])
+      other_id = System.unique_integer([:positive])
+
+      task = %Task{
+        project: %Project{github_owner: "other-org"},
+        creator: %User{
+          github_installations: [
+            %Installation{installation_id: other_id, account_login: "acme-org"},
+            %Installation{installation_id: matching_id, account_login: "other-org"}
+          ]
+        }
+      }
+
+      assert [%{kind: :github_token_clear}] =
+               AgentProcess.maybe_append_github_app_token([], task, "task-1")
     end
 
     test "is a no-op when the creator has no linked installation" do
@@ -226,53 +262,13 @@ defmodule Camelot.Runtime.AgentProcessTest do
       assert AgentProcess.maybe_append_github_app_token([], nil, "task-1") == []
     end
 
-    test "is a no-op when the App isn't configured" do
+    test "leaves GH_TOKEN untouched when the App isn't configured (PAT path)" do
+      # No App means we're not on the App-token path at all, so GH_TOKEN
+      # must not be cleared — the project may authenticate with a PAT.
       Application.put_env(:camelot, :github_app, [])
       id = System.unique_integer([:positive])
-      seed_cached_token(id, "cached-installation-token")
 
       assert AgentProcess.maybe_append_github_app_token([], task_with_installation(id), "task-1") == []
-    end
-
-    test "logs and skips when minting fails (no such installation)" do
-      put_app_configured()
-      id = System.unique_integer([:positive])
-
-      assert AgentProcess.maybe_append_github_app_token([], task_with_installation(id), "task-1") == []
-    end
-
-    test "resolves the installation matching the task's project github_owner when the creator has several" do
-      put_app_configured()
-      matching_id = System.unique_integer([:positive])
-      other_id = System.unique_integer([:positive])
-      seed_cached_token(matching_id, "matching-token")
-      seed_cached_token(other_id, "other-token")
-
-      task = %Task{
-        project: %Project{github_owner: "other-org"},
-        creator: %User{
-          github_installations: [
-            %Installation{installation_id: other_id, account_login: "acme-org"},
-            %Installation{installation_id: matching_id, account_login: "other-org"}
-          ]
-        }
-      }
-
-      assert [%{kind: :github_app_token, value: "matching-token"}] =
-               AgentProcess.maybe_append_github_app_token([], task, "task-1")
-    end
-
-    test "preserves already-built secrets, appending after them" do
-      put_app_configured()
-      id = System.unique_integer([:positive])
-      seed_cached_token(id, "cached-installation-token")
-
-      existing = [%{kind: :ssh_private_key, name: "n", value: "v"}]
-
-      assert [
-               %{kind: :ssh_private_key},
-               %{kind: :github_app_token, value: "cached-installation-token"}
-             ] = AgentProcess.maybe_append_github_app_token(existing, task_with_installation(id), "task-1")
     end
   end
 
