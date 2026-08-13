@@ -45,6 +45,25 @@ defmodule Camelot.Github.InstallationTokenCache do
     end
   end
 
+  @doc """
+  Mints a fresh token, ignoring (and discarding) any cached
+  entry, then caches the new one.
+
+  Use when a caller needs a token known-good at mint time
+  rather than merely unexpired — e.g. handing one to a
+  long-lived runner container, which can't bust this cache
+  on its own 401. A token GitHub revoked early (after a
+  permission or installation change) stays unexpired in the
+  cache and would `fetch/1` clean; `refresh/1` sidesteps
+  that by always re-minting.
+  """
+  @spec refresh(integer()) ::
+          {:ok, String.t()}
+          | {:error, :not_configured | :suspended | :not_found | term()}
+  def refresh(installation_id) do
+    GenServer.call(@name, {:refresh, installation_id}, 15_000)
+  end
+
   @impl GenServer
   def init(_opts) do
     :ets.new(@table, [:named_table, :public, :set, read_concurrency: true])
@@ -62,6 +81,14 @@ defmodule Camelot.Github.InstallationTokenCache do
       end
 
     {:reply, reply, state}
+  end
+
+  @impl GenServer
+  def handle_call({:refresh, installation_id}, _from, state) do
+    # Drop the entry first so a mint failure can't leave a stale token
+    # behind for the next `fetch/1`.
+    :ets.delete(@table, installation_id)
+    {:reply, mint(installation_id), state}
   end
 
   defp cached(installation_id) do

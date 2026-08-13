@@ -38,6 +38,13 @@ defmodule Camelot.Runtime.Runner.SecretEnv do
     ["GH_TOKEN=#{v}", "GITHUB_TOKEN=#{v}"]
   end
 
+  # No fresh token could be minted this session: blank GH_TOKEN/
+  # GITHUB_TOKEN so `gh` can't reuse an expired token baked into the
+  # container at start time (which 401s and reads as "no PR opened").
+  def to_env(%{kind: :github_token_clear}) do
+    ["GH_TOKEN=", "GITHUB_TOKEN="]
+  end
+
   def to_env(%{kind: kind, value: v}) do
     ["CAMELOT_SECRET_#{String.upcase(Atom.to_string(kind))}=#{v}"]
   end

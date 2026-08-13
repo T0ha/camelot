@@ -76,4 +76,34 @@ defmodule Camelot.Github.InstallationTokenCacheTest do
       assert InstallationTokenCache.fetch(id) == {:error, :not_found}
     end
   end
+
+  describe "refresh/1" do
+    test "bypasses a still-valid cached entry and re-mints" do
+      put_app_configured()
+      id = unique_installation_id()
+      far_future = DateTime.add(DateTime.utc_now(), 3_600, :second)
+      :ets.insert(InstallationTokenCache, {id, "cached-token", far_future})
+
+      # `fetch/1` would return the cached token; `refresh/1` must ignore
+      # it and take the mint path. No installation row exists, so the mint
+      # short-circuits at :not_found — proving the cached token was not
+      # returned. This is the guard against a revoked-but-unexpired token.
+      assert InstallationTokenCache.refresh(id) == {:error, :not_found}
+    end
+
+    test "drops the cached entry even when the re-mint fails" do
+      put_app_configured()
+      id = unique_installation_id()
+      far_future = DateTime.add(DateTime.utc_now(), 3_600, :second)
+      :ets.insert(InstallationTokenCache, {id, "cached-token", far_future})
+
+      assert InstallationTokenCache.refresh(id) == {:error, :not_found}
+      assert :ets.lookup(InstallationTokenCache, id) == []
+    end
+
+    test "returns :not_configured without a network call when the App isn't set up" do
+      Application.put_env(:camelot, :github_app, [])
+      assert InstallationTokenCache.refresh(unique_installation_id()) == {:error, :not_configured}
+    end
+  end
 end

@@ -800,8 +800,14 @@ defmodule Camelot.Runtime.AgentProcess do
     end
   end
 
+  # Force a fresh mint (never a cached token) so the runner can't inherit
+  # a token GitHub revoked early but that is still unexpired in the cache.
+  # On failure, append a clear marker rather than nothing: the runner must
+  # not silently fall back to the (now-stale) token baked into its
+  # container at start time — an expired token 401s every `gh` call and
+  # looks like the agent declined to open a PR.
   defp mint_github_app_token(secrets, installation_id, task_id) do
-    case InstallationTokenCache.fetch(installation_id) do
+    case InstallationTokenCache.refresh(installation_id) do
       {:ok, token} ->
         name = github_app_token_secret_name(task_id)
         publish_swarm_secret(name, token)
@@ -811,10 +817,10 @@ defmodule Camelot.Runtime.AgentProcess do
         Logger.warning(
           "AgentProcess: could not mint GitHub App token for " <>
             "installation #{installation_id} (#{inspect(reason)}); " <>
-            "skipping github_app_token secret"
+            "clearing GH_TOKEN so the runner can't use a stale baked-in token"
         )
 
-        secrets
+        secrets ++ [%{kind: :github_token_clear, name: "", value: ""}]
     end
   end
 
