@@ -35,6 +35,12 @@ defmodule CamelotWeb.Router do
     get "/setup", GithubSetupController, :new
   end
 
+  scope "/attachments", CamelotWeb do
+    pipe_through :browser
+
+    get "/:id/download", TaskAttachmentController, :download
+  end
+
   scope "/", CamelotWeb do
     pipe_through :browser
 

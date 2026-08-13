@@ -543,7 +543,7 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
 
   defp env_pairs(%Spec{} = spec) do
     base = Enum.map(spec.env, fn {k, v} -> "#{k}=#{v}" end)
-    base ++ bootstrap_env(spec) ++ repo_env(spec) ++ mcp_env(spec)
+    base ++ bootstrap_env(spec) ++ repo_env(spec) ++ mcp_env(spec) ++ attachments_env(spec)
   end
 
   defp bootstrap_env(%Spec{bootstrap?: true}), do: ["BOOTSTRAP=1"]
@@ -557,6 +557,9 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
 
   defp mcp_env(%Spec{mcp_config_json: nil}), do: []
   defp mcp_env(%Spec{mcp_config_json: json}), do: ["PROJECT_MCP_CONFIG_JSON=#{json}"]
+
+  defp attachments_env(%Spec{attachments_json: nil}), do: []
+  defp attachments_env(%Spec{attachments_json: json}), do: ["ATTACHMENTS_JSON=#{json}"]
 
   defp mounts(%Spec{profile_volume: nil}), do: []
 

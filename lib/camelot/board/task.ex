@@ -183,6 +183,7 @@ defmodule Camelot.Board.Task do
 
     has_many(:sessions, Camelot.Agents.Session)
     has_many(:messages, Camelot.Board.TaskMessage)
+    has_many(:attachments, Camelot.Board.TaskAttachment)
   end
 
   actions do

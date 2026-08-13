@@ -335,6 +335,64 @@ defmodule CamelotWeb.TaskLiveTest do
     end
   end
 
+  describe "attachments" do
+    setup %{task: task} do
+      on_exit(fn ->
+        System.tmp_dir!()
+        |> Path.join("camelot-attachments/#{task.id}")
+        |> File.rm_rf()
+      end)
+
+      :ok
+    end
+
+    test "uploading a file lists it with a download link", %{conn: conn, task: task} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      file =
+        file_input(view, "#attachment-upload-form", :attachment, [
+          %{
+            name: "screenshot.png",
+            content: "fake png bytes",
+            type: "image/png"
+          }
+        ])
+
+      html =
+        file
+        |> render_upload("screenshot.png")
+        |> then(fn _ -> view |> element("#attachment-upload-form") |> render_submit() end)
+
+      assert html =~ "screenshot.png"
+      assert html =~ ~s(/attachments/)
+
+      {:ok, reloaded} = Ash.load(task, :attachments)
+      assert [%{filename: "screenshot.png"}] = reloaded.attachments
+    end
+
+    test "deleting an attachment removes it from the list", %{conn: conn, task: task} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      file =
+        file_input(view, "#attachment-upload-form", :attachment, [
+          %{name: "log.txt", content: "boom", type: "text/plain"}
+        ])
+
+      render_upload(file, "log.txt")
+      view |> element("#attachment-upload-form") |> render_submit()
+
+      {:ok, reloaded} = Ash.load(task, :attachments)
+      [attachment] = reloaded.attachments
+
+      html =
+        view
+        |> element(~s(button[phx-value-id="#{attachment.id}"]))
+        |> render_click()
+
+      refute html =~ "log.txt"
+    end
+  end
+
   describe "scoping" do
     test "redirects non-member from another user's task", %{conn: conn} do
       other = Ash.Seed.seed!(Camelot.Accounts.User, %{email: "to-#{System.unique_integer()}@x.com"})
