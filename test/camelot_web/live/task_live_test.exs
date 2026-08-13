@@ -36,6 +36,25 @@ defmodule CamelotWeb.TaskLiveTest do
       assert html =~ "todo"
     end
 
+    test "plan section links to the full plan page and download", %{
+      conn: conn,
+      project: project,
+      user: user
+    } do
+      task =
+        Ash.Seed.seed!(Task, %{
+          title: "Planned task",
+          project_id: project.id,
+          creator_id: user.id,
+          plan: "See ~/.claude/plans/x.md — summary."
+        })
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ ~p"/tasks/#{task.id}/plan"
+      assert html =~ ~p"/tasks/#{task.id}/plan/download"
+    end
+
     test "renders GFM markdown tables in the description", %{conn: conn, project: project, user: user} do
       {:ok, task} =
         Ash.create(Task, %{

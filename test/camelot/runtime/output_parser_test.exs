@@ -181,6 +181,34 @@ defmodule Camelot.Runtime.OutputParserTest do
       assert parsed.cost_usd == 0.74
     end
 
+    test "falls back to the last non-blank result when the final turn is empty" do
+      # Regression: a resumed session's final invocation can be a wake/yield
+      # turn that emits an empty result; the real answer from an earlier
+      # invocation (still in the log) must not be discarded.
+      buffer =
+        Enum.map_join(
+          [
+            %{
+              "type" => "result",
+              "subtype" => "success",
+              "result" => "Here is the real answer.",
+              "permission_denials" => []
+            },
+            %{
+              "type" => "result",
+              "subtype" => "success",
+              "result" => "",
+              "permission_denials" => []
+            }
+          ],
+          "\n",
+          &Jason.encode!/1
+        )
+
+      assert {:ok, parsed} = OutputParser.parse(:claude_code_json, buffer)
+      assert parsed.result_text == "Here is the real answer."
+    end
+
     test "ignores sub-agent result events (non-nil parent_tool_use_id)" do
       buffer =
         Enum.map_join(

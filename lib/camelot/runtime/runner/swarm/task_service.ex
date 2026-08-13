@@ -577,31 +577,36 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
   defp secrets(%Spec{secrets: []}), do: []
 
   defp secrets(%Spec{secrets: secrets}) do
-    Enum.flat_map(secrets, fn %{kind: kind, name: name} ->
-      case SecretSync.lookup_id_by_name(name) do
-        {:ok, id} ->
-          [
-            %{
-              "SecretID" => id,
-              "SecretName" => name,
-              "File" => %{
-                "Name" => Atom.to_string(kind),
-                "UID" => "1000",
-                "GID" => "1000",
-                "Mode" => 0o400
-              }
+    Enum.flat_map(secrets, &secret_mount/1)
+  end
+
+  # Env-only marker (blanks GH_TOKEN in the exec); nothing to mount.
+  defp secret_mount(%{kind: :github_token_clear}), do: []
+
+  defp secret_mount(%{kind: kind, name: name}) do
+    case SecretSync.lookup_id_by_name(name) do
+      {:ok, id} ->
+        [
+          %{
+            "SecretID" => id,
+            "SecretName" => name,
+            "File" => %{
+              "Name" => Atom.to_string(kind),
+              "UID" => "1000",
+              "GID" => "1000",
+              "Mode" => 0o400
             }
-          ]
+          }
+        ]
 
-        :error ->
-          Logger.warning(
-            "Swarm.TaskService: secret #{name} not found; " <>
-              "runner will start without /run/secrets/#{kind}"
-          )
+      :error ->
+        Logger.warning(
+          "Swarm.TaskService: secret #{name} not found; " <>
+            "runner will start without /run/secrets/#{kind}"
+        )
 
-          []
-      end
-    end)
+        []
+    end
   end
 
   defp placement(%Spec{node_label: nil}), do: %{}

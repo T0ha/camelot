@@ -171,7 +171,7 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
     %{
       "title" => task.title || "",
       "description" => task.description || "",
-      "plan" => task.plan || "",
+      "plan" => prompt_plan(task),
       "pr_url" => task.pr_url || "",
       "pr_number" => to_string(task.pr_number || ""),
       "pr_comments" => comments,
@@ -183,7 +183,7 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
     %{
       "title" => task.title || "",
       "description" => task.description || "",
-      "plan" => task.plan || "",
+      "plan" => prompt_plan(task),
       "attachments" => attachments_block(task)
     }
   end
@@ -202,6 +202,12 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
   end
 
   def attachments_block(_task), do: ""
+
+  # Prefer the full plan document captured from the agent's plan file
+  # over `plan`, which may be only a pointer + summary.
+  defp prompt_plan(task) do
+    task.full_plan || task.plan || ""
+  end
 
   defp fetch_pr_comments(task) do
     project = task.project
@@ -268,7 +274,7 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
 
     parts =
       if task.plan,
-        do: parts ++ ["\nPlan: #{task.plan}"],
+        do: parts ++ ["\nPlan: #{prompt_plan(task)}"],
         else: parts
 
     parts =

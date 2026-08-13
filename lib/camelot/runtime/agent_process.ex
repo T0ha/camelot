@@ -346,25 +346,70 @@ defmodule Camelot.Runtime.AgentProcess do
   defp finalize_runner_exit(state, exit_code, died_reason) do
     parsed = parsed_for_exit(state, died_reason)
     denials = extract_denials(parsed)
-    finish_session(state, exit_code, parsed, denials)
+    empty? = exit_code == 0 and empty_result?(parsed)
+    finish_session(state, exit_code, parsed, denials, empty?)
     if state.current_session_id, do: SessionRegistry.unregister(state.current_session_id)
 
     failed? = exit_code != 0 or match?({:error, _}, parsed)
 
-    if failed? and state.retry_count < state.max_retries do
+    # A clean-but-empty run (agent produced nothing actionable) is retried
+    # on the same footing as a failure — bounded by the agent's
+    # `max_retries` — instead of silently parking the task.
+    if (failed? or empty?) and state.retry_count < state.max_retries do
       release_pool_slot(state)
       schedule_retry(state)
     else
+      finalize_terminal(state, exit_code, parsed, denials, failed?, empty?)
+    end
+  end
+
+  # Terminal handling once retries are exhausted (or none configured). An
+  # empty run bypasses the stage handlers and errors the task with a clear
+  # reason, so it never lands in a message-less `waiting_for_input`.
+  defp finalize_terminal(state, exit_code, parsed, denials, failed?, empty?) do
+    if empty? do
+      mark_task_error(state.current_task_id, empty_error_reason(state))
+    else
       handle_cli_exit(state, exit_code, parsed)
       if failed?, do: mark_task_error(state.current_task_id, parsed_error(parsed))
-      release_and_idle(state)
-
-      if denials == [] do
-        {:noreply, reset_runner(state)}
-      else
-        {:noreply, clear_runner(state)}
-      end
     end
+
+    release_and_idle(state)
+
+    if denials == [] do
+      {:noreply, reset_runner(state)}
+    else
+      {:noreply, clear_runner(state)}
+    end
+  end
+
+  @doc """
+  Whether a parsed run produced nothing actionable: no result text, no
+  structured payload, no permission denials, and no non-blank assistant
+  turns. Such a run is retried (up to the agent's `max_retries`) and its
+  session is marked `:empty`, rather than silently parking the task in
+  `waiting_for_input`.
+  """
+  @spec empty_result?(term()) :: boolean()
+  def empty_result?({:ok, parsed}) do
+    blank?(parsed.result_text) and is_nil(parsed.structured) and
+      (parsed.permission_denials || []) == [] and
+      Enum.all?(parsed.assistant_texts || [], &blank?/1)
+  end
+
+  def empty_result?(_parsed), do: false
+
+  defp blank?(nil), do: true
+  defp blank?(text) when is_binary(text), do: String.trim(text) == ""
+  defp blank?(_other), do: false
+
+  defp empty_error_reason(%{max_retries: 0}) do
+    "Agent finished without producing any output."
+  end
+
+  defp empty_error_reason(%{max_retries: retries}) do
+    "Agent finished without producing any output after " <>
+      "#{retries + 1} attempts."
   end
 
   defp parsed_for_exit(state, nil) do
@@ -774,8 +819,14 @@ defmodule Camelot.Runtime.AgentProcess do
     end
   end
 
+  # Force a fresh mint (never a cached token) so the runner can't inherit
+  # a token GitHub revoked early but that is still unexpired in the cache.
+  # On failure, append a clear marker rather than nothing: the runner must
+  # not silently fall back to the (now-stale) token baked into its
+  # container at start time — an expired token 401s every `gh` call and
+  # looks like the agent declined to open a PR.
   defp mint_github_app_token(secrets, installation_id, task_id) do
-    case InstallationTokenCache.fetch(installation_id) do
+    case InstallationTokenCache.refresh(installation_id) do
       {:ok, token} ->
         name = github_app_token_secret_name(task_id)
         publish_swarm_secret(name, token)
@@ -785,10 +836,10 @@ defmodule Camelot.Runtime.AgentProcess do
         Logger.warning(
           "AgentProcess: could not mint GitHub App token for " <>
             "installation #{installation_id} (#{inspect(reason)}); " <>
-            "skipping github_app_token secret"
+            "clearing GH_TOKEN so the runner can't use a stale baked-in token"
         )
 
-        secrets
+        secrets ++ [%{kind: :github_token_clear, name: "", value: ""}]
     end
   end
 
@@ -946,7 +997,7 @@ defmodule Camelot.Runtime.AgentProcess do
   defp handle_task_result(state, %{stage: :planning} = task, result, task_id) do
     case planning_action(state, result) do
       {:submit_plan, plan} ->
-        submit_plan(task, plan, task_id)
+        submit_plan(task, plan, fetch_referenced_plan(plan, task_id), task_id)
 
       {:request_input, text} ->
         request_user_input(task, text, task_id)
@@ -988,11 +1039,26 @@ defmodule Camelot.Runtime.AgentProcess do
         request_user_input(task, result.text, task_id)
 
       true ->
-        transition(task, :request_input)
+        request_user_input(task, pr_review_message(result), task_id)
     end
   end
 
   defp handle_task_result(_state, _task, _result, _task_id), do: :ok
+
+  # A clean PR-stage run with no question and no denials: surface the
+  # agent's summary so the waiting-for-input email always corresponds to a
+  # visible message. A genuinely empty run never reaches here — it is
+  # retried and marked `:empty` in `finalize_runner_exit`.
+  defp pr_review_message(result) do
+    case String.trim(result.text) do
+      "" ->
+        "I finished reviewing the PR. Please review the changes, or " <>
+          "reply with further guidance."
+
+      text ->
+        text
+    end
+  end
 
   @doc """
   Decides the planning-stage outcome from a parsed runner result.
@@ -1180,8 +1246,14 @@ defmodule Camelot.Runtime.AgentProcess do
 
   defp extract_pr_info(_state, _), do: {nil, nil}
 
-  defp submit_plan(task, plan_text, task_id) do
-    case Ash.update(task, %{plan: plan_text}, action: :submit_plan) do
+  # `full_plan` is always written — nil clears a stale document left
+  # from a previous planning round after `request_plan_changes`.
+  defp submit_plan(task, plan_text, full_plan, task_id) do
+    case Ash.update(
+           task,
+           %{plan: plan_text, full_plan: full_plan},
+           action: :submit_plan
+         ) do
       {:ok, updated} ->
         broadcast_task_update(updated)
 
@@ -1189,6 +1261,58 @@ defmodule Camelot.Runtime.AgentProcess do
         Logger.warning("Failed to submit plan for task #{task_id}: #{inspect(error)}")
     end
   end
+
+  # Claude Code plan mode writes the complete plan to a file under
+  # `~/.claude/plans/` and returns only a pointer + summary. When the
+  # submitted plan references such a file, fetch the document from the
+  # still-running task workspace; on any failure fall back to nil so
+  # the task submits exactly as it would without this feature.
+  @full_plan_max_bytes 512_000
+
+  defp fetch_referenced_plan(plan, task_id) do
+    case plan_file_reference(plan) do
+      nil -> nil
+      path -> read_plan_file(task_id, path)
+    end
+  end
+
+  defp read_plan_file(task_id, path) do
+    case Runner.read_task_file(task_id, path) do
+      {:ok, content} ->
+        non_empty_capped(content)
+
+      {:error, reason} ->
+        Logger.warning(
+          "Failed to fetch referenced plan file #{path} for task " <>
+            "#{task_id}: #{inspect(reason)}"
+        )
+
+        nil
+    end
+  end
+
+  defp non_empty_capped(content) do
+    case String.trim(content) do
+      "" -> nil
+      trimmed -> binary_slice(trimmed, 0, @full_plan_max_bytes)
+    end
+  end
+
+  @doc """
+  Extracts the first `~/.claude/plans/*.md` file reference from a plan
+  text, or nil. Claude Code plan mode writes the full plan there and
+  returns only a pointer + summary; the path is matched both `~`- and
+  absolute-rooted (e.g. `/home/agent/.claude/plans/foo.md`).
+  """
+  @spec plan_file_reference(String.t() | nil) :: String.t() | nil
+  def plan_file_reference(plan) when is_binary(plan) do
+    case Regex.run(~r{(?:~|(?:/[\w.-]+)+)/\.claude/plans/[\w.-]+\.md}, plan) do
+      [path] -> path
+      nil -> nil
+    end
+  end
+
+  def plan_file_reference(_), do: nil
 
   defp request_user_input(task, text, task_id) do
     Ash.create!(TaskMessage, %{
@@ -1235,14 +1359,16 @@ defmodule Camelot.Runtime.AgentProcess do
   # DB error (or a session deleted out from under us) logs and returns
   # instead of crashing AgentProcess mid-finalisation — which would
   # strand the session as :running until the Reconciler swept it.
-  @spec finish_session(t(), integer(), term(), [map()]) :: :ok
-  def finish_session(%__MODULE__{current_session_id: nil}, _exit_code, _parsed, _denials) do
+  @spec finish_session(t(), integer(), term(), [map()], boolean()) :: :ok
+  def finish_session(state, exit_code, parsed, denials, empty? \\ false)
+
+  def finish_session(%__MODULE__{current_session_id: nil}, _exit_code, _parsed, _denials, _empty?) do
     :ok
   end
 
-  def finish_session(state, exit_code, parsed, denials) do
+  def finish_session(state, exit_code, parsed, denials, empty?) do
     session = Ash.get!(Session, state.current_session_id)
-    action = session_action(exit_code)
+    action = session_action(exit_code, empty?)
 
     case Ash.update(
            session,
@@ -1273,8 +1399,9 @@ defmodule Camelot.Runtime.AgentProcess do
       :ok
   end
 
-  defp session_action(0), do: :complete
-  defp session_action(_exit_code), do: :fail
+  defp session_action(_exit_code, true), do: :mark_empty
+  defp session_action(0, false), do: :complete
+  defp session_action(_exit_code, false), do: :fail
 
   defp parsed_error({:error, msg}), do: msg
   defp parsed_error(_parsed), do: nil

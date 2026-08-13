@@ -195,11 +195,6 @@ defmodule Camelot.Runtime.AgentProcessTest do
       )
     end
 
-    defp seed_cached_token(installation_id, token) do
-      far_future = DateTime.add(DateTime.utc_now(), 3_600, :second)
-      :ets.insert(Camelot.Github.InstallationTokenCache, {installation_id, token, far_future})
-    end
-
     defp task_with_installation(installation_id) do
       installations =
         if installation_id,
@@ -209,13 +204,54 @@ defmodule Camelot.Runtime.AgentProcessTest do
       %Task{creator: %User{github_installations: installations}}
     end
 
-    test "appends a github_app_token secret when the creator has a linked installation and the App is configured" do
+    # The runner's GitHub token is force-minted fresh per session (never
+    # served from the shared cache) so a revoked-but-unexpired cached
+    # token can't reach the container. With a fake signing key the mint
+    # can't succeed here, so these tests exercise the failure branch: a
+    # `:github_token_clear` marker that blanks GH_TOKEN in the runner
+    # rather than letting it fall back to a stale token baked into the
+    # container. The mint success path is covered by the
+    # InstallationTokenCache tests.
+
+    test "clears GH_TOKEN when a fresh token can't be minted for a linked installation" do
       put_app_configured()
       id = System.unique_integer([:positive])
-      seed_cached_token(id, "cached-installation-token")
 
-      assert [%{kind: :github_app_token, value: "cached-installation-token"}] =
+      assert [%{kind: :github_token_clear}] =
                AgentProcess.maybe_append_github_app_token([], task_with_installation(id), "task-1")
+    end
+
+    test "appends the clear marker after already-built secrets, preserving them" do
+      put_app_configured()
+      id = System.unique_integer([:positive])
+
+      existing = [%{kind: :ssh_private_key, name: "n", value: "v"}]
+
+      assert [
+               %{kind: :ssh_private_key},
+               %{kind: :github_token_clear}
+             ] = AgentProcess.maybe_append_github_app_token(existing, task_with_installation(id), "task-1")
+    end
+
+    test "flows a multi-installation task through resolution without crashing" do
+      # Selection correctness lives in Camelot.Github.ResolverTest; here we
+      # only assert the multi-installation path reaches a single decision.
+      put_app_configured()
+      matching_id = System.unique_integer([:positive])
+      other_id = System.unique_integer([:positive])
+
+      task = %Task{
+        project: %Project{github_owner: "other-org"},
+        creator: %User{
+          github_installations: [
+            %Installation{installation_id: other_id, account_login: "acme-org"},
+            %Installation{installation_id: matching_id, account_login: "other-org"}
+          ]
+        }
+      }
+
+      assert [%{kind: :github_token_clear}] =
+               AgentProcess.maybe_append_github_app_token([], task, "task-1")
     end
 
     test "is a no-op when the creator has no linked installation" do
@@ -228,53 +264,13 @@ defmodule Camelot.Runtime.AgentProcessTest do
       assert AgentProcess.maybe_append_github_app_token([], nil, "task-1") == []
     end
 
-    test "is a no-op when the App isn't configured" do
+    test "leaves GH_TOKEN untouched when the App isn't configured (PAT path)" do
+      # No App means we're not on the App-token path at all, so GH_TOKEN
+      # must not be cleared — the project may authenticate with a PAT.
       Application.put_env(:camelot, :github_app, [])
       id = System.unique_integer([:positive])
-      seed_cached_token(id, "cached-installation-token")
 
       assert AgentProcess.maybe_append_github_app_token([], task_with_installation(id), "task-1") == []
-    end
-
-    test "logs and skips when minting fails (no such installation)" do
-      put_app_configured()
-      id = System.unique_integer([:positive])
-
-      assert AgentProcess.maybe_append_github_app_token([], task_with_installation(id), "task-1") == []
-    end
-
-    test "resolves the installation matching the task's project github_owner when the creator has several" do
-      put_app_configured()
-      matching_id = System.unique_integer([:positive])
-      other_id = System.unique_integer([:positive])
-      seed_cached_token(matching_id, "matching-token")
-      seed_cached_token(other_id, "other-token")
-
-      task = %Task{
-        project: %Project{github_owner: "other-org"},
-        creator: %User{
-          github_installations: [
-            %Installation{installation_id: other_id, account_login: "acme-org"},
-            %Installation{installation_id: matching_id, account_login: "other-org"}
-          ]
-        }
-      }
-
-      assert [%{kind: :github_app_token, value: "matching-token"}] =
-               AgentProcess.maybe_append_github_app_token([], task, "task-1")
-    end
-
-    test "preserves already-built secrets, appending after them" do
-      put_app_configured()
-      id = System.unique_integer([:positive])
-      seed_cached_token(id, "cached-installation-token")
-
-      existing = [%{kind: :ssh_private_key, name: "n", value: "v"}]
-
-      assert [
-               %{kind: :ssh_private_key},
-               %{kind: :github_app_token, value: "cached-installation-token"}
-             ] = AgentProcess.maybe_append_github_app_token(existing, task_with_installation(id), "task-1")
     end
   end
 
@@ -441,6 +437,43 @@ defmodule Camelot.Runtime.AgentProcessTest do
     end
   end
 
+  describe "plan_file_reference/1" do
+    test "extracts an absolute plan file path from prose" do
+      plan =
+        "See /home/agent/.claude/plans/task-decomission-vectorized.md — " <>
+          "full plan written there.\n\nSummary: deep rewrite."
+
+      assert AgentProcess.plan_file_reference(plan) ==
+               "/home/agent/.claude/plans/task-decomission-vectorized.md"
+    end
+
+    test "extracts a tilde-rooted plan file path" do
+      plan = "Full plan: ~/.claude/plans/my-plan.md"
+
+      assert AgentProcess.plan_file_reference(plan) ==
+               "~/.claude/plans/my-plan.md"
+    end
+
+    test "returns the first reference when several are present" do
+      plan =
+        "~/.claude/plans/first.md and also " <>
+          "/home/agent/.claude/plans/second.md"
+
+      assert AgentProcess.plan_file_reference(plan) ==
+               "~/.claude/plans/first.md"
+    end
+
+    test "nil when the plan has no plan-file reference" do
+      assert AgentProcess.plan_file_reference("Step 1\nStep 2") == nil
+    end
+
+    test "nil for paths outside .claude/plans or non-markdown files" do
+      assert AgentProcess.plan_file_reference("/home/agent/notes/plan.md") == nil
+      assert AgentProcess.plan_file_reference("~/.claude/plans/foo.txt") == nil
+      assert AgentProcess.plan_file_reference(nil) == nil
+    end
+  end
+
   describe "execution_pr_outcome/3" do
     defp exec_state do
       %AgentProcess{
@@ -469,6 +502,41 @@ defmodule Camelot.Runtime.AgentProcessTest do
                  ctx.task,
                  "Finished, but I did not open a PR."
                )
+    end
+  end
+
+  describe "empty_result?/1" do
+    defp parsed(overrides) do
+      base = %{result_text: "", structured: nil, assistant_texts: [], permission_denials: []}
+      {:ok, Map.merge(base, Map.new(overrides))}
+    end
+
+    test "true when there is no result, structured, denials, or assistant text" do
+      assert AgentProcess.empty_result?(parsed([]))
+    end
+
+    test "false when there is result text" do
+      refute AgentProcess.empty_result?(parsed(result_text: "done"))
+    end
+
+    test "false when there is a structured payload" do
+      refute AgentProcess.empty_result?(parsed(structured: %{"decision" => "plan"}))
+    end
+
+    test "false when there are permission denials" do
+      refute AgentProcess.empty_result?(parsed(permission_denials: [%{"tool_name" => "Bash"}]))
+    end
+
+    test "false when an assistant turn has content" do
+      refute AgentProcess.empty_result?(parsed(assistant_texts: ["I did the thing"]))
+    end
+
+    test "true when assistant turns are all blank" do
+      assert AgentProcess.empty_result?(parsed(assistant_texts: ["", "  "]))
+    end
+
+    test "false for a runner-death/error parse" do
+      refute AgentProcess.empty_result?({:error, "runner died"})
     end
   end
 

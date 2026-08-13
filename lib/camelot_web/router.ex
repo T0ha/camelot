@@ -45,6 +45,7 @@ defmodule CamelotWeb.Router do
     pipe_through :browser
 
     get "/sessions/:id/download", SessionDownloadController, :download
+    get "/tasks/:id/plan/download", TaskPlanController, :download
   end
 
   scope "/github", CamelotWeb do
@@ -94,6 +95,7 @@ defmodule CamelotWeb.Router do
 
       live "/", BoardLive
       live "/tasks/:id", TaskLive
+      live "/tasks/:id/plan", TaskPlanLive
 
       live "/projects", ProjectLive.Index, :index
       live "/projects/new", ProjectLive.Index, :new

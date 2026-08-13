@@ -159,6 +159,41 @@ defmodule Camelot.Board.TaskTest do
       assert updated.plan == "Do X then Y"
     end
 
+    test "submit_plan stores full_plan and nil clears it", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      {:ok, task} =
+        Ash.update(
+          task,
+          %{agent_id: ctx.agent.id},
+          action: :begin_work
+        )
+
+      assert {:ok, task} =
+               Ash.update(
+                 task,
+                 %{plan: "See ~/.claude/plans/x.md", full_plan: "# Full doc"},
+                 action: :submit_plan
+               )
+
+      assert task.full_plan == "# Full doc"
+
+      # A later planning round without a plan file must clear the
+      # stale document, not leave the old one attached.
+      {:ok, task} = Ash.update(task, %{}, action: :request_plan_changes)
+      {:ok, task} = Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+
+      assert {:ok, task} =
+               Ash.update(
+                 task,
+                 %{plan: "Inline plan", full_plan: nil},
+                 action: :submit_plan
+               )
+
+      assert task.full_plan == nil
+      assert task.plan == "Inline plan"
+    end
+
     test "approve_plan → executing/queued", ctx do
       {:ok, task} = create_task(ctx.project, ctx.user)
 
