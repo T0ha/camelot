@@ -24,6 +24,7 @@ defmodule Camelot.Runtime.Runner.Swarm do
   @behaviour Camelot.Runtime.Runner
 
   alias Camelot.Runtime.Runner.Spec
+  alias Camelot.Runtime.Runner.Swarm.ContainerFile
   alias Camelot.Runtime.Runner.Swarm.ExecSession
   alias Camelot.Runtime.Runner.Swarm.TaskService
 
@@ -37,4 +38,9 @@ defmodule Camelot.Runtime.Runner.Swarm do
 
   @impl true
   def stop_task(task_id) when is_binary(task_id), do: TaskService.stop_task(task_id)
+
+  @impl true
+  def read_task_file(task_id, path) when is_binary(task_id) and is_binary(path) do
+    ContainerFile.read(task_id, path)
+  end
 end

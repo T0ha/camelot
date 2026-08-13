@@ -76,6 +76,18 @@ defmodule Camelot.Board.Task do
       public?(true)
     end
 
+    attribute :full_plan, :string do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Complete plan document fetched from the plan file the agent " <>
+          "wrote in its workspace (~/.claude/plans/). `plan` holds " <>
+          "whatever the agent returned inline, which may be only a " <>
+          "pointer to that file plus a summary."
+      )
+    end
+
     attribute :pr_url, :string do
       allow_nil?(true)
       public?(true)
@@ -265,7 +277,7 @@ defmodule Camelot.Board.Task do
     end
 
     update :submit_plan do
-      accept([:plan])
+      accept([:plan, :full_plan])
       notifiers([NotifyTaskStateEmail])
 
       validate(attribute_equals(:stage, :planning))
