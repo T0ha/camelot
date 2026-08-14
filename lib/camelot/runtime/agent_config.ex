@@ -1,21 +1,18 @@
 defmodule Camelot.Runtime.AgentConfig do
   @moduledoc """
-  Resolves the effective CLI configuration for an agent
-  by merging its `AgentTemplate` defaults with any
-  per-agent `*_override` columns, then builds the argv,
-  env, and command-prefix tokens used by
-  `Camelot.Runtime.AgentProcess` to open a Port.
+  Resolves the effective CLI configuration for a task by
+  merging its `Agent` (CLI template) defaults with any
+  `Project` `*_override` fields, then builds the argv, env,
+  and command-prefix tokens used by
+  `Camelot.Runtime.TaskRunner` to open a Port.
 
-  Override fields on the Agent win over the template iff
+  Override fields on the Project win over the agent CLI iff
   they are non-nil. Parser choice cannot be overridden
-  per agent (it implies a code-level contract).
-
-  `runner_image` also accepts a project-level override via
-  `agent.project.runner_image_override`, taking precedence
-  over the template default.
+  per project (it implies a code-level contract).
   """
 
   alias Camelot.Agents.Agent
+  alias Camelot.Projects.Project
 
   @enforce_keys [:parser, :executable]
   defstruct command_prefix: nil,
@@ -54,33 +51,33 @@ defmodule Camelot.Runtime.AgentConfig do
           required_credential_kinds: [atom()]
         }
 
-  @spec resolve(Agent.t()) :: t()
-  def resolve(%Agent{template: template} = agent) do
+  @spec resolve(Agent.t(), Project.t()) :: t()
+  def resolve(%Agent{} = agent, %Project{} = project) do
     %__MODULE__{
-      command_prefix: override(agent.command_prefix_override, template.command_prefix),
-      executable: override(agent.executable_override, template.executable),
-      base_args: override(agent.base_args_override, template.base_args),
-      prompt_flag: template.prompt_flag,
-      tools_flag: template.tools_flag,
-      tools_separator: template.tools_separator,
+      command_prefix: override(project.command_prefix_override, agent.command_prefix),
+      executable: override(project.executable_override, agent.executable),
+      base_args: override(project.base_args_override, agent.base_args),
+      prompt_flag: agent.prompt_flag,
+      tools_flag: agent.tools_flag,
+      tools_separator: agent.tools_separator,
       permission_args_by_stage:
         override(
-          agent.permission_args_by_stage_override,
-          template.permission_args_by_stage
+          project.permission_args_by_stage_override,
+          agent.permission_args_by_stage
         ),
-      internal_tools: override(agent.internal_tools_override, template.internal_tools),
-      env_vars: override(agent.env_vars_override, template.env_vars),
-      parser: template.parser,
-      pr_url_pattern: template.pr_url_pattern,
-      question_phrases: template.question_phrases,
+      internal_tools: override(project.internal_tools_override, agent.internal_tools),
+      env_vars: override(project.env_vars_override, agent.env_vars),
+      parser: agent.parser,
+      pr_url_pattern: agent.pr_url_pattern,
+      question_phrases: agent.question_phrases,
       base_retry_delay_ms:
         override(
-          agent.base_retry_delay_ms_override,
-          template.base_retry_delay_ms
+          project.base_retry_delay_ms_override,
+          agent.base_retry_delay_ms
         ),
-      runner_image: override(agent.project.runner_image_override, template.runner_image),
-      runner_resources: template.runner_resources,
-      required_credential_kinds: template.required_credential_kinds
+      runner_image: override(project.runner_image_override, agent.runner_image),
+      runner_resources: agent.runner_resources,
+      required_credential_kinds: agent.required_credential_kinds
     }
   end
 

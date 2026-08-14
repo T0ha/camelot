@@ -1,20 +1,23 @@
-defmodule Camelot.Agents.Changes.DispatchTasks do
+defmodule Camelot.Board.Changes.DispatchTasks do
   @moduledoc """
-  Ash generic action implementation that scans idle agents,
-  finds matching pending tasks, and dispatches them.
-  Only picks up queued tasks in dispatchable stages.
+  Ash generic action implementation that scans dispatchable
+  tasks and dispatches all of them, highest priority first.
+
+  Concurrency is bounded independently by `Camelot.Runtime.RunnerPool`
+  (keyed by task creator), not by this dispatcher — a task's agent CLI
+  is fixed at creation time, so there's no per-agent idle/busy slot to
+  gate on anymore. `RunnerPool` never refuses a dispatch; it queues.
   """
   use Ash.Resource.Actions.Implementation
 
-  alias Camelot.Agents.Agent
   alias Camelot.Board.Changes.CheckPrStatus
   alias Camelot.Board.Task
   alias Camelot.Github.Client
   alias Camelot.Github.Resolver
   alias Camelot.Prompts.Renderer
-  alias Camelot.Runtime.AgentProcess
-  alias Camelot.Runtime.AgentRegistry
-  alias Camelot.Runtime.AgentSupervisor
+  alias Camelot.Runtime.TaskRegistry
+  alias Camelot.Runtime.TaskRunner
+  alias Camelot.Runtime.TaskRunnerSupervisor
 
   require Logger
 
@@ -27,61 +30,34 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
           Ash.Resource.Actions.Implementation.Context.t()
         ) :: :ok
   def run(_input, _opts, _context) do
-    idle_agents = fetch_idle_agents()
-
-    Enum.each(idle_agents, fn agent ->
-      case find_next_task(agent.project_id) do
-        nil ->
-          :ok
-
-        task ->
-          dispatch_task(agent, task)
-      end
-    end)
+    dispatchable_tasks()
+    |> Enum.sort_by(& &1.priority, :desc)
+    |> Enum.each(&dispatch_task/1)
 
     :ok
   end
 
-  defp fetch_idle_agents do
-    Agent
-    |> Ash.read!(load: [:project])
-    |> Enum.filter(&(&1.status == :idle))
-  end
-
-  defp find_next_task(project_id) do
+  defp dispatchable_tasks do
     Task
     |> Ash.read!(
       load: [:messages, :attachments, :project, creator: [:github_installations]],
       authorize?: false
     )
     |> Enum.filter(fn task ->
-      task.project_id == project_id and
-        task.state == :queued and
-        task.stage in @dispatchable_stages
+      task.state == :queued and task.stage in @dispatchable_stages
     end)
-    |> Enum.sort_by(& &1.priority, :desc)
-    |> List.first()
   end
 
-  defp dispatch_task(agent, task) do
-    case Ash.update(
-           task,
-           %{agent_id: agent.id},
-           action: :begin_work
-         ) do
+  defp dispatch_task(task) do
+    case Ash.update(task, %{}, action: :begin_work) do
       {:ok, task} ->
         broadcast_task_update(task)
-        ensure_agent_process(agent.id)
+        ensure_task_runner(task.id)
         prompt = build_prompt(task)
 
-        case AgentProcess.dispatch(
-               agent.id,
-               task.id,
-               prompt,
-               task.allowed_tools || []
-             ) do
+        case TaskRunner.dispatch(task.id, prompt, task.allowed_tools || []) do
           :ok ->
-            Logger.info("Dispatched task #{task.id} to agent #{agent.id}")
+            Logger.info("Dispatched task #{task.id}")
 
           {:error, reason} ->
             Logger.warning(
@@ -112,9 +88,9 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
   defp github_owner(%{project: %{github_owner: owner}}), do: owner
   defp github_owner(_task), do: nil
 
-  defp ensure_agent_process(agent_id) do
-    case AgentRegistry.lookup(agent_id) do
-      nil -> AgentSupervisor.start_agent(agent_id)
+  defp ensure_task_runner(task_id) do
+    case TaskRegistry.lookup(task_id) do
+      nil -> TaskRunnerSupervisor.start_task_runner(task_id)
       _pid -> :ok
     end
   end
@@ -203,7 +179,7 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
 
   # Pin the working branch to a deterministic, task-scoped name so a
   # PR that the agent opens can be recovered from GitHub even when its
-  # URL is missing from the final output (see AgentProcess fallback).
+  # URL is missing from the final output (see TaskRunner fallback).
   defp append_branch_directive(prompt, task, "execution") do
     prompt <>
       "\n\nWork on a git branch named exactly `camelot/task-#{task.id}` " <>

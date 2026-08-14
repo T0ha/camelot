@@ -12,7 +12,7 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   `spec.owner_pid` as `{:runner_data, self(), bytes}`.
   Final exit code is sent as
   `{:runner_exit, self(), code}`. Same protocol
-  `AgentProcess` already handles.
+  `TaskRunner` already handles.
   """
   use GenServer, restart: :temporary
 
@@ -53,7 +53,7 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   @adopt_budget_ms 900_000
 
   # Non-zero exit reported to the owner when an adoption is abandoned, so
-  # `AgentProcess` finalises the session as failed (recoverable) instead
+  # `TaskRunner` finalises the session as failed (recoverable) instead
   # of leaving it stranded `:running`.
   @adopt_giveup_exit_code 1
 

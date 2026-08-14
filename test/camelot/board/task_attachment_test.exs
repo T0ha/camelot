@@ -32,7 +32,8 @@ defmodule Camelot.Board.TaskAttachmentTest do
       Ash.create(Task, %{
         title: "Attachment task",
         project_id: project.id,
-        creator_id: user.id
+        creator_id: user.id,
+        agent_id: agent!("claude_code").id
       })
 
     %{task: task, base_dir: base_dir}

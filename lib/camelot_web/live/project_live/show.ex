@@ -80,6 +80,21 @@ defmodule CamelotWeb.ProjectLive.Show do
   defp can_invite?(_project_id, %User{role: :admin}), do: true
   defp can_invite?(project_id, %User{id: user_id}), do: Membership.owner?(project_id, user_id)
 
+  defp override_summary(project) do
+    Enum.reject(
+      [
+        {"command prefix", project.command_prefix_override},
+        {"executable", project.executable_override},
+        {"base args", project.base_args_override},
+        {"env vars", project.env_vars_override},
+        {"permission args", project.permission_args_by_stage_override},
+        {"internal tools", project.internal_tools_override},
+        {"retry delay (ms)", project.base_retry_delay_ms_override}
+      ],
+      fn {_label, value} -> is_nil(value) end
+    )
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -129,6 +144,16 @@ defmodule CamelotWeb.ProjectLive.Show do
           <code>{@project.runner_image_override}</code>
         </:item>
       </.list>
+
+      <div :if={override_summary(@project) != []} class="space-y-2">
+        <h2 class="text-lg font-semibold">Agent CLI overrides</h2>
+        <ul class="text-sm space-y-1">
+          <li :for={{label, value} <- override_summary(@project)}>
+            <span class="text-base-content/60">{label}:</span>
+            <code class="text-xs">{inspect(value)}</code>
+          </li>
+        </ul>
+      </div>
 
       <div :if={@current_user.role == :admin} class="rounded border p-4 space-y-2">
         <h2 class="text-lg font-semibold">Swarm node pin</h2>

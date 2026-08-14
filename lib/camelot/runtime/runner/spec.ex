@@ -4,7 +4,7 @@ defmodule Camelot.Runtime.Runner.Spec do
   invocation: argv, env, mounts, secrets, scheduling
   hints, and the session id it serves.
 
-  Built by `Camelot.Runtime.AgentProcess` from the
+  Built by `Camelot.Runtime.TaskRunner` from the
   resolved `AgentConfig`, the Agent, its User, and (for
   task sessions) its Project. Backends pattern-match on
   the fields they understand and ignore the rest — the

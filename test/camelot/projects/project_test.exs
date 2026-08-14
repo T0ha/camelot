@@ -77,6 +77,41 @@ defmodule Camelot.Projects.ProjectTest do
       assert project.runner_image_override == "ghcr.io/org/runner:1.0"
     end
 
+    test "defaults the agent CLI overrides to nil" do
+      assert {:ok, project} = Ash.create(Project, @valid_attrs)
+
+      assert project.command_prefix_override == nil
+      assert project.executable_override == nil
+      assert project.base_args_override == nil
+      assert project.env_vars_override == nil
+      assert project.permission_args_by_stage_override == nil
+      assert project.internal_tools_override == nil
+      assert project.base_retry_delay_ms_override == nil
+    end
+
+    test "accepts the agent CLI overrides" do
+      attrs =
+        Map.merge(@valid_attrs, %{
+          command_prefix_override: "docker run --rm img",
+          executable_override: "claude-canary",
+          base_args_override: ["--verbose"],
+          env_vars_override: %{"FOO" => "bar"},
+          permission_args_by_stage_override: %{"planning" => ["--flag"]},
+          internal_tools_override: ["SomeTool"],
+          base_retry_delay_ms_override: 1_000
+        })
+
+      assert {:ok, project} = Ash.create(Project, attrs)
+
+      assert project.command_prefix_override == "docker run --rm img"
+      assert project.executable_override == "claude-canary"
+      assert project.base_args_override == ["--verbose"]
+      assert project.env_vars_override == %{"FOO" => "bar"}
+      assert project.permission_args_by_stage_override == %{"planning" => ["--flag"]}
+      assert project.internal_tools_override == ["SomeTool"]
+      assert project.base_retry_delay_ms_override == 1_000
+    end
+
     test "fails without required name" do
       assert {:error, _} =
                Ash.create(Project, %{path: "/tmp/test"})
@@ -128,6 +163,28 @@ defmodule Camelot.Projects.ProjectTest do
                Ash.update(with_override, %{runner_image_override: nil})
 
       assert cleared.runner_image_override == nil
+    end
+
+    test "sets and clears the agent CLI overrides" do
+      {:ok, project} = Ash.create(Project, @valid_attrs)
+
+      assert {:ok, with_override} =
+               Ash.update(project, %{
+                 executable_override: "claude-canary",
+                 base_retry_delay_ms_override: 1_000
+               })
+
+      assert with_override.executable_override == "claude-canary"
+      assert with_override.base_retry_delay_ms_override == 1_000
+
+      assert {:ok, cleared} =
+               Ash.update(with_override, %{
+                 executable_override: nil,
+                 base_retry_delay_ms_override: nil
+               })
+
+      assert cleared.executable_override == nil
+      assert cleared.base_retry_delay_ms_override == nil
     end
   end
 

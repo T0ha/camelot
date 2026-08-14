@@ -8,6 +8,7 @@ defmodule CamelotWeb.BoardLive do
 
   import CamelotWeb.BoardComponents
 
+  alias Camelot.Agents.Agent
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
   alias CamelotWeb.Scope
@@ -39,7 +40,7 @@ defmodule CamelotWeb.BoardLive do
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   @impl true
-  @task_fields ~w(title description priority project_id)
+  @task_fields ~w(title description priority project_id agent_id)
 
   def handle_event("validate_task", params, socket) do
     {:noreply, assign(socket, task_form: to_form(Map.take(params, @task_fields)))}
@@ -107,6 +108,8 @@ defmodule CamelotWeb.BoardLive do
       |> Scope.maybe_scope(user, see_all, &Scope.scope_projects/2)
       |> Ash.read!()
 
+    agents = Agent |> Ash.read!() |> Enum.sort_by(& &1.name)
+
     columns =
       Enum.map(Task.column_stages(), fn stage ->
         {stage,
@@ -119,12 +122,14 @@ defmodule CamelotWeb.BoardLive do
       page_title: "Board",
       columns: columns,
       projects: projects,
+      agents: agents,
       task_form:
         to_form(%{
           "title" => "",
           "description" => "",
           "priority" => "0",
-          "project_id" => ""
+          "project_id" => "",
+          "agent_id" => ""
         })
     )
   end
@@ -202,6 +207,13 @@ defmodule CamelotWeb.BoardLive do
             label="Project"
             prompt="Select project"
             options={Enum.map(@projects, &{&1.name, &1.id})}
+          />
+          <.input
+            field={@task_form[:agent_id]}
+            type="select"
+            label="CLI Agent"
+            prompt="Select agent CLI"
+            options={Enum.map(@agents, &{&1.name, &1.id})}
           />
           <.input
             field={@task_form[:priority]}

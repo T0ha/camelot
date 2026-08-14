@@ -41,6 +41,7 @@ defmodule CamelotWeb.BoardLiveTest do
         "title" => "Write the plan",
         "description" => "some details",
         "project_id" => project.id,
+        "agent_id" => agent!("claude_code").id,
         "priority" => "2"
       })
 
@@ -89,7 +90,8 @@ defmodule CamelotWeb.BoardLiveTest do
         Ash.create(Task, %{
           title: "mine-task-#{System.unique_integer()}",
           project_id: mine.id,
-          creator_id: user.id
+          creator_id: user.id,
+          agent_id: agent!("claude_code").id
         })
 
       other = Ash.Seed.seed!(Camelot.Accounts.User, %{email: "o-#{System.unique_integer()}@x.com"})
@@ -105,7 +107,8 @@ defmodule CamelotWeb.BoardLiveTest do
         Ash.create(Task, %{
           title: "theirs-task-#{System.unique_integer()}",
           project_id: theirs.id,
-          creator_id: other.id
+          creator_id: other.id,
+          agent_id: agent!("claude_code").id
         })
 
       {:ok, _view, html} = live(conn, ~p"/")

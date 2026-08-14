@@ -2,7 +2,7 @@ defmodule Camelot.Settings.SystemSetting do
   @moduledoc """
   Singleton row holding instance-wide defaults. Currently just
   the global fallback swarm node pin used by
-  `Camelot.Runtime.AgentProcess.node_label_for/1` when neither a
+  `Camelot.Runtime.TaskRunner.node_label_for/1` when neither a
   project nor its owner has one set.
 
   There is deliberately no `:create` action exposed for general

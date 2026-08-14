@@ -1,29 +1,25 @@
 defmodule Camelot.Agents.Agent do
   @moduledoc """
-  An AI coding agent bound to a single project.
+  Configuration template for an AI coding agent CLI ("Agent CLI").
 
-  Behaviour comes from `Camelot.Agents.AgentTemplate`
-  (the `template` relationship). Each `*_override` column
-  lets a project deviate from the template default
-  without forking the template itself.
+  One row per agent type (e.g. `claude_code`, `codex`).
+  Holds the executable name, base CLI args, per-stage
+  permission arguments, output parser choice, env vars,
+  and an optional `command_prefix` for running the agent
+  inside Docker, a terminal emulator, or any other wrapper.
+
+  A `Camelot.Board.Task` picks one of these at creation time —
+  there is no durable per-project agent instance. Per-project
+  tweaks are expressed as nullable `*_override` fields on
+  `Camelot.Projects.Project` and apply to every task in that
+  project.
   """
   use Ash.Resource,
     domain: Camelot.Agents,
     data_layer: AshPostgres.DataLayer,
-    extensions: [AshOban],
-    authorizers: [],
-    simple_notifiers: [Camelot.Telemetry.Notifier]
+    authorizers: []
 
-  oban do
-    scheduled_actions do
-      schedule :dispatch_tasks, "* * * * *" do
-        action(:dispatch_tasks)
-        queue(:tasks)
-
-        worker_module_name(Camelot.Agents.Agent.AshOban.ActionWorker.DispatchTasks)
-      end
-    end
-  end
+  @parsers [:claude_code_json, :raw_text]
 
   postgres do
     table("agents")
@@ -33,89 +29,169 @@ defmodule Camelot.Agents.Agent do
   attributes do
     uuid_primary_key(:id)
 
+    attribute :slug, :string do
+      allow_nil?(false)
+      public?(true)
+      description("Stable identifier, e.g. claude_code, codex")
+    end
+
     attribute :name, :string do
       allow_nil?(false)
       public?(true)
+      description("Human-readable name shown in the UI")
     end
 
-    attribute :status, :atom do
+    attribute :command_prefix, :string do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Optional wrapper prepended to the executable. " <>
+          "Whitespace-tokenized at dispatch. Supports the " <>
+          "{{project_path}} placeholder. Example: " <>
+          "`docker run --rm -v {{project_path}}:/w -w /w img`"
+      )
+    end
+
+    attribute :executable, :string do
       allow_nil?(false)
       public?(true)
-      default(:idle)
-      constraints(one_of: [:idle, :busy])
+      description("CLI binary name, resolved via PATH")
+    end
+
+    attribute :base_args, {:array, :string} do
+      allow_nil?(false)
+      public?(true)
+      default([])
+      description("Static args prepended before stage/tool/prompt args")
+    end
+
+    attribute :prompt_flag, :string do
+      allow_nil?(true)
+      public?(true)
+      description("Flag for the prompt (e.g. -p); nil = positional")
+    end
+
+    attribute :tools_flag, :string do
+      allow_nil?(true)
+      public?(true)
+      description("Flag for the allowed-tools list (e.g. --allowedTools)")
+    end
+
+    attribute :tools_separator, :string do
+      allow_nil?(false)
+      public?(true)
+      default(",")
+    end
+
+    attribute :permission_args_by_stage, :map do
+      allow_nil?(false)
+      public?(true)
+      default(%{})
+
+      description(
+        "Map of task stage (string) to extra CLI args, " <>
+          ~s(e.g. %{"planning" => ["--permission-mode", "plan"]})
+      )
+    end
+
+    attribute :internal_tools, {:array, :string} do
+      allow_nil?(false)
+      public?(true)
+      default([])
+      description("Tool names filtered out of the allowed_tools list")
+    end
+
+    attribute :env_vars, :map do
+      allow_nil?(false)
+      public?(true)
+      default(%{})
+      description("Environment variables passed to the CLI port")
+    end
+
+    attribute :parser, :atom do
+      allow_nil?(false)
+      public?(true)
+      default(:raw_text)
+      constraints(one_of: @parsers)
+      description("Output parser strategy")
+    end
+
+    attribute :pr_url_pattern, :string do
+      allow_nil?(false)
+      public?(true)
+      default("https://github\\.com/[^\\s]+/pull/(\\d+)")
+      description("Regex for extracting the PR URL + number from output")
+    end
+
+    attribute :question_phrases, {:array, :string} do
+      allow_nil?(false)
+      public?(true)
+      default([])
+      description("Phrases that mark output as a clarifying question")
+    end
+
+    attribute :base_retry_delay_ms, :integer do
+      allow_nil?(false)
+      public?(true)
+      default(5_000)
+      description("Initial retry delay; doubled per attempt")
     end
 
     attribute :max_retries, :integer do
       allow_nil?(false)
       public?(true)
       default(3)
+      description("How many times to re-dispatch after a failed run")
     end
 
-    attribute :command_prefix_override, :string do
+    attribute :runner_image, :string do
       allow_nil?(true)
       public?(true)
+
+      description(
+        "OCI image reference used by the Swarm/DockerEngine " <>
+          "runner, e.g. `ghcr.io/t0ha/camelot-runner-elixir:1.19`. " <>
+          "Nil falls back to a generic base image."
+      )
     end
 
-    attribute :executable_override, :string do
-      allow_nil?(true)
+    attribute :runner_resources, :map do
+      allow_nil?(false)
       public?(true)
+      default(%{})
+
+      description(
+        "Resource reservations passed to `docker service " <>
+          "create`. Example: " <>
+          ~s(`%{"cpu" => "1.0", "memory" => "2G"}`)
+      )
     end
 
-    attribute :base_args_override, {:array, :string} do
-      allow_nil?(true)
+    attribute :required_credential_kinds, Camelot.Agents.CredentialKinds do
+      allow_nil?(false)
       public?(true)
-    end
+      default([])
 
-    attribute :env_vars_override, :map do
-      allow_nil?(true)
-      public?(true)
-    end
-
-    attribute :permission_args_by_stage_override, :map do
-      allow_nil?(true)
-      public?(true)
-    end
-
-    attribute :internal_tools_override, {:array, :string} do
-      allow_nil?(true)
-      public?(true)
-    end
-
-    attribute :base_retry_delay_ms_override, :integer do
-      allow_nil?(true)
-      public?(true)
+      description(
+        "Credential kinds the runner needs at /run/secrets/. " <>
+          "Drives `SecretSync` reconciliation. Example: " <>
+          "`[:claude_api_key]`. GitHub auth is automatic " <>
+          "(App token / SSH) and isn't declared here."
+      )
     end
 
     timestamps()
   end
 
   relationships do
-    belongs_to :project, Camelot.Projects.Project do
-      allow_nil?(false)
+    has_many :tasks, Camelot.Board.Task do
+      destination_attribute(:agent_id)
     end
-
-    belongs_to :user, Camelot.Accounts.User do
-      allow_nil?(true)
-
-      description(
-        "Owner of the agent. Drives which profile volume " <>
-          "mounts, which Swarm node hosts the runner, and " <>
-          "which RunnerPool bucket counts the slot. " <>
-          "Nullable for legacy rows; required for new agents."
-      )
-    end
-
-    belongs_to :template, Camelot.Agents.AgentTemplate do
-      allow_nil?(false)
-      attribute_writable?(true)
-      public?(true)
-    end
-
-    has_many(:sessions, Camelot.Agents.Session)
   end
 
   identities do
-    identity(:unique_project_user_template, [:project_id, :user_id, :template_id])
+    identity(:unique_slug, [:slug])
   end
 
   actions do
@@ -125,28 +201,26 @@ defmodule Camelot.Agents.Agent do
       primary?(true)
 
       accept([
+        :slug,
         :name,
-        :template_id,
+        :command_prefix,
+        :executable,
+        :base_args,
+        :prompt_flag,
+        :tools_flag,
+        :tools_separator,
+        :permission_args_by_stage,
+        :internal_tools,
+        :env_vars,
+        :parser,
+        :pr_url_pattern,
+        :question_phrases,
+        :base_retry_delay_ms,
         :max_retries,
-        :command_prefix_override,
-        :executable_override,
-        :base_args_override,
-        :env_vars_override,
-        :permission_args_by_stage_override,
-        :internal_tools_override,
-        :base_retry_delay_ms_override
+        :runner_image,
+        :runner_resources,
+        :required_credential_kinds
       ])
-
-      argument :project_id, :uuid do
-        allow_nil?(false)
-      end
-
-      argument :user_id, :uuid do
-        allow_nil?(false)
-      end
-
-      change(manage_relationship(:project_id, :project, type: :append))
-      change(manage_relationship(:user_id, :user, type: :append))
     end
 
     update :update do
@@ -154,28 +228,24 @@ defmodule Camelot.Agents.Agent do
 
       accept([
         :name,
-        :template_id,
+        :command_prefix,
+        :executable,
+        :base_args,
+        :prompt_flag,
+        :tools_flag,
+        :tools_separator,
+        :permission_args_by_stage,
+        :internal_tools,
+        :env_vars,
+        :parser,
+        :pr_url_pattern,
+        :question_phrases,
+        :base_retry_delay_ms,
         :max_retries,
-        :command_prefix_override,
-        :executable_override,
-        :base_args_override,
-        :env_vars_override,
-        :permission_args_by_stage_override,
-        :internal_tools_override,
-        :base_retry_delay_ms_override
+        :runner_image,
+        :runner_resources,
+        :required_credential_kinds
       ])
-    end
-
-    update :mark_busy do
-      change(set_attribute(:status, :busy))
-    end
-
-    update :mark_idle do
-      change(set_attribute(:status, :idle))
-    end
-
-    action :dispatch_tasks do
-      run(Camelot.Agents.Changes.DispatchTasks)
     end
   end
 end

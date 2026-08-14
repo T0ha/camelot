@@ -13,7 +13,12 @@ defmodule Camelot.Github.IssueAttachmentsImportTest do
       Ash.create(Project, %{name: "issue-attach-#{System.unique_integer([:positive])}", path: "/tmp/ia"}, actor: user)
 
     {:ok, task} =
-      Ash.create(Task, %{title: "From issue", project_id: project.id, creator_id: user.id})
+      Ash.create(Task, %{
+        title: "From issue",
+        project_id: project.id,
+        creator_id: user.id,
+        agent_id: agent!("claude_code").id
+      })
 
     %{task: task}
   end

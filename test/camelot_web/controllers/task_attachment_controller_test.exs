@@ -33,7 +33,12 @@ defmodule CamelotWeb.TaskAttachmentControllerTest do
       Ash.create(Project, %{name: "attach-ctrl-#{System.unique_integer([:positive])}", path: "/tmp/actrl"}, actor: user)
 
     {:ok, task} =
-      Ash.create(Task, %{title: "Ctrl task", project_id: project.id, creator_id: user.id})
+      Ash.create(Task, %{
+        title: "Ctrl task",
+        project_id: project.id,
+        creator_id: user.id,
+        agent_id: agent!("claude_code").id
+      })
 
     tmp_path = Path.join(base_dir, "src.txt")
     File.mkdir_p!(base_dir)

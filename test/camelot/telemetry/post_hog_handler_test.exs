@@ -1,7 +1,6 @@
 defmodule Camelot.Telemetry.PostHogHandlerTest do
   use Camelot.DataCase, async: true
 
-  alias Camelot.Agents.Agent
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
 
@@ -20,7 +19,8 @@ defmodule Camelot.Telemetry.PostHogHandlerTest do
              Ash.create(Task, %{
                title: "PostHog task",
                project_id: ctx.project.id,
-               creator_id: ctx.user.id
+               creator_id: ctx.user.id,
+               agent_id: agent!("claude_code").id
              })
 
     assert Enum.any?(PostHog.Test.all_captured(), fn event ->
@@ -49,27 +49,13 @@ defmodule Camelot.Telemetry.PostHogHandlerTest do
       Ash.create(Task, %{
         title: "Uncurated",
         project_id: ctx.project.id,
-        creator_id: ctx.user.id
+        creator_id: ctx.user.id,
+        agent_id: agent!("claude_code").id
       })
 
     assert {:ok, _task} = Ash.update(task, %{title: "Renamed"})
 
     refute Enum.any?(PostHog.Test.all_captured(), &(&1.event == "task_updated"))
-  end
-
-  test "captures agent creation with the owning user as distinct_id", ctx do
-    assert {:ok, agent} =
-             Ash.create(Agent, %{
-               name: "posthog-agent",
-               template_id: agent_template!("claude_code").id,
-               project_id: ctx.project.id,
-               user_id: ctx.user.id
-             })
-
-    assert Enum.any?(PostHog.Test.all_captured(), fn event ->
-             event.event == "agent_created" && event.distinct_id == ctx.user.id &&
-               event.properties.data_id == agent.id
-           end)
   end
 
   test "captures a user_signed_in identify-style event", ctx do
@@ -90,7 +76,8 @@ defmodule Camelot.Telemetry.PostHogHandlerTest do
              Ash.create(Task, %{
                title: "Context task",
                project_id: ctx.project.id,
-               creator_id: ctx.user.id
+               creator_id: ctx.user.id,
+               agent_id: agent!("claude_code").id
              })
 
     assert %{properties: properties} =
@@ -108,7 +95,8 @@ defmodule Camelot.Telemetry.PostHogHandlerTest do
              Ash.create(Task, %{
                title: "Context collision task",
                project_id: ctx.project.id,
-               creator_id: ctx.user.id
+               creator_id: ctx.user.id,
+               agent_id: agent!("claude_code").id
              })
 
     assert %{properties: properties} =

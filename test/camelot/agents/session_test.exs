@@ -2,7 +2,6 @@ defmodule Camelot.Agents.SessionTest do
   use Camelot.DataCase, async: true
 
   alias Camelot.Accounts.User
-  alias Camelot.Agents.Agent
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
@@ -23,19 +22,14 @@ defmodule Camelot.Agents.SessionTest do
         hashed_password: hashed
       })
 
-    {:ok, agent} =
-      Ash.create(Agent, %{
-        name: "Agent",
-        template_id: agent_template!("claude_code").id,
-        project_id: project.id,
-        user_id: user.id
-      })
+    agent = agent!("claude_code")
 
     {:ok, task} =
       Ash.create(Task, %{
         title: "Session task",
         project_id: project.id,
-        creator_id: user.id
+        creator_id: user.id,
+        agent_id: agent.id
       })
 
     %{agent: agent, task: task}

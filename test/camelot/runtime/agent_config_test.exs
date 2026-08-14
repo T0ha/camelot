@@ -1,8 +1,8 @@
 defmodule Camelot.Runtime.AgentConfigTest do
   @moduledoc """
   Regression guard: the args produced from the seeded
-  `claude_code` and `codex` templates must match exactly
-  what the pre-migration hardcoded `AgentProcess.build_cli_args/4`
+  `claude_code` and `codex` agent CLIs must match exactly
+  what the pre-migration hardcoded `TaskRunner.build_cli_args/4`
   emitted.
   """
   use Camelot.DataCase, async: true
@@ -150,34 +150,27 @@ defmodule Camelot.Runtime.AgentConfigTest do
     end
   end
 
-  describe "resolve/1 — per-agent overrides" do
-    test "non-nil override wins over template default", ctx do
-      template = ctx.claude
-      project = %Project{path: "/p"}
+  describe "resolve/2 — per-project overrides" do
+    test "non-nil override wins over agent CLI default" do
+      agent = agent_struct()
 
-      agent = %Camelot.Agents.Agent{
-        project: project,
-        template: template_struct(),
+      project = %Project{
+        path: "/p",
         base_retry_delay_ms_override: 500,
         executable_override: "claude-canary",
         env_vars_override: %{"FOO" => "bar"}
       }
 
-      resolved = AgentConfig.resolve(agent)
+      resolved = AgentConfig.resolve(agent, project)
 
       assert resolved.base_retry_delay_ms == 500
       assert resolved.executable == "claude-canary"
       assert resolved.env_vars == %{"FOO" => "bar"}
-      assert resolved.base_args == template.base_args
+      assert resolved.base_args == agent.base_args
     end
 
-    test "nil overrides fall back to template values", _ctx do
-      agent = %Camelot.Agents.Agent{
-        project: %Project{path: "/p"},
-        template: template_struct()
-      }
-
-      resolved = AgentConfig.resolve(agent)
+    test "nil overrides fall back to agent CLI values" do
+      resolved = AgentConfig.resolve(agent_struct(), %Project{path: "/p"})
 
       assert resolved.executable == "claude"
       assert resolved.base_retry_delay_ms == 5_000
@@ -185,29 +178,21 @@ defmodule Camelot.Runtime.AgentConfigTest do
     end
   end
 
-  describe "resolve/1 — project-level runner_image override" do
-    test "project override wins over template default" do
+  describe "resolve/2 — project-level runner_image override" do
+    test "project override wins over agent CLI default" do
+      agent = %{agent_struct() | runner_image: "ghcr.io/org/default:1.0"}
       project = %Project{path: "/p", runner_image_override: "ghcr.io/org/canary:1.0"}
 
-      agent = %Camelot.Agents.Agent{
-        project: project,
-        template: %{template_struct() | runner_image: "ghcr.io/org/default:1.0"}
-      }
-
-      resolved = AgentConfig.resolve(agent)
+      resolved = AgentConfig.resolve(agent, project)
 
       assert resolved.runner_image == "ghcr.io/org/canary:1.0"
     end
 
-    test "nil project override falls back to template's runner_image" do
+    test "nil project override falls back to the agent CLI's runner_image" do
+      agent = %{agent_struct() | runner_image: "ghcr.io/org/default:1.0"}
       project = %Project{path: "/p", runner_image_override: nil}
 
-      agent = %Camelot.Agents.Agent{
-        project: project,
-        template: %{template_struct() | runner_image: "ghcr.io/org/default:1.0"}
-      }
-
-      resolved = AgentConfig.resolve(agent)
+      resolved = AgentConfig.resolve(agent, project)
 
       assert resolved.runner_image == "ghcr.io/org/default:1.0"
     end
@@ -221,18 +206,11 @@ defmodule Camelot.Runtime.AgentConfigTest do
   end
 
   defp build_config(slug) do
-    template = agent_template!(slug)
-
-    agent = %Camelot.Agents.Agent{
-      project: %Project{path: "/tmp/test"},
-      template: template
-    }
-
-    AgentConfig.resolve(agent)
+    AgentConfig.resolve(agent!(slug), %Project{path: "/tmp/test"})
   end
 
-  defp template_struct do
-    %Camelot.Agents.AgentTemplate{
+  defp agent_struct do
+    %Camelot.Agents.Agent{
       command_prefix: nil,
       executable: "claude",
       base_args: ["--output-format", "stream-json", "--verbose"],

@@ -38,18 +38,6 @@ defmodule CamelotWeb.Scope do
   end
 
   @doc """
-  Filter an Agent query to agents the user owns, or agents in projects
-  the user is a member of.
-  """
-  @spec scope_agents(queryable(), User.t()) :: Ash.Query.t()
-  def scope_agents(query, %User{id: user_id}) do
-    Ash.Query.filter(
-      query,
-      user_id == ^user_id or exists(project.memberships, user_id == ^user_id)
-    )
-  end
-
-  @doc """
   Filter a PromptTemplate query to system-global prompts (no project,
   no user), the user's own user-global prompts, or prompts in projects
   the user is a member of.

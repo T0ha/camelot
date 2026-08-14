@@ -1,7 +1,7 @@
 # Session adoption (reconnect after restart)
 
 When Camelot is redeployed, Swarm/Docker sends the app SIGTERM and the
-`AgentProcess` GenServers driving in-flight runs die. The **runner
+`TaskRunner` GenServers driving in-flight runs die. The **runner
 containers are separate services that keep running** (the agent process
 inside them is a `docker exec`, not tied to the app's connection), so the
 work isn't actually lost — only the app's live view of it.
@@ -21,16 +21,16 @@ on boot, discarding in-flight work and leaving the task stuck
    so the app can't poll the exec for its status.
 
 2. **Reconciler decides adopt vs. fail** (`recovery_action/4`, pure):
-   for a `:running` session whose owning `AgentProcess` is gone, if it's
+   for a `:running` session whose owning `TaskRunner` is gone, if it's
    a **task** session (not bootstrap), on a container backend (not
    LocalPort), with a runner handle whose container probe is `:present`
    → **adopt**. Otherwise → **fail** (retryable).
 
-3. **AgentProcess adopts** (`AgentProcess.adopt/2`): rebuilds the minimal
-   state finalisation needs (config, task, output-so-far) and starts the
-   runner in **adopt mode** (`Spec.adopt? = true`) — bypassing the
-   `RunnerPool` (no new slot) and creating **no new exec**. The session is
-   flagged `was_adopted`.
+3. **TaskRunner adopts** (`TaskRunner.adopt/2`, `adopt(task_id,
+   session_id)`): rebuilds the minimal state finalisation needs (config,
+   task, output-so-far) and starts the runner in **adopt mode**
+   (`Spec.adopt? = true`) — bypassing the `RunnerPool` (no new slot) and
+   creating **no new exec**. The session is flagged `was_adopted`.
 
 4. **Adopt-mode runner** (`ExecSession`, both backends): resolves the
    existing container and polls for the completion marker

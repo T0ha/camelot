@@ -8,7 +8,7 @@ defmodule Camelot.Runtime.Runner do
   process forwards stdout/stderr to the caller as
   `{:runner_data, handle, bytes}` and the final exit as
   `{:runner_exit, handle, exit_code}` — the same message
-  shape Port produces, so `AgentProcess` can route both
+  shape Port produces, so `TaskRunner` can route both
   alike.
 
   Three implementations:
@@ -34,7 +34,7 @@ defmodule Camelot.Runtime.Runner do
 
   @doc """
   Tear down the long-lived per-task container/service for
-  `task_id`. Called by `AgentProcess` when the task hits a
+  `task_id`. Called by `TaskRunner` when the task hits a
   terminal stage (`:done` or `:cancelled`). Backends that
   don't keep state across sessions (`LocalPort`) return `:ok`
   immediately.

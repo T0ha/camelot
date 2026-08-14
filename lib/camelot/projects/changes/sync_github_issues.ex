@@ -5,12 +5,14 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
   """
   use Ash.Resource.Actions.Implementation
 
+  alias Camelot.Agents.Agent
   alias Camelot.Board.Task
   alias Camelot.Github.Client
   alias Camelot.Github.IssueAttachments
   alias Camelot.Github.Resolver
   alias Camelot.Projects.Project
 
+  require Ash.Query
   require Logger
 
   @sync_label "camelot"
@@ -61,22 +63,47 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
       |> Enum.find(&(&1.title == title))
 
     if !existing do
-      case Ash.create(Task, %{
-             title: title,
-             description: issue["body"],
-             project_id: project.id,
-             creator_id: project.owner_membership.user.id
-           }) do
-        {:ok, task} ->
-          IssueAttachments.import_from_issue!(task, issue["body"])
-          Logger.info("Created task from issue ##{issue["number"]}")
+      create_task_from_issue(project, issue, title)
+    end
+  end
 
-        {:error, error} ->
-          Logger.warning(
-            "Failed to create task from issue: " <>
-              "#{inspect(error)}"
-          )
-      end
+  defp create_task_from_issue(project, issue, title) do
+    case default_agent_id() do
+      nil ->
+        Logger.warning("Skipped creating task from issue ##{issue["number"]}: no Agent CLI configured")
+
+      agent_id ->
+        case Ash.create(Task, %{
+               title: title,
+               description: issue["body"],
+               project_id: project.id,
+               creator_id: project.owner_membership.user.id,
+               agent_id: agent_id
+             }) do
+          {:ok, task} ->
+            IssueAttachments.import_from_issue!(task, issue["body"])
+            Logger.info("Created task from issue ##{issue["number"]}")
+
+          {:error, error} ->
+            Logger.warning(
+              "Failed to create task from issue: " <>
+                "#{inspect(error)}"
+            )
+        end
+    end
+  end
+
+  # GitHub-issue-synced tasks have no user present to pick a CLI
+  # agent, so a pragmatic default is used: the first Agent CLI
+  # alphabetically by slug.
+  defp default_agent_id do
+    Agent
+    |> Ash.Query.sort(:slug)
+    |> Ash.Query.limit(1)
+    |> Ash.read!()
+    |> case do
+      [%Agent{id: id} | _] -> id
+      [] -> nil
     end
   end
 

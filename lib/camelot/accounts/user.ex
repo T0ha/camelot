@@ -115,10 +115,6 @@ defmodule Camelot.Accounts.User do
       source_attribute_on_join_resource(:user_id)
       destination_attribute_on_join_resource(:project_id)
     end
-
-    has_many :agents, Camelot.Agents.Agent do
-      destination_attribute(:user_id)
-    end
   end
 
   identities do
@@ -168,7 +164,7 @@ defmodule Camelot.Accounts.User do
     end
 
     # Read is open: managed relationship lookups from other resources
-    # (Agent.user, Membership.user, etc.) need to find users without an
+    # (Task.creator, Membership.user, etc.) need to find users without an
     # authenticated actor. The admin-only listing in /admin/users is gated
     # at the LiveView mount, not at the resource layer.
     policy action_type(:read) do

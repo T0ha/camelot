@@ -1,7 +1,6 @@
 defmodule CamelotWeb.SessionDownloadControllerTest do
   use CamelotWeb.ConnCase, async: true
 
-  alias Camelot.Agents.Agent
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
@@ -16,22 +15,15 @@ defmodule CamelotWeb.SessionDownloadControllerTest do
         actor: user
       )
 
-    {:ok, agent} =
-      Ash.create(Agent, %{
-        name: "session-download-agent",
-        template_id: agent_template!("claude_code").id,
-        project_id: project.id,
-        user_id: user.id
-      })
-
     {:ok, task} =
       Ash.create(Task, %{
         title: "Download task",
         project_id: project.id,
-        creator_id: user.id
+        creator_id: user.id,
+        agent_id: agent!("claude_code").id
       })
 
-    {:ok, session} = Ash.create(Session, %{agent_id: agent.id, task_id: task.id})
+    {:ok, session} = Ash.create(Session, %{agent_id: task.agent_id, task_id: task.id})
 
     {:ok, session} =
       Ash.update(session, %{output_log: "{\"line\":1}", exit_code: 0}, action: :complete)

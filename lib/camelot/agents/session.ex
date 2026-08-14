@@ -1,6 +1,6 @@
 defmodule Camelot.Agents.Session do
   @moduledoc """
-  A single CLI execution session tied to an agent and task.
+  A single CLI execution session tied to an agent CLI and task.
   Tracks output, timing, and exit status.
   """
   use Ash.Resource,
@@ -140,9 +140,10 @@ defmodule Camelot.Agents.Session do
       allow_nil?(true)
 
       description(
-        "Owner of the session (matches agent.user). Cached on " <>
-          "the Session row so the pool and reconciler can index " <>
-          "without joining through Agent."
+        "Owner of the session — the task's creator for task-bound " <>
+          "sessions, explicit for bootstrap sessions. Cached on the " <>
+          "Session row so the pool and reconciler can index without " <>
+          "joining through Task."
       )
     end
   end

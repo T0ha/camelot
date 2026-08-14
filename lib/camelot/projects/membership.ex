@@ -8,7 +8,7 @@ defmodule Camelot.Projects.Membership do
   (see `Camelot.Projects.Project.Changes.AddActorAsMember`);
   `Project.owner_membership` uses that to resolve the
   owner's swarm node pin as a fallback in
-  `Camelot.Runtime.AgentProcess.node_label_for/1`.
+  `Camelot.Runtime.TaskRunner.node_label_for/1`.
   """
   use Ash.Resource,
     domain: Camelot.Projects,

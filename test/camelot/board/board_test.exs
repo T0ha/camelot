@@ -27,7 +27,12 @@ defmodule Camelot.BoardTest do
       Ash.create(Project, %{name: "purge-proj-#{System.unique_integer([:positive])}", path: "/tmp/purge"}, actor: user)
 
     {:ok, task} =
-      Ash.create(Task, %{title: "Purge task", project_id: project.id, creator_id: user.id})
+      Ash.create(Task, %{
+        title: "Purge task",
+        project_id: project.id,
+        creator_id: user.id,
+        agent_id: agent!("claude_code").id
+      })
 
     %{task: task, base_dir: base_dir}
   end

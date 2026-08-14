@@ -5,7 +5,7 @@ runner containers via the `Camelot.Projects.EnvVar` resource.
 This is where project infrastructure config lives — a Postgres
 URL, NATS connection details, feature-flag endpoints, and the
 like — separate from the CLI/agent behaviour configured on an
-`AgentTemplate`.
+`Agent` (Agent CLI).
 
 ## Scopes and precedence
 
@@ -15,8 +15,8 @@ Each `EnvVar` row attaches to **exactly one** scope, or to none
 | Scope   | Column set   | Applies to                         |
 | ------- | ------------ | ---------------------------------- |
 | project | `project_id` | every runner for that project      |
-| agent   | `agent_id`   | one agent                          |
-| user    | `user_id`    | every agent owned by that user     |
+| agent   | `agent_id`   | every task run with that Agent CLI, across projects |
+| user    | `user_id`    | every runner spawned for tasks owned by that user |
 | global  | (all NULL)   | every runner                       |
 
 When the same key is defined at more than one scope for a given
@@ -27,11 +27,13 @@ project > agent > user > global
 ```
 
 Resolution and merging happen in
-`Camelot.Runtime.EnvVarResolver.resolve/1`, whose output is
-merged into the runner `Spec` env in
-`Camelot.Runtime.AgentProcess.build_spec/5`. The `EnvVar` layer
+`Camelot.Runtime.EnvVarResolver.resolve/3` (agent id, project id,
+user id), whose output is merged into the runner `Spec` env in
+`Camelot.Runtime.TaskRunner.build_spec/4`. The `EnvVar` layer
 is merged last, so it overrides any colliding key inherited from
-`AgentTemplate.env_vars` / `Agent.env_vars_override`.
+`Agent.env_vars` (the Agent CLI's own defaults) or
+`Project.env_vars_override` (the project-wide override, which now
+lives on `Project` rather than on a per-project agent row).
 
 Because `spec.env` is the single source every backend turns into
 the container's create-time `Env` (and every `docker exec`
@@ -64,7 +66,8 @@ page today:
 ```
 
 The same component drives the other scopes by passing
-`{:agent, id}`, `{:user, id}`, or `:global`.
+`{:agent, id}` (keyed by the Agent CLI's id), `{:user, id}`, or
+`:global`.
 
 ## Uniqueness
 

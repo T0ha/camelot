@@ -21,18 +21,6 @@
       "references": null,
       "scale": null,
       "size": null,
-      "source": "slug",
-      "type": "text"
-    },
-    {
-      "allow_nil?": false,
-      "default": "nil",
-      "generated?": false,
-      "precision": null,
-      "primary_key?": false,
-      "references": null,
-      "scale": null,
-      "size": null,
       "source": "name",
       "type": "text"
     },
@@ -45,11 +33,11 @@
       "references": null,
       "scale": null,
       "size": null,
-      "source": "command_prefix",
+      "source": "path",
       "type": "text"
     },
     {
-      "allow_nil?": false,
+      "allow_nil?": true,
       "default": "nil",
       "generated?": false,
       "precision": null,
@@ -57,19 +45,91 @@
       "references": null,
       "scale": null,
       "size": null,
-      "source": "executable",
+      "source": "description",
       "type": "text"
     },
     {
-      "allow_nil?": false,
-      "default": "[]",
+      "allow_nil?": true,
+      "default": "nil",
       "generated?": false,
       "precision": null,
       "primary_key?": false,
       "references": null,
       "scale": null,
       "size": null,
-      "source": "base_args",
+      "source": "github_repo_url",
+      "type": "text"
+    },
+    {
+      "allow_nil?": true,
+      "default": "nil",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "github_owner",
+      "type": "text"
+    },
+    {
+      "allow_nil?": true,
+      "default": "nil",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "github_repo",
+      "type": "text"
+    },
+    {
+      "allow_nil?": true,
+      "default": "nil",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "runner_image_override",
+      "type": "text"
+    },
+    {
+      "allow_nil?": true,
+      "default": "nil",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "command_prefix_override",
+      "type": "text"
+    },
+    {
+      "allow_nil?": true,
+      "default": "nil",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "executable_override",
+      "type": "text"
+    },
+    {
+      "allow_nil?": true,
+      "default": "nil",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "base_args_override",
       "type": [
         "array",
         "text"
@@ -84,8 +144,8 @@
       "references": null,
       "scale": null,
       "size": null,
-      "source": "prompt_flag",
-      "type": "text"
+      "source": "env_vars_override",
+      "type": "map"
     },
     {
       "allow_nil?": true,
@@ -96,110 +156,59 @@
       "references": null,
       "scale": null,
       "size": null,
-      "source": "tools_flag",
-      "type": "text"
-    },
-    {
-      "allow_nil?": false,
-      "default": "\",\"",
-      "generated?": false,
-      "precision": null,
-      "primary_key?": false,
-      "references": null,
-      "scale": null,
-      "size": null,
-      "source": "tools_separator",
-      "type": "text"
-    },
-    {
-      "allow_nil?": false,
-      "default": "%{}",
-      "generated?": false,
-      "precision": null,
-      "primary_key?": false,
-      "references": null,
-      "scale": null,
-      "size": null,
-      "source": "permission_args_by_stage",
+      "source": "permission_args_by_stage_override",
       "type": "map"
     },
     {
-      "allow_nil?": false,
-      "default": "[]",
+      "allow_nil?": true,
+      "default": "nil",
       "generated?": false,
       "precision": null,
       "primary_key?": false,
       "references": null,
       "scale": null,
       "size": null,
-      "source": "internal_tools",
+      "source": "internal_tools_override",
       "type": [
         "array",
         "text"
       ]
     },
     {
-      "allow_nil?": false,
-      "default": "%{}",
+      "allow_nil?": true,
+      "default": "nil",
       "generated?": false,
       "precision": null,
       "primary_key?": false,
       "references": null,
       "scale": null,
       "size": null,
-      "source": "env_vars",
-      "type": "map"
-    },
-    {
-      "allow_nil?": false,
-      "default": "\"raw_text\"",
-      "generated?": false,
-      "precision": null,
-      "primary_key?": false,
-      "references": null,
-      "scale": null,
-      "size": null,
-      "source": "parser",
-      "type": "text"
-    },
-    {
-      "allow_nil?": false,
-      "default": "\"https://github\\\\.com/[^\\\\s]+/pull/(\\\\d+)\"",
-      "generated?": false,
-      "precision": null,
-      "primary_key?": false,
-      "references": null,
-      "scale": null,
-      "size": null,
-      "source": "pr_url_pattern",
-      "type": "text"
-    },
-    {
-      "allow_nil?": false,
-      "default": "[]",
-      "generated?": false,
-      "precision": null,
-      "primary_key?": false,
-      "references": null,
-      "scale": null,
-      "size": null,
-      "source": "question_phrases",
-      "type": [
-        "array",
-        "text"
-      ]
-    },
-    {
-      "allow_nil?": false,
-      "default": "5000",
-      "generated?": false,
-      "precision": null,
-      "primary_key?": false,
-      "references": null,
-      "scale": null,
-      "size": null,
-      "source": "base_retry_delay_ms",
+      "source": "base_retry_delay_ms_override",
       "type": "bigint"
+    },
+    {
+      "allow_nil?": false,
+      "default": "\"active\"",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "status",
+      "type": "text"
+    },
+    {
+      "allow_nil?": true,
+      "default": "nil",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "swarm_node_label",
+      "type": "text"
     },
     {
       "allow_nil?": false,
@@ -232,19 +241,19 @@
   "custom_indexes": [],
   "custom_statements": [],
   "has_create_action": true,
-  "hash": "6F1B6E8A261FF4224786DB1ECCD130DAADE61F57857FA0641489F1FBBB6111CA",
+  "hash": "12BD1B8F40351B3913207556D2F631A3C8DD7ABD8EAA385B3A963434B41E8C47",
   "identities": [
     {
       "all_tenants?": false,
       "base_filter": null,
-      "index_name": "agent_templates_unique_slug_index",
+      "index_name": "projects_unique_name_index",
       "keys": [
         {
           "type": "atom",
-          "value": "slug"
+          "value": "name"
         }
       ],
-      "name": "unique_slug",
+      "name": "unique_name",
       "nils_distinct?": true,
       "where": null
     }
@@ -256,5 +265,5 @@
   },
   "repo": "Elixir.Camelot.Repo",
   "schema": null,
-  "table": "agent_templates"
+  "table": "projects"
 }
