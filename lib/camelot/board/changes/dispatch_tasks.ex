@@ -10,6 +10,7 @@ defmodule Camelot.Board.Changes.DispatchTasks do
   """
   use Ash.Resource.Actions.Implementation
 
+  alias Camelot.Board.Changes.CheckPrStatus
   alias Camelot.Board.Task
   alias Camelot.Github.Client
   alias Camelot.Github.Resolver
@@ -121,7 +122,59 @@ defmodule Camelot.Board.Changes.DispatchTasks do
 
     base
     |> append_branch_directive(task, slug)
+    |> append_conflict_directive(task)
     |> append_conversation(task.messages)
+  end
+
+  # A PR-stage task whose PR has merge conflicts must be told so
+  # explicitly: the pr_review prompt otherwise only mentions comments and
+  # CI, so the agent inspects those, finds nothing, and concludes there
+  # is nothing to do — leaving the conflict unresolved. The app already
+  # detects the conflict when polling; surface it to the runner with a
+  # concrete resolve-and-push instruction.
+  defp append_conflict_directive(prompt, %{stage: :pr} = task) do
+    prompt <> conflict_note(fetch_pull_request(task), task)
+  end
+
+  defp append_conflict_directive(prompt, _task), do: prompt
+
+  defp fetch_pull_request(task) do
+    project = task.project
+    opts = [installation_id: installation_id(task)]
+
+    case Client.get_pull_request(
+           project.github_owner,
+           project.github_repo,
+           task.pr_number,
+           opts
+         ) do
+      {:ok, pr} -> pr
+      {:error, _reason} -> %{}
+    end
+  end
+
+  @doc """
+  Renders the merge-conflict directive appended to a PR-stage prompt.
+
+  Returns an empty string when the PR is not in conflict (reusing
+  `CheckPrStatus.merge_conflict?/1` so detection stays in one place), and
+  otherwise an explicit instruction to merge the base branch, resolve the
+  conflicts on the task branch, and push.
+  """
+  @spec conflict_note(map(), Task.t()) :: String.t()
+  def conflict_note(pr, task) do
+    if CheckPrStatus.merge_conflict?(pr) do
+      base = get_in(pr, ["base", "ref"]) || "the base branch"
+
+      "\n\n--- Merge Conflict ---\n" <>
+        "This pull request (#{task.pr_url}) has merge conflicts with its " <>
+        "base branch `#{base}` and cannot be merged as-is. Resolve them: " <>
+        "fetch the latest `#{base}`, merge (or rebase) it into the working " <>
+        "branch `camelot/task-#{task.id}`, resolve every conflict, verify " <>
+        "the build and tests pass, and push so the PR becomes mergeable."
+    else
+      ""
+    end
   end
 
   # Pin the working branch to a deterministic, task-scoped name so a
