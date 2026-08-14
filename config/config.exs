@@ -47,6 +47,12 @@ config :camelot, :mail,
   from_name: "Camelot",
   from_address: "noreply@camelot.local"
 
+# Consecutive automatic PR fix re-dispatches (merge conflict / CI
+# failure) before a task is left for human review. Set to `:infinity`
+# to never give up (the attempt counter is still tracked). Overridable
+# at runtime via PR_AUTO_FIX_MAX_ATTEMPTS.
+config :camelot, :pr_auto_fix, max_attempts: 2
+
 # Runner backend for agent CLI execution. Overridden in
 # config/runtime.exs for prod. Dev/test default to LocalPort
 # which preserves the legacy Port.open behaviour.

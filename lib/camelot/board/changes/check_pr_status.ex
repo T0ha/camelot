@@ -25,10 +25,12 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   which wedged the auto-fix indefinitely. See git history to restore it
   with a robust identity check.)
 
-  Those automatic re-dispatches are capped at `@max_auto_fix_attempts`
-  consecutive attempts, so a task the agent cannot fix stops looping and
-  is left for human review. The counter resets on explicit human
-  feedback (changes requested / new comments).
+  Those automatic re-dispatches are capped at a configurable number of
+  consecutive attempts (see `max_auto_fix_attempts/0`, default 2), so a
+  task the agent cannot fix stops looping and is left for human review.
+  The cap can be raised, or set to `:infinity` to disable it entirely
+  (never removed — the counter is still tracked). The counter resets on
+  explicit human feedback (changes requested / new comments).
   """
   use Ash.Resource.Change
 
@@ -38,10 +40,12 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
 
   require Logger
 
-  # Cap on consecutive automatic PR fix re-dispatches (merge conflict /
-  # CI failure) before a task is left for human review. Prevents an
-  # unfixable PR from re-queuing the agent every poll forever.
-  @max_auto_fix_attempts 2
+  # Default cap on consecutive automatic PR fix re-dispatches (merge
+  # conflict / CI failure) before a task is left for human review.
+  # Prevents an unfixable PR from re-queuing the agent every poll
+  # forever. Overridable via `config :camelot, :pr_auto_fix,
+  # max_attempts: <pos_integer | :infinity>`.
+  @default_max_auto_fix_attempts 2
 
   @impl true
   @spec change(
@@ -215,19 +219,43 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   end
 
   @doc """
+  The configured cap on consecutive automatic PR fix re-dispatches.
+
+  Reads `config :camelot, :pr_auto_fix, max_attempts: …`, falling back to
+  `#{@default_max_auto_fix_attempts}`. A positive integer caps the number
+  of attempts; `:infinity` disables the cap (attempts are still tracked,
+  the auto-fixer just never gives up).
+  """
+  @spec max_auto_fix_attempts() :: pos_integer() | :infinity
+  def max_auto_fix_attempts do
+    :camelot
+    |> Application.get_env(:pr_auto_fix, [])
+    |> Keyword.get(:max_attempts, @default_max_auto_fix_attempts)
+  end
+
+  @doc """
   Whether the task still has automatic PR fix attempts left.
 
   Merge-conflict and CI-failure auto-fixes re-dispatch the agent, capped
-  at `#{@max_auto_fix_attempts}` consecutive attempts so a PR the agent
+  at `max_auto_fix_attempts/0` consecutive attempts so a PR the agent
   cannot fix stops looping. The counter resets on explicit human
   feedback (changes requested / new comments).
   """
   @spec auto_fix_available?(Task.t()) :: boolean()
   def auto_fix_available?(%{pr_auto_fix_attempts: attempts}) do
-    attempts < @max_auto_fix_attempts
+    under_cap?(attempts, max_auto_fix_attempts())
   end
 
   def auto_fix_available?(_task), do: true
+
+  @doc """
+  Whether `attempts` is still below the given cap.
+
+  `:infinity` is never exceeded, so the auto-fixer keeps retrying.
+  """
+  @spec under_cap?(integer(), pos_integer() | :infinity) :: boolean()
+  def under_cap?(_attempts, :infinity), do: true
+  def under_cap?(attempts, max) when is_integer(max), do: attempts < max
 
   defp maybe_log_auto_fix_cap(task, true), do: log_auto_fix_cap(task, auto_fix_available?(task))
   defp maybe_log_auto_fix_cap(_task, false), do: :ok
@@ -237,7 +265,7 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   defp log_auto_fix_cap(task, false) do
     Logger.info(
       "Task #{task.id}: PR issue persists after " <>
-        "#{@max_auto_fix_attempts} auto-fix attempts; " <>
+        "#{max_auto_fix_attempts()} auto-fix attempts; " <>
         "leaving for human review"
     )
   end
