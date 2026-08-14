@@ -34,6 +34,17 @@ defmodule Camelot.Repo.Migrations.RenameAgentTemplateToAgent do
       add :max_retries, :bigint, null: false, default: 3
     end
 
+    # The `agent_id` columns on tasks/sessions/env_vars still FK to the
+    # old runtime `agents` rows. Remapping them to `template_id` (an
+    # `agent_templates` id, absent from the old `agents` table) would
+    # violate those constraints mid-migration, so drop the referencing
+    # FKs first; they're re-added at the end pointing at the renamed
+    # `agents` table. (The later `DROP TABLE agents CASCADE` would also
+    # drop them, but only after these UPDATEs — too late.)
+    execute("ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_agent_id_fkey")
+    execute("ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_agent_id_fkey")
+    execute("ALTER TABLE env_vars DROP CONSTRAINT IF EXISTS env_vars_agent_id_fkey")
+
     # Remap FKs off the old `agents` table before it's dropped: those
     # columns currently point at per-project runtime Agent rows, not
     # templates.
@@ -58,10 +69,9 @@ defmodule Camelot.Repo.Migrations.RenameAgentTemplateToAgent do
      WHERE env_vars.agent_id = a.id
     """)
 
-    # CASCADE also drops agents_project_id_fkey/agents_user_id_fkey/
-    # agents_template_id_fkey (owned by this table) and
-    # tasks_agent_id_fkey/sessions_agent_id_fkey/env_vars_agent_id_fkey
-    # (constraints on other tables that reference it).
+    # CASCADE drops agents_project_id_fkey/agents_user_id_fkey/
+    # agents_template_id_fkey (owned by this table). The
+    # tasks/sessions/env_vars referencing FKs were already dropped above.
     execute("DROP TABLE agents CASCADE")
 
     rename table(:agent_templates), to: table(:agents)
