@@ -27,6 +27,48 @@ defmodule Camelot.Agents.Changes.DispatchTasksTest do
     end
   end
 
+  describe "conflict_note/2" do
+    @task %Task{
+      id: "c324c8d8-6e44-42d6-973f-ba8e17f37d2d",
+      pr_url: "https://github.com/T0ha/camelot/pull/100"
+    }
+
+    test "a dirty PR yields an explicit resolve-and-push instruction" do
+      pr = %{
+        "mergeable" => false,
+        "mergeable_state" => "dirty",
+        "base" => %{"ref" => "develop"}
+      }
+
+      note = DispatchTasks.conflict_note(pr, @task)
+
+      assert note =~ "Merge Conflict"
+      assert note =~ "`develop`"
+      assert note =~ "camelot/task-#{@task.id}"
+      assert note =~ @task.pr_url
+    end
+
+    test "a mergeable PR yields no note" do
+      pr = %{"mergeable" => true, "mergeable_state" => "clean"}
+      assert DispatchTasks.conflict_note(pr, @task) == ""
+    end
+
+    test "a PR still being computed by GitHub (mergeable nil) yields no note" do
+      pr = %{"mergeable" => nil, "mergeable_state" => "unknown"}
+      assert DispatchTasks.conflict_note(pr, @task) == ""
+    end
+
+    test "a blocked-but-not-dirty PR yields no note" do
+      pr = %{"mergeable" => false, "mergeable_state" => "blocked"}
+      assert DispatchTasks.conflict_note(pr, @task) == ""
+    end
+
+    test "a dirty PR with no base ref falls back to a generic phrase" do
+      pr = %{"mergeable" => false, "mergeable_state" => "dirty"}
+      assert DispatchTasks.conflict_note(pr, @task) =~ "the base branch"
+    end
+  end
+
   describe "installation_id/1" do
     test "resolves the task creator's connected installation id" do
       task = %Task{creator: %User{github_installations: [%Installation{installation_id: 7, account_login: "acme-org"}]}}

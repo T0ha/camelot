@@ -88,6 +88,23 @@ config :camelot,
   # var. Default differs by env: prod = swarm, dev/test = local.
   registration_enabled: System.get_env("REGISTRATION_ENABLED", "true") in ~w(true 1)
 
+# Consecutive automatic PR fix re-dispatches before a task is left for
+# human review. Accepts a positive integer, or "infinity"/"unlimited"
+# to never give up. Unset keeps the compile-time default (2).
+case System.get_env("PR_AUTO_FIX_MAX_ATTEMPTS") do
+  nil ->
+    :ok
+
+  value ->
+    max_attempts =
+      case value |> String.trim() |> String.downcase() do
+        unlimited when unlimited in ~w(infinity unlimited none) -> :infinity
+        int -> String.to_integer(int)
+      end
+
+    config :camelot, :pr_auto_fix, max_attempts: max_attempts
+end
+
 if backend_env = System.get_env("RUNNER_BACKEND") do
   runner_backend =
     case backend_env do
