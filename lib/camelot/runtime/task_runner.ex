@@ -645,8 +645,6 @@ defmodule Camelot.Runtime.TaskRunner do
     }
   end
 
-  defp build_attachments_json(nil), do: nil
-
   defp build_attachments_json(%Task{attachments: attachments}) when is_list(attachments) and attachments != [] do
     Jason.encode!(
       Enum.map(attachments, fn attachment ->
