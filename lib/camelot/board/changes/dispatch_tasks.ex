@@ -38,7 +38,10 @@ defmodule Camelot.Board.Changes.DispatchTasks do
 
   defp dispatchable_tasks do
     Task
-    |> Ash.read!(load: [:messages, :project, creator: [:github_installations]], authorize?: false)
+    |> Ash.read!(
+      load: [:messages, :attachments, :project, creator: [:github_installations]],
+      authorize?: false
+    )
     |> Enum.filter(fn task ->
       task.state == :queued and task.stage in @dispatchable_stages
     end)
@@ -144,10 +147,11 @@ defmodule Camelot.Board.Changes.DispatchTasks do
     %{
       "title" => task.title || "",
       "description" => task.description || "",
-      "plan" => task.plan || "",
+      "plan" => prompt_plan(task),
       "pr_url" => task.pr_url || "",
       "pr_number" => to_string(task.pr_number || ""),
-      "pr_comments" => comments
+      "pr_comments" => comments,
+      "attachments" => attachments_block(task)
     }
   end
 
@@ -155,8 +159,30 @@ defmodule Camelot.Board.Changes.DispatchTasks do
     %{
       "title" => task.title || "",
       "description" => task.description || "",
-      "plan" => task.plan || ""
+      "plan" => prompt_plan(task),
+      "attachments" => attachments_block(task)
     }
+  end
+
+  @doc """
+  Renders the attachments block listing filenames available to the
+  agent under `.camelot/attachments/` in the workspace, or `""` when
+  the task has none (the template renderer strips the resulting
+  blank line).
+  """
+  @spec attachments_block(map()) :: String.t()
+  def attachments_block(%{attachments: attachments}) when is_list(attachments) and attachments != [] do
+    names = Enum.map_join(attachments, "\n", &"- #{&1.filename}")
+
+    "Attachments (available under .camelot/attachments/ in the workspace):\n" <> names
+  end
+
+  def attachments_block(_task), do: ""
+
+  # Prefer the full plan document captured from the agent's plan file
+  # over `plan`, which may be only a pointer + summary.
+  defp prompt_plan(task) do
+    task.full_plan || task.plan || ""
   end
 
   defp fetch_pr_comments(task) do
@@ -224,8 +250,14 @@ defmodule Camelot.Board.Changes.DispatchTasks do
 
     parts =
       if task.plan,
-        do: parts ++ ["\nPlan: #{task.plan}"],
+        do: parts ++ ["\nPlan: #{prompt_plan(task)}"],
         else: parts
+
+    parts =
+      case attachments_block(task) do
+        "" -> parts
+        block -> parts ++ ["\n" <> block]
+      end
 
     Enum.join(parts)
   end

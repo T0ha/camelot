@@ -36,6 +36,25 @@ defmodule CamelotWeb.TaskLiveTest do
       assert html =~ "todo"
     end
 
+    test "plan section links to the full plan page and download", %{
+      conn: conn,
+      project: project,
+      user: user
+    } do
+      task =
+        Ash.Seed.seed!(Task, %{
+          title: "Planned task",
+          project_id: project.id,
+          creator_id: user.id,
+          plan: "See ~/.claude/plans/x.md — summary."
+        })
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ ~p"/tasks/#{task.id}/plan"
+      assert html =~ ~p"/tasks/#{task.id}/plan/download"
+    end
+
     test "renders GFM markdown tables in the description", %{conn: conn, project: project, user: user} do
       {:ok, task} =
         Ash.create(Task, %{
@@ -211,6 +230,64 @@ defmodule CamelotWeb.TaskLiveTest do
       html = render_click(button.())
 
       refute html =~ "Restore split view"
+    end
+  end
+
+  describe "attachments" do
+    setup %{task: task} do
+      on_exit(fn ->
+        System.tmp_dir!()
+        |> Path.join("camelot-attachments/#{task.id}")
+        |> File.rm_rf()
+      end)
+
+      :ok
+    end
+
+    test "uploading a file lists it with a download link", %{conn: conn, task: task} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      file =
+        file_input(view, "#attachment-upload-form", :attachment, [
+          %{
+            name: "screenshot.png",
+            content: "fake png bytes",
+            type: "image/png"
+          }
+        ])
+
+      html =
+        file
+        |> render_upload("screenshot.png")
+        |> then(fn _ -> view |> element("#attachment-upload-form") |> render_submit() end)
+
+      assert html =~ "screenshot.png"
+      assert html =~ ~s(/attachments/)
+
+      {:ok, reloaded} = Ash.load(task, :attachments)
+      assert [%{filename: "screenshot.png"}] = reloaded.attachments
+    end
+
+    test "deleting an attachment removes it from the list", %{conn: conn, task: task} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      file =
+        file_input(view, "#attachment-upload-form", :attachment, [
+          %{name: "log.txt", content: "boom", type: "text/plain"}
+        ])
+
+      render_upload(file, "log.txt")
+      view |> element("#attachment-upload-form") |> render_submit()
+
+      {:ok, reloaded} = Ash.load(task, :attachments)
+      [attachment] = reloaded.attachments
+
+      html =
+        view
+        |> element(~s(button[phx-value-id="#{attachment.id}"]))
+        |> render_click()
+
+      refute html =~ "log.txt"
     end
   end
 

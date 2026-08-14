@@ -37,6 +37,10 @@ config :camelot, Oban,
   queues: [default: 10, tasks: 5, github: 3, notifications: 5],
   plugins: [{Oban.Plugins.Cron, crontab: []}]
 
+# Attachment store for task file uploads. Overridden in
+# config/runtime.exs alongside the runner backend. Dev/test default
+# to Local (a temp directory), matching the LocalPort runner default.
+config :camelot, :attachment_store, Camelot.Board.AttachmentStore.Local
 config :camelot, :default_projects_dir, "~/projects"
 
 config :camelot, :mail,

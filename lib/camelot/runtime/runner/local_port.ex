@@ -40,6 +40,21 @@ defmodule Camelot.Runtime.Runner.LocalPort do
     :ok
   end
 
+  # The CLI ran directly on this host, so agent-written files
+  # (e.g. plans under `~/.claude/plans/`) live on the local
+  # filesystem; `~` expands to the app user's home.
+  @impl Runner
+  @spec read_task_file(String.t(), String.t()) ::
+          {:ok, binary()} | {:error, File.posix()}
+  def read_task_file(_task_id, path) when is_binary(path) do
+    path
+    |> expand_home()
+    |> File.read()
+  end
+
+  defp expand_home("~/" <> rest), do: Path.join(System.user_home!(), rest)
+  defp expand_home(path), do: path
+
   # --- GenServer ---
 
   @impl GenServer

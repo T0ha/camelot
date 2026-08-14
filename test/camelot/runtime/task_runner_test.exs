@@ -3,7 +3,9 @@ defmodule Camelot.Runtime.TaskRunnerTest do
 
   alias Camelot.Accounts.Credential
   alias Camelot.Accounts.User
+  alias Camelot.Board.AttachmentStore
   alias Camelot.Board.Task
+  alias Camelot.Board.TaskAttachment
   alias Camelot.Github.Installation
   alias Camelot.Projects.Membership
   alias Camelot.Projects.Project
@@ -179,11 +181,6 @@ defmodule Camelot.Runtime.TaskRunnerTest do
       )
     end
 
-    defp seed_cached_token(installation_id, token) do
-      far_future = DateTime.add(DateTime.utc_now(), 3_600, :second)
-      :ets.insert(Camelot.Github.InstallationTokenCache, {installation_id, token, far_future})
-    end
-
     defp task_with_installation(installation_id) do
       installations =
         if installation_id,
@@ -193,13 +190,54 @@ defmodule Camelot.Runtime.TaskRunnerTest do
       %Task{creator: %User{github_installations: installations}}
     end
 
-    test "appends a github_app_token secret when the creator has a linked installation and the App is configured" do
+    # The runner's GitHub token is force-minted fresh per session (never
+    # served from the shared cache) so a revoked-but-unexpired cached
+    # token can't reach the container. With a fake signing key the mint
+    # can't succeed here, so these tests exercise the failure branch: a
+    # `:github_token_clear` marker that blanks GH_TOKEN in the runner
+    # rather than letting it fall back to a stale token baked into the
+    # container. The mint success path is covered by the
+    # InstallationTokenCache tests.
+
+    test "clears GH_TOKEN when a fresh token can't be minted for a linked installation" do
       put_app_configured()
       id = System.unique_integer([:positive])
-      seed_cached_token(id, "cached-installation-token")
 
-      assert [%{kind: :github_app_token, value: "cached-installation-token"}] =
+      assert [%{kind: :github_token_clear}] =
                TaskRunner.maybe_append_github_app_token([], task_with_installation(id), "task-1")
+    end
+
+    test "appends the clear marker after already-built secrets, preserving them" do
+      put_app_configured()
+      id = System.unique_integer([:positive])
+
+      existing = [%{kind: :ssh_private_key, name: "n", value: "v"}]
+
+      assert [
+               %{kind: :ssh_private_key},
+               %{kind: :github_token_clear}
+             ] = TaskRunner.maybe_append_github_app_token(existing, task_with_installation(id), "task-1")
+    end
+
+    test "flows a multi-installation task through resolution without crashing" do
+      # Selection correctness lives in Camelot.Github.ResolverTest; here we
+      # only assert the multi-installation path reaches a single decision.
+      put_app_configured()
+      matching_id = System.unique_integer([:positive])
+      other_id = System.unique_integer([:positive])
+
+      task = %Task{
+        project: %Project{github_owner: "other-org"},
+        creator: %User{
+          github_installations: [
+            %Installation{installation_id: other_id, account_login: "acme-org"},
+            %Installation{installation_id: matching_id, account_login: "other-org"}
+          ]
+        }
+      }
+
+      assert [%{kind: :github_token_clear}] =
+               TaskRunner.maybe_append_github_app_token([], task, "task-1")
     end
 
     test "is a no-op when the creator has no linked installation" do
@@ -212,53 +250,13 @@ defmodule Camelot.Runtime.TaskRunnerTest do
       assert TaskRunner.maybe_append_github_app_token([], nil, "task-1") == []
     end
 
-    test "is a no-op when the App isn't configured" do
+    test "leaves GH_TOKEN untouched when the App isn't configured (PAT path)" do
+      # No App means we're not on the App-token path at all, so GH_TOKEN
+      # must not be cleared — the project may authenticate with a PAT.
       Application.put_env(:camelot, :github_app, [])
       id = System.unique_integer([:positive])
-      seed_cached_token(id, "cached-installation-token")
 
       assert TaskRunner.maybe_append_github_app_token([], task_with_installation(id), "task-1") == []
-    end
-
-    test "logs and skips when minting fails (no such installation)" do
-      put_app_configured()
-      id = System.unique_integer([:positive])
-
-      assert TaskRunner.maybe_append_github_app_token([], task_with_installation(id), "task-1") == []
-    end
-
-    test "resolves the installation matching the task's project github_owner when the creator has several" do
-      put_app_configured()
-      matching_id = System.unique_integer([:positive])
-      other_id = System.unique_integer([:positive])
-      seed_cached_token(matching_id, "matching-token")
-      seed_cached_token(other_id, "other-token")
-
-      task = %Task{
-        project: %Project{github_owner: "other-org"},
-        creator: %User{
-          github_installations: [
-            %Installation{installation_id: other_id, account_login: "acme-org"},
-            %Installation{installation_id: matching_id, account_login: "other-org"}
-          ]
-        }
-      }
-
-      assert [%{kind: :github_app_token, value: "matching-token"}] =
-               TaskRunner.maybe_append_github_app_token([], task, "task-1")
-    end
-
-    test "preserves already-built secrets, appending after them" do
-      put_app_configured()
-      id = System.unique_integer([:positive])
-      seed_cached_token(id, "cached-installation-token")
-
-      existing = [%{kind: :ssh_private_key, name: "n", value: "v"}]
-
-      assert [
-               %{kind: :ssh_private_key},
-               %{kind: :github_app_token, value: "cached-installation-token"}
-             ] = TaskRunner.maybe_append_github_app_token(existing, task_with_installation(id), "task-1")
     end
   end
 
@@ -410,6 +408,43 @@ defmodule Camelot.Runtime.TaskRunnerTest do
     end
   end
 
+  describe "plan_file_reference/1" do
+    test "extracts an absolute plan file path from prose" do
+      plan =
+        "See /home/agent/.claude/plans/task-decomission-vectorized.md — " <>
+          "full plan written there.\n\nSummary: deep rewrite."
+
+      assert TaskRunner.plan_file_reference(plan) ==
+               "/home/agent/.claude/plans/task-decomission-vectorized.md"
+    end
+
+    test "extracts a tilde-rooted plan file path" do
+      plan = "Full plan: ~/.claude/plans/my-plan.md"
+
+      assert TaskRunner.plan_file_reference(plan) ==
+               "~/.claude/plans/my-plan.md"
+    end
+
+    test "returns the first reference when several are present" do
+      plan =
+        "~/.claude/plans/first.md and also " <>
+          "/home/agent/.claude/plans/second.md"
+
+      assert TaskRunner.plan_file_reference(plan) ==
+               "~/.claude/plans/first.md"
+    end
+
+    test "nil when the plan has no plan-file reference" do
+      assert TaskRunner.plan_file_reference("Step 1\nStep 2") == nil
+    end
+
+    test "nil for paths outside .claude/plans or non-markdown files" do
+      assert TaskRunner.plan_file_reference("/home/agent/notes/plan.md") == nil
+      assert TaskRunner.plan_file_reference("~/.claude/plans/foo.txt") == nil
+      assert TaskRunner.plan_file_reference(nil) == nil
+    end
+  end
+
   describe "execution_pr_outcome/3" do
     defp exec_state do
       %TaskRunner{
@@ -441,6 +476,41 @@ defmodule Camelot.Runtime.TaskRunnerTest do
     end
   end
 
+  describe "empty_result?/1" do
+    defp parsed(overrides) do
+      base = %{result_text: "", structured: nil, assistant_texts: [], permission_denials: []}
+      {:ok, Map.merge(base, Map.new(overrides))}
+    end
+
+    test "true when there is no result, structured, denials, or assistant text" do
+      assert TaskRunner.empty_result?(parsed([]))
+    end
+
+    test "false when there is result text" do
+      refute TaskRunner.empty_result?(parsed(result_text: "done"))
+    end
+
+    test "false when there is a structured payload" do
+      refute TaskRunner.empty_result?(parsed(structured: %{"decision" => "plan"}))
+    end
+
+    test "false when there are permission denials" do
+      refute TaskRunner.empty_result?(parsed(permission_denials: [%{"tool_name" => "Bash"}]))
+    end
+
+    test "false when an assistant turn has content" do
+      refute TaskRunner.empty_result?(parsed(assistant_texts: ["I did the thing"]))
+    end
+
+    test "true when assistant turns are all blank" do
+      assert TaskRunner.empty_result?(parsed(assistant_texts: ["", "  "]))
+    end
+
+    test "false for a runner-death/error parse" do
+      refute TaskRunner.empty_result?({:error, "runner died"})
+    end
+  end
+
   describe "finish_session/4" do
     test "is a no-op when there is no current session" do
       state = %TaskRunner{task_id: "a", current_session_id: nil, output_buffer: ""}
@@ -457,6 +527,67 @@ defmodule Camelot.Runtime.TaskRunnerTest do
       # Ash.get! raises for the missing row; the rescue must swallow it
       # so TaskRunner survives instead of stranding the session.
       assert :ok = TaskRunner.finish_session(state, 1, {:error, "boom"}, [])
+    end
+  end
+
+  describe "handle_info({:task_updated, ...}) with a terminal stage" do
+    setup %{task: task} do
+      base_dir = Path.join(System.tmp_dir!(), "camelot-attachments-test-#{System.unique_integer([:positive])}")
+      previous = Application.get_env(:camelot, :attachments_dir)
+      Application.put_env(:camelot, :attachments_dir, base_dir)
+
+      on_exit(fn ->
+        File.rm_rf(base_dir)
+
+        if previous do
+          Application.put_env(:camelot, :attachments_dir, previous)
+        else
+          Application.delete_env(:camelot, :attachments_dir)
+        end
+      end)
+
+      tmp_path = Path.join(base_dir, "src.txt")
+      File.mkdir_p!(base_dir)
+      File.write!(tmp_path, "bytes")
+
+      {:ok, storage_key, byte_size} = AttachmentStore.put(task.id, tmp_path, "notes.txt")
+
+      {:ok, attachment} =
+        Ash.create(TaskAttachment, %{
+          filename: "notes.txt",
+          byte_size: byte_size,
+          storage_key: storage_key,
+          task_id: task.id
+        })
+
+      %{attachment: attachment}
+    end
+
+    test "purges the task's attachments on :done", %{task: task, attachment: attachment} do
+      state = %TaskRunner{task_id: task.id}
+
+      assert {:noreply, ^state} =
+               TaskRunner.handle_info({:task_updated, %{id: task.id, stage: :done}}, state)
+
+      assert {:error, _} = Ash.get(TaskAttachment, attachment.id)
+    end
+
+    test "purges the task's attachments on :cancelled", %{task: task, attachment: attachment} do
+      state = %TaskRunner{task_id: task.id}
+
+      assert {:noreply, ^state} =
+               TaskRunner.handle_info({:task_updated, %{id: task.id, stage: :cancelled}}, state)
+
+      assert {:error, _} = Ash.get(TaskAttachment, attachment.id)
+    end
+
+    test "does nothing for a different task", %{task: task, attachment: attachment} do
+      state = %TaskRunner{task_id: "other-task"}
+
+      assert {:noreply, ^state} =
+               TaskRunner.handle_info({:task_updated, %{id: task.id, stage: :done}}, state)
+
+      assert {:ok, _} = Ash.get(TaskAttachment, attachment.id)
     end
   end
 end

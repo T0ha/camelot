@@ -18,6 +18,7 @@ defmodule Camelot.Runtime.Runner.DockerEngine do
   """
   @behaviour Camelot.Runtime.Runner
 
+  alias Camelot.Runtime.Runner.DockerEngine.ContainerFile
   alias Camelot.Runtime.Runner.DockerEngine.ExecSession
   alias Camelot.Runtime.Runner.DockerEngine.TaskContainer
   alias Camelot.Runtime.Runner.Spec
@@ -32,4 +33,9 @@ defmodule Camelot.Runtime.Runner.DockerEngine do
 
   @impl true
   def stop_task(task_id) when is_binary(task_id), do: TaskContainer.stop_task(task_id)
+
+  @impl true
+  def read_task_file(task_id, path) when is_binary(task_id) and is_binary(path) do
+    ContainerFile.read(task_id, path)
+  end
 end

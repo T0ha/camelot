@@ -22,7 +22,7 @@ defmodule Camelot.Agents.Session do
     :prewarm,
     :custom
   ]
-  @statuses [:queued, :running, :completed, :failed, :cancelled]
+  @statuses [:queued, :running, :completed, :failed, :cancelled, :empty]
 
   attributes do
     uuid_primary_key(:id)
@@ -212,6 +212,18 @@ defmodule Camelot.Agents.Session do
 
     update :cancel do
       change(set_attribute(:status, :cancelled))
+      change(set_attribute(:finished_at, &DateTime.utc_now/0))
+    end
+
+    update :mark_empty do
+      accept([
+        :output_log,
+        :exit_code,
+        :error_message,
+        :permission_denials
+      ])
+
+      change(set_attribute(:status, :empty))
       change(set_attribute(:finished_at, &DateTime.utc_now/0))
     end
 
