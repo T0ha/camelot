@@ -447,6 +447,7 @@ defmodule CamelotWeb.TaskLive do
               <h3 class="text-lg font-bold">Plan</h3>
               <div class="flex gap-2">
                 <.link
+                  :if={@task.full_plan}
                   navigate={~p"/tasks/#{@task.id}/plan"}
                   class="btn btn-xs btn-ghost"
                 >
