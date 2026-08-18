@@ -28,4 +28,13 @@ defmodule CamelotWeb.TaskAttachments do
       task_id: task_id
     })
   end
+
+  @doc """
+  Translates an `upload_errors/1` error atom into user-facing text.
+  """
+  @spec error_to_string(atom()) :: String.t()
+  def error_to_string(:too_large), do: "File is too large"
+  def error_to_string(:too_many_files), do: "Too many files"
+  def error_to_string(:not_accepted), do: "Unacceptable file type"
+  def error_to_string(_error), do: "Upload failed"
 end

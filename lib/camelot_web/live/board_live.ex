@@ -12,6 +12,7 @@ defmodule CamelotWeb.BoardLive do
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
   alias CamelotWeb.Scope
+  alias CamelotWeb.TaskAttachments
   alias Phoenix.LiveView.Socket
 
   require Ash.Query
@@ -24,7 +25,13 @@ defmodule CamelotWeb.BoardLive do
       Phoenix.PubSub.subscribe(Camelot.PubSub, "board")
     end
 
-    {:ok, socket |> assign(see_all: params["scope"] == "all") |> load_board()}
+    socket =
+      socket
+      |> assign(see_all: params["scope"] == "all")
+      |> load_board()
+      |> allow_upload(:attachment, accept: :any, max_entries: 5, max_file_size: 25_000_000)
+
+    {:ok, socket}
   end
 
   @impl true
@@ -52,6 +59,10 @@ defmodule CamelotWeb.BoardLive do
 
     case Ash.create(Task, Map.put(task_params, "creator_id", user.id)) do
       {:ok, task} ->
+        consume_uploaded_entries(socket, :attachment, fn %{path: tmp_path}, entry ->
+          {:ok, TaskAttachments.store!(task.id, tmp_path, entry)}
+        end)
+
         broadcast_task_event(:task_created, task)
 
         {:noreply,
@@ -220,6 +231,15 @@ defmodule CamelotWeb.BoardLive do
             type="number"
             label="Priority"
           />
+          <fieldset class="fieldset">
+            <label class="label" for={@uploads.attachment.ref}>
+              Attachments
+            </label>
+            <.live_file_input upload={@uploads.attachment} class="text-sm" />
+            <p :for={err <- upload_errors(@uploads.attachment)} class="text-xs text-error">
+              {TaskAttachments.error_to_string(err)}
+            </p>
+          </fieldset>
           <:actions>
             <.button class="btn btn-primary">
               Create Task

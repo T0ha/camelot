@@ -501,7 +501,7 @@ defmodule CamelotWeb.TaskLive do
               </button>
             </form>
             <p :for={err <- upload_errors(@uploads.attachment)} class="text-xs text-error">
-              {error_to_string(err)}
+              {TaskAttachments.error_to_string(err)}
             </p>
           </div>
 
@@ -862,11 +862,6 @@ defmodule CamelotWeb.TaskLive do
   defp human_size(bytes) when bytes < 1024, do: "#{bytes} B"
   defp human_size(bytes) when bytes < 1024 * 1024, do: "#{Float.round(bytes / 1024, 1)} KB"
   defp human_size(bytes), do: "#{Float.round(bytes / (1024 * 1024), 1)} MB"
-
-  defp error_to_string(:too_large), do: "File is too large"
-  defp error_to_string(:too_many_files), do: "Too many files"
-  defp error_to_string(:not_accepted), do: "Unacceptable file type"
-  defp error_to_string(_error), do: "Upload failed"
 
   @internal_tools ~w(ExitPlanMode EnterPlanMode)
 
