@@ -6,6 +6,8 @@ defmodule CamelotWeb.BoardLiveTest do
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
 
+  require Ash.Query
+
   setup :register_and_log_in_user
 
   test "renders board page", %{conn: conn} do
@@ -75,6 +77,83 @@ defmodule CamelotWeb.BoardLiveTest do
     render_click(view, "restart_task", %{"id" => task.id})
 
     assert Ash.get!(Task, task.id).state == :queued
+  end
+
+  describe "attachments" do
+    setup %{user: user} do
+      {:ok, project} =
+        Ash.create(
+          Project,
+          %{name: "attach-board-#{System.unique_integer()}", path: "/tmp/a"},
+          actor: user
+        )
+
+      on_exit(fn ->
+        System.tmp_dir!()
+        |> Path.join("camelot-attachments")
+        |> File.rm_rf()
+      end)
+
+      %{project: project}
+    end
+
+    test "uploading a file on the New Task form attaches it to the created task", %{
+      conn: conn,
+      project: project
+    } do
+      title = "New task with attachment #{System.unique_integer()}"
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      file =
+        file_input(view, "#new-task-form", :attachment, [
+          %{name: "spec.txt", content: "some spec", type: "text/plain"}
+        ])
+
+      render_upload(file, "spec.txt")
+
+      task_form =
+        form(view, "#new-task-form", %{
+          "title" => title,
+          "description" => "some details",
+          "project_id" => project.id,
+          "agent_id" => agent!("claude_code").id,
+          "priority" => "2"
+        })
+
+      render_submit(task_form)
+
+      task =
+        Task
+        |> Ash.Query.filter(title == ^title)
+        |> Ash.read_one!(load: :attachments)
+
+      assert [%{filename: "spec.txt"}] = task.attachments
+    end
+
+    test "failed task creation does not attach the staged file", %{conn: conn} do
+      title = "Failed task with attachment #{System.unique_integer()}"
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      file =
+        file_input(view, "#new-task-form", :attachment, [
+          %{name: "spec.txt", content: "some spec", type: "text/plain"}
+        ])
+
+      render_upload(file, "spec.txt")
+
+      task_form =
+        form(view, "#new-task-form", %{
+          "title" => title,
+          "description" => "some details",
+          "project_id" => "",
+          "agent_id" => "",
+          "priority" => "2"
+        })
+
+      render_submit(task_form)
+
+      refute Task |> Ash.Query.filter(title == ^title) |> Ash.read_one!()
+    end
   end
 
   describe "scoping" do
