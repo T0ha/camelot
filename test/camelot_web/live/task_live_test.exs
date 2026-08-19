@@ -36,7 +36,7 @@ defmodule CamelotWeb.TaskLiveTest do
       assert html =~ "todo"
     end
 
-    test "plan section links to the full plan page and download", %{
+    test "plan section without a distinct full plan only links to download", %{
       conn: conn,
       project: project,
       user: user
@@ -51,8 +51,29 @@ defmodule CamelotWeb.TaskLiveTest do
 
       {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
 
-      assert html =~ ~p"/tasks/#{task.id}/plan"
-      assert html =~ ~p"/tasks/#{task.id}/plan/download"
+      refute html =~ "Full plan"
+      refute html =~ ~s(href="#{~p"/tasks/#{task.id}/plan"}")
+      assert html =~ ~s(href="#{~p"/tasks/#{task.id}/plan/download"}")
+    end
+
+    test "plan section with a distinct full plan links to both full plan and download", %{
+      conn: conn,
+      project: project,
+      user: user
+    } do
+      task =
+        Ash.Seed.seed!(Task, %{
+          title: "Planned task",
+          project_id: project.id,
+          creator_id: user.id,
+          plan: "See ~/.claude/plans/x.md — summary.",
+          full_plan: "# Full plan\n\nThe complete plan document."
+        })
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ ~s(href="#{~p"/tasks/#{task.id}/plan"}")
+      assert html =~ ~s(href="#{~p"/tasks/#{task.id}/plan/download"}")
     end
 
     test "renders GFM markdown tables in the description", %{conn: conn, project: project, user: user} do
