@@ -24,6 +24,7 @@ import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/camelot"
 import topbar from "../vendor/topbar"
+import posthog from "posthog-js"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
@@ -36,6 +37,43 @@ const liveSocket = new LiveSocket("/live", Socket, {
 topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
 window.addEventListener("phx:page-loading-start", _info => topbar.show(300))
 window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
+
+// PostHog browser tracking. Only initialized when the server rendered a
+// config (i.e. POSTHOG_API_KEY is set) — pages without it make no
+// PostHog network calls at all.
+const posthogConfig = document.getElementById("posthog-config")?.dataset
+// The first phx:page-loading-stop corresponds to the page already
+// captured by posthog.init below, so skip double-counting it.
+let skipNextPageviewCapture = true
+
+if (posthogConfig?.apiKey) {
+  posthog.init(posthogConfig.apiKey, {
+    api_host: posthogConfig.apiHost,
+    person_profiles: "identified_only",
+    capture_pageview: false,
+  })
+  posthog.capture("$pageview")
+
+  if (posthogConfig.distinctId) {
+    posthog.identify(posthogConfig.distinctId, {email: posthogConfig.email})
+  }
+
+  window.posthog = posthog
+}
+
+window.addEventListener("phx:page-loading-stop", _info => {
+  if (skipNextPageviewCapture) {
+    skipNextPageviewCapture = false
+  } else {
+    window.posthog?.capture("$pageview")
+  }
+})
+
+document.addEventListener("click", e => {
+  if (e.target.closest("[data-posthog-reset]")) {
+    window.posthog?.reset()
+  }
+})
 
 // connect if there are any LiveViews on the page
 liveSocket.connect()
