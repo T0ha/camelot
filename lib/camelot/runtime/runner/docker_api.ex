@@ -167,7 +167,7 @@ defmodule Camelot.Runtime.Runner.DockerApi do
   Lists the distinct `camelot-home` label values currently set
   on live Swarm nodes, sorted. Only nodes an operator has
   already labelled via `docker node update --label-add
-  camelot-home=<value>` (see `docs/cluster-runners.md`) are
+  camelot-home=<value>` (see `docs/runners/cluster-runners.md`) are
   valid `Spec.node_label` targets, so this powers the node-pin
   dropdowns in the admin UI. Fails fast (rather than hanging a
   page load) when the daemon isn't reachable or isn't a Swarm

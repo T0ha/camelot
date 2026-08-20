@@ -70,3 +70,18 @@ jobs:
             --appToken "$CAPROVER_APP_TOKEN" \
             --appName "${{ vars.APP_NAME }}" \
             --imageName "$CAPROVER_IMAGE_NAME"
+
+      # The public docs site (docs.camelotai.tech) is served by this app
+      # behind CloudFront with a long s-maxage. Docs only change on deploy,
+      # so bust the edge cache here. No-ops until the distribution id var
+      # is configured (see docs/docs-site-deployment.md).
+      - name: Invalidate docs CDN cache (CloudFront)
+        if: ${{ vars.DOCS_CF_DISTRIBUTION_ID != '' }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ vars.DOCS_CF_DISTRIBUTION_ID }}" \
+            --paths "/*"

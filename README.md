@@ -103,7 +103,7 @@ Key environment variables (see `config/runtime.exs` for full details):
 | `PORT` | HTTP port (default: 4000) | No |
 | `POOL_SIZE` | Database pool size (default: 10) | No |
 | `REGISTRATION_ENABLED` | When `false`, new sign-ups are blocked; existing users can still sign in (default: `true`) | No |
-| `GITHUB_APP_*` | GitHub App integration (`GITHUB_APP_ID`, `_SLUG`, `_CLIENT_ID`, `_CLIENT_SECRET`, `_PRIVATE_KEY_B64`, `_WEBHOOK_SECRET`) — see [`docs/github-app.md`](docs/github-app.md) | No (opt-in per deployment) |
+| `GITHUB_APP_*` | GitHub App integration (`GITHUB_APP_ID`, `_SLUG`, `_CLIENT_ID`, `_CLIENT_SECRET`, `_PRIVATE_KEY_B64`, `_WEBHOOK_SECRET`) — see [`docs/integrations/github-app.md`](docs/integrations/github-app.md) | No (opt-in per deployment) |
 
 ### Bootstrapping users
 

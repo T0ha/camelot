@@ -80,7 +80,9 @@ config :camelot, CamelotWeb.Endpoint,
       ~r"lib/camelot_web/(controllers|live|components)/.*\.(ex|heex)$"E,
       # Application code (resources, runtime, domains, helpers).
       ~r"lib/camelot/.*\.ex$"E,
-      ~r"lib/camelot\.ex$"E
+      ~r"lib/camelot\.ex$"E,
+      # Public docs markdown (recompiles Camelot.Docs on change)
+      ~r"docs/.*\.md$"E
     ]
   ]
 
