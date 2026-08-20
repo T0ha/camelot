@@ -1,0 +1,14 @@
+<.shell tree={@tree} current={@current}>
+  <h1>Camelot documentation</h1>
+  <p>Guides and references for deploying and running Camelot.</p>
+
+  <div :for={category <- @tree.children}>
+    <h2>{category.label}</h2>
+    <ul>
+      <li :for={page <- category.pages}>
+        <a href={"/" <> page.slug}>{page.title}</a>
+        <span :if={page.description}> —   {page.description}</span>
+      </li>
+    </ul>
+  </div>
+</.shell>

@@ -1,3 +1,10 @@
+%{
+  title: "Environment variables",
+  description: "Inject per-project environment variables into runners.",
+  order: 3,
+  published: true
+}
+---
 # Runner environment variables
 
 Camelot injects custom environment variables into a project's
