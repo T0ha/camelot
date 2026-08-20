@@ -7,7 +7,7 @@
     <ul>
       <li :for={page <- category.pages}>
         <a href={"/" <> page.slug}>{page.title}</a>
-        <span :if={page.description}> —   {page.description}</span>
+        <span :if={page.description}>{" — " <> page.description}</span>
       </li>
     </ul>
   </div>
