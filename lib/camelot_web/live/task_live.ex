@@ -10,21 +10,16 @@ defmodule CamelotWeb.TaskLive do
   alias Camelot.Accounts.User
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
+  alias Camelot.Board.TaskAttachment
   alias Camelot.Board.TaskMessage
+  alias Camelot.Runtime.TaskRegistry
+  alias Camelot.Runtime.TaskRunnerSupervisor
   alias CamelotWeb.Scope
+  alias CamelotWeb.TaskAttachments
 
   require Ash.Query
 
-  @task_load [:project, :agent, :creator, :sessions, :messages]
-
-  # GFM extensions so plan/description markdown renders tables,
-  # strikethrough, autolinks and task lists instead of raw text.
-  @markdown_extensions [
-    table: true,
-    strikethrough: true,
-    autolink: true,
-    tasklist: true
-  ]
+  @task_load [:project, :agent, :creator, :sessions, :messages, :attachments]
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
@@ -41,10 +36,9 @@ defmodule CamelotWeb.TaskLive do
             task: task,
             message_input: "",
             live_output: "",
-            subscribed_agent_id: nil,
             focused_column: :none
           )
-          |> maybe_subscribe_agent(task)
+          |> allow_upload(:attachment, accept: :any, max_entries: 5, max_file_size: 25_000_000)
 
         {:ok, socket}
 
@@ -70,34 +64,19 @@ defmodule CamelotWeb.TaskLive do
 
   @impl true
   def handle_info({:task_updated, task}, socket) do
-    task =
-      Ash.load!(task, [
-        :project,
-        :agent,
-        :creator,
-        :sessions,
-        :messages
-      ])
+    task = Ash.load!(task, @task_load)
 
     {:noreply,
      socket
      |> assign(task: task)
-     |> maybe_subscribe_agent(task)
      |> reset_live_output_unless_running(task)}
   end
 
   # Live agent output (one NDJSON chunk per broadcast). Accumulate,
   # bounded, for the running-session panel.
-  def handle_info({:agent_output, _agent_id, chunk}, socket) do
+  def handle_info({:agent_output, _task_id, chunk}, socket) do
     combined = socket.assigns.live_output <> to_string(chunk)
     {:noreply, assign(socket, live_output: cap_tail(combined, 20_000))}
-  end
-
-  # The assigned agent changed status (e.g. :idle <-> :busy). We
-  # subscribe to its topic, so refresh the copy embedded in the task
-  # to keep the card in sync (input controls key off agent.status).
-  def handle_info({:agent_updated, agent}, socket) do
-    {:noreply, assign(socket, task: %{socket.assigns.task | agent: agent})}
   end
 
   # Never crash the card on an unexpected PubSub message.
@@ -113,13 +92,7 @@ defmodule CamelotWeb.TaskLive do
         broadcast_update(updated)
 
         updated =
-          Ash.load!(updated, [
-            :project,
-            :agent,
-            :creator,
-            :sessions,
-            :messages
-          ])
+          Ash.load!(updated, @task_load)
 
         {:noreply, assign(socket, task: updated)}
 
@@ -136,13 +109,7 @@ defmodule CamelotWeb.TaskLive do
         broadcast_update(updated)
 
         updated =
-          Ash.load!(updated, [
-            :project,
-            :agent,
-            :creator,
-            :sessions,
-            :messages
-          ])
+          Ash.load!(updated, @task_load)
 
         {:noreply,
          socket
@@ -192,13 +159,7 @@ defmodule CamelotWeb.TaskLive do
         broadcast_update(updated)
 
         updated =
-          Ash.load!(updated, [
-            :project,
-            :agent,
-            :creator,
-            :sessions,
-            :messages
-          ])
+          Ash.load!(updated, @task_load)
 
         {:noreply,
          socket
@@ -227,14 +188,7 @@ defmodule CamelotWeb.TaskLive do
         {:ok, updated} ->
           broadcast_update(updated)
 
-          updated =
-            Ash.load!(updated, [
-              :project,
-              :agent,
-              :creator,
-              :sessions,
-              :messages
-            ])
+          updated = Ash.load!(updated, @task_load)
 
           {:noreply, assign(socket, task: updated, message_input: "")}
 
@@ -245,13 +199,7 @@ defmodule CamelotWeb.TaskLive do
   end
 
   def handle_event("reset_task", _params, socket) do
-    task = socket.assigns.task
-
-    if not Ash.Resource.loaded?(task, :agent) or is_nil(task.agent) do
-      {:noreply, put_flash(socket, :error, "No agent assigned")}
-    else
-      reset_task_and_agent(socket, task)
-    end
+    reset_task_and_runner(socket, socket.assigns.task)
   end
 
   def handle_event("cancel", _params, socket) do
@@ -262,19 +210,35 @@ defmodule CamelotWeb.TaskLive do
         broadcast_update(updated)
 
         updated =
-          Ash.load!(updated, [
-            :project,
-            :agent,
-            :creator,
-            :sessions,
-            :messages
-          ])
+          Ash.load!(updated, @task_load)
 
         {:noreply, assign(socket, task: updated)}
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, "Cannot cancel task")}
     end
+  end
+
+  def handle_event("validate_attachment", _params, socket), do: {:noreply, socket}
+
+  def handle_event("save_attachments", _params, socket) do
+    task = socket.assigns.task
+
+    consume_uploaded_entries(socket, :attachment, fn %{path: tmp_path}, entry ->
+      {:ok, TaskAttachments.store!(task.id, tmp_path, entry)}
+    end)
+
+    updated = Ash.load!(task, @task_load)
+    {:noreply, assign(socket, task: updated)}
+  end
+
+  def handle_event("delete_attachment", %{"id" => id}, socket) do
+    TaskAttachment
+    |> Ash.get!(id)
+    |> Ash.destroy!()
+
+    updated = Ash.load!(socket.assigns.task, @task_load)
+    {:noreply, assign(socket, task: updated)}
   end
 
   def handle_event("toggle_column", %{"col" => "left"}, socket) do
@@ -302,36 +266,33 @@ defmodule CamelotWeb.TaskLive do
   defp column_hidden?(:right, :left), do: true
   defp column_hidden?(_col, _focused), do: false
 
-  defp reset_task_and_agent(socket, task) do
-    stop_agent_process(task.agent.id)
+  defp reset_task_and_runner(socket, task) do
+    stop_task_runner(task.id)
 
-    with {:ok, _agent} <- Ash.update(task.agent, %{}, action: :mark_idle),
-         {:ok, updated} <- Ash.update(task, %{}, action: :reset) do
-      broadcast_update(updated)
-      updated = Ash.load!(updated, @task_load)
+    case Ash.update(task, %{}, action: :reset) do
+      {:ok, updated} ->
+        broadcast_update(updated)
+        updated = Ash.load!(updated, @task_load)
 
-      {:noreply,
-       socket
-       |> assign(task: updated)
-       |> put_flash(:info, "Task reset — work will resume shortly")}
-    else
+        {:noreply,
+         socket
+         |> assign(task: updated)
+         |> put_flash(:info, "Task reset — work will resume shortly")}
+
       {:error, _} ->
         {:noreply, put_flash(socket, :error, "Failed to reset task")}
     end
   end
 
-  defp stop_agent_process(agent_id) do
-    case Camelot.Runtime.AgentSupervisor.stop_agent(agent_id) do
+  defp stop_task_runner(task_id) do
+    case TaskRunnerSupervisor.stop_task_runner(task_id) do
       :ok -> :ok
       {:error, :not_found} -> :ok
     end
   end
 
-  defp agent_stuck?(task) do
-    Ash.Resource.loaded?(task, :agent) &&
-      task.agent != nil &&
-      task.agent.status == :busy &&
-      task.state == :in_progress
+  defp task_runner_stuck?(task) do
+    task.state == :in_progress && TaskRegistry.lookup(task.id) == nil
   end
 
   defp broadcast_update(task) do
@@ -397,7 +358,7 @@ defmodule CamelotWeb.TaskLive do
             {label}
           </button>
           <button
-            :if={agent_stuck?(@task)}
+            :if={task_runner_stuck?(@task)}
             phx-click="reset_task"
             data-confirm="Reset task and agent? Work will resume from this stage."
             class="btn btn-sm btn-ghost text-warning"
@@ -482,8 +443,67 @@ defmodule CamelotWeb.TaskLive do
           </div>
 
           <div :if={@task.plan} class="prose max-w-none overflow-x-auto">
-            <h3>Plan</h3>
+            <div class="flex items-center justify-between not-prose">
+              <h3 class="text-lg font-bold">Plan</h3>
+              <div class="flex gap-2">
+                <.link
+                  :if={@task.full_plan}
+                  navigate={~p"/tasks/#{@task.id}/plan"}
+                  class="btn btn-xs btn-ghost"
+                >
+                  <.icon name="hero-document-text" class="size-4" /> Full plan
+                </.link>
+                <a
+                  href={~p"/tasks/#{@task.id}/plan/download"}
+                  class="btn btn-xs btn-ghost"
+                >
+                  <.icon name="hero-arrow-down-tray" class="size-4" /> Download
+                </a>
+              </div>
+            </div>
             {render_markdown(@task.plan)}
+          </div>
+
+          <div class="space-y-2">
+            <h3 class="font-semibold">Attachments</h3>
+            <div
+              :for={attachment <- sorted_attachments(@task)}
+              class="flex items-center justify-between gap-2 text-sm p-2 rounded bg-base-200"
+            >
+              <a
+                href={~p"/attachments/#{attachment.id}/download"}
+                target="_blank"
+                class="link truncate"
+              >
+                {attachment.filename}
+              </a>
+              <div class="flex items-center gap-2 shrink-0 text-base-content/60">
+                <span>{human_size(attachment.byte_size)}</span>
+                <button
+                  type="button"
+                  phx-click="delete_attachment"
+                  phx-value-id={attachment.id}
+                  data-confirm="Delete this attachment?"
+                  class="btn btn-xs btn-ghost text-error"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+            <form
+              id="attachment-upload-form"
+              phx-submit="save_attachments"
+              phx-change="validate_attachment"
+              class="flex items-center gap-2"
+            >
+              <.live_file_input upload={@uploads.attachment} class="text-sm" />
+              <button type="submit" class="btn btn-xs btn-primary">
+                Upload
+              </button>
+            </form>
+            <p :for={err <- upload_errors(@uploads.attachment)} class="text-xs text-error">
+              {TaskAttachments.error_to_string(err)}
+            </p>
           </div>
 
           <div
@@ -733,14 +753,7 @@ defmodule CamelotWeb.TaskLive do
     """
   end
 
-  defp render_markdown(text) when is_binary(text) do
-    case MDEx.to_html(text, extension: @markdown_extensions) do
-      {:ok, html} -> Phoenix.HTML.raw(html)
-      {:error, _} -> text
-    end
-  end
-
-  defp render_markdown(_), do: ""
+  defp render_markdown(text), do: CamelotWeb.Markdown.render(text)
 
   defp sorted_sessions(task) do
     if Ash.Resource.loaded?(task, :sessions) do
@@ -748,23 +761,6 @@ defmodule CamelotWeb.TaskLive do
     else
       []
     end
-  end
-
-  # Subscribe to the running agent's live-output topic once the task
-  # has an agent. Idempotent per agent id so a re-render/reassign
-  # doesn't double-subscribe (which would duplicate every chunk).
-  defp maybe_subscribe_agent(socket, %Task{agent_id: nil}), do: socket
-
-  defp maybe_subscribe_agent(%{assigns: %{subscribed_agent_id: id}} = socket, %Task{agent_id: id}) do
-    socket
-  end
-
-  defp maybe_subscribe_agent(socket, %Task{agent_id: agent_id}) do
-    if connected?(socket) do
-      Phoenix.PubSub.subscribe(Camelot.PubSub, "agent:#{agent_id}")
-    end
-
-    assign(socket, subscribed_agent_id: agent_id)
   end
 
   # The live buffer is only meaningful while a session is actively
@@ -854,6 +850,19 @@ defmodule CamelotWeb.TaskLive do
       []
     end
   end
+
+  defp sorted_attachments(task) do
+    if Ash.Resource.loaded?(task, :attachments) do
+      Enum.sort_by(task.attachments, & &1.inserted_at)
+    else
+      []
+    end
+  end
+
+  defp human_size(nil), do: ""
+  defp human_size(bytes) when bytes < 1024, do: "#{bytes} B"
+  defp human_size(bytes) when bytes < 1024 * 1024, do: "#{Float.round(bytes / 1024, 1)} KB"
+  defp human_size(bytes), do: "#{Float.round(bytes / (1024 * 1024), 1)} MB"
 
   @internal_tools ~w(ExitPlanMode EnterPlanMode)
 

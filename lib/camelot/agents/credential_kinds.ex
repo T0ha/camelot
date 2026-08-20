@@ -1,6 +1,6 @@
 defmodule Camelot.Agents.CredentialKinds do
   @moduledoc """
-  Array-of-atom Ash type for `AgentTemplate.required_credential_kinds`.
+  Array-of-atom Ash type for `Agent.required_credential_kinds`.
 
   `{:array, :atom}` fails to load the whole row if any stored
   element isn't a currently-known atom — retiring a credential kind

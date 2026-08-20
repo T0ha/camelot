@@ -7,9 +7,9 @@ defmodule Camelot.Runtime.Reconciler do
   On boot:
 
     1. Recovers any `Session{status: :running}` rows whose
-       owning AgentProcess is gone (e.g. after a redeploy).
+       owning TaskRunner is gone (e.g. after a redeploy).
        If the session's task runner container is still
-       alive, it is **adopted** — a fresh AgentProcess
+       alive, it is **adopted** — a fresh TaskRunner
        re-attaches and finalises from the durable tee'd
        output (`was_adopted` is set). Adoption is refused
        when the live container was *replaced* after the
@@ -23,7 +23,7 @@ defmodule Camelot.Runtime.Reconciler do
        likewise marked failed for the user to retry.
     2. Queued sessions are *not* touched — their DB rows
        survive untouched, and the next call to
-       `RunnerPool.tick/0` (after AgentProcess
+       `RunnerPool.tick/0` (after TaskRunner
        processes restart and re-enqueue) drains them
        normally.
     3. Sweeps orphan `camelot-runner-*` services that no
@@ -51,9 +51,6 @@ defmodule Camelot.Runtime.Reconciler do
 
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
-  alias Camelot.Runtime.AgentProcess
-  alias Camelot.Runtime.AgentRegistry
-  alias Camelot.Runtime.AgentSupervisor
   alias Camelot.Runtime.Runner
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.LocalPort
@@ -63,6 +60,9 @@ defmodule Camelot.Runtime.Reconciler do
   alias Camelot.Runtime.RunnerPool
   alias Camelot.Runtime.SecretSync
   alias Camelot.Runtime.SessionRegistry
+  alias Camelot.Runtime.TaskRegistry
+  alias Camelot.Runtime.TaskRunner
+  alias Camelot.Runtime.TaskRunnerSupervisor
 
   require Ash.Query
   require Logger
@@ -189,7 +189,7 @@ defmodule Camelot.Runtime.Reconciler do
     |> Enum.each(&recover_stale_session/1)
   end
 
-  # A `:running` session whose owning AgentProcess is gone (typically
+  # A `:running` session whose owning TaskRunner is gone (typically
   # after a redeploy). If its task runner container is still alive we
   # adopt it — re-attach and finalise from the durable tee'd output —
   # instead of discarding in-flight work. Only when the container is
@@ -214,7 +214,7 @@ defmodule Camelot.Runtime.Reconciler do
   # completion marker the adoption would poll for lived in the prior
   # container's /tmp and can never appear. Fail such a session (it stays
   # user-recoverable) instead of handing it to an unbounded poll. This is
-  # race-free — we are in the branch where the owning AgentProcess is
+  # race-free — we are in the branch where the owning TaskRunner is
   # already gone.
   defp adopt_or_fail(%Session{} = session, handle) do
     if doomed_adoption?(container_started_for(handle), session.started_at) do
@@ -287,14 +287,14 @@ defmodule Camelot.Runtime.Reconciler do
   def recovery_action(_backend, _kind, _handle, :present), do: :adopt
   def recovery_action(_backend, _kind, _handle, _presence), do: :fail
 
-  defp adopt_stale_session(%Session{} = session) do
+  defp adopt_stale_session(%Session{task_id: task_id} = session) when is_binary(task_id) do
     Logger.info(
       "Reconciler: adopting running session #{session.id} " <>
         "(runner container still alive)"
     )
 
-    with :ok <- ensure_agent_process(session.agent_id),
-         :ok <- AgentProcess.adopt(session.agent_id, session.id) do
+    with :ok <- ensure_task_runner(task_id),
+         :ok <- TaskRunner.adopt(task_id, session.id) do
       :ok
     else
       other ->
@@ -307,10 +307,10 @@ defmodule Camelot.Runtime.Reconciler do
     end
   end
 
-  defp ensure_agent_process(agent_id) do
-    case AgentRegistry.lookup(agent_id) do
+  defp ensure_task_runner(task_id) do
+    case TaskRegistry.lookup(task_id) do
       nil ->
-        case AgentSupervisor.start_agent(agent_id) do
+        case TaskRunnerSupervisor.start_task_runner(task_id) do
           {:ok, _pid} -> :ok
           {:error, {:already_started, _pid}} -> :ok
           {:error, _} = err -> err
@@ -324,14 +324,14 @@ defmodule Camelot.Runtime.Reconciler do
   defp fail_stale_session(%Session{} = session) do
     Logger.info(
       "Reconciler: failing stale running session #{session.id} " <>
-        "(owning AgentProcess not registered, no adoptable runner)"
+        "(owning TaskRunner not registered, no adoptable runner)"
     )
 
     Ash.update!(
       session,
       %{
         error_message:
-          "AgentProcess unregistered without finalising this session " <>
+          "TaskRunner unregistered without finalising this session " <>
             "and no live runner container was available to adopt. " <>
             "The session can be retried.",
         exit_code: 1
@@ -475,7 +475,7 @@ defmodule Camelot.Runtime.Reconciler do
   end
 
   # `github_app_token` is minted per-task (see
-  # `Camelot.Runtime.AgentProcess.maybe_append_github_app_token/3`),
+  # `Camelot.Runtime.TaskRunner.maybe_append_github_app_token/3`),
   # not per-user like every other credential, so it needs its own
   # sweep keyed off the task rather than piggybacking on
   # `sweep_orphan_task_runners/1`'s live-service list — the secret can

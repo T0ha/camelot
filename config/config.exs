@@ -37,11 +37,21 @@ config :camelot, Oban,
   queues: [default: 10, tasks: 5, github: 3, notifications: 5],
   plugins: [{Oban.Plugins.Cron, crontab: []}]
 
+# Attachment store for task file uploads. Overridden in
+# config/runtime.exs alongside the runner backend. Dev/test default
+# to Local (a temp directory), matching the LocalPort runner default.
+config :camelot, :attachment_store, Camelot.Board.AttachmentStore.Local
 config :camelot, :default_projects_dir, "~/projects"
 
 config :camelot, :mail,
   from_name: "Camelot",
   from_address: "noreply@camelot.local"
+
+# Consecutive automatic PR fix re-dispatches (merge conflict / CI
+# failure) before a task is left for human review. Set to `:infinity`
+# to never give up (the attempt counter is still tracked). Overridable
+# at runtime via PR_AUTO_FIX_MAX_ATTEMPTS.
+config :camelot, :pr_auto_fix, max_attempts: 2
 
 # Runner backend for agent CLI execution. Overridden in
 # config/runtime.exs for prod. Dev/test default to LocalPort

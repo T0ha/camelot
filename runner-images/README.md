@@ -3,7 +3,7 @@
 These images host the AI agent CLIs that Camelot dispatches into one-shot
 runner containers (one per session). They are *not* part of the Camelot
 release image — they ship separately and are referenced by name from
-`AgentTemplate.runner_image`.
+`Agent.runner_image` (the Agent CLI resource).
 
 ## Layering
 

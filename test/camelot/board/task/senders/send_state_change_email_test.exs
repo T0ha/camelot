@@ -18,7 +18,8 @@ defmodule Camelot.Board.Task.Senders.SendStateChangeEmailTest do
       Ash.create(Task, %{
         title: "Ship the thing",
         project_id: project.id,
-        creator_id: creator.id
+        creator_id: creator.id,
+        agent_id: agent!("claude_code").id
       })
 
     %{task: Ash.load!(task, :creator)}

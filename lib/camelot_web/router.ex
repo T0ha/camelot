@@ -35,10 +35,17 @@ defmodule CamelotWeb.Router do
     get "/setup", GithubSetupController, :new
   end
 
+  scope "/attachments", CamelotWeb do
+    pipe_through :browser
+
+    get "/:id/download", TaskAttachmentController, :download
+  end
+
   scope "/", CamelotWeb do
     pipe_through :browser
 
     get "/sessions/:id/download", SessionDownloadController, :download
+    get "/tasks/:id/plan/download", TaskPlanController, :download
   end
 
   scope "/github", CamelotWeb do
@@ -88,6 +95,7 @@ defmodule CamelotWeb.Router do
 
       live "/", BoardLive
       live "/tasks/:id", TaskLive
+      live "/tasks/:id/plan", TaskPlanLive
 
       live "/projects", ProjectLive.Index, :index
       live "/projects/new", ProjectLive.Index, :new
@@ -97,10 +105,6 @@ defmodule CamelotWeb.Router do
            :edit
 
       live "/projects/:id", ProjectLive.Show, :show
-
-      live "/agents", AgentLive.Index, :index
-      live "/agents/new", AgentLive.Index, :new
-      live "/agents/:id", AgentLive.Show
 
       live "/prompts", PromptTemplateLive, :index
       live "/prompts/new", PromptTemplateLive, :new
@@ -126,9 +130,9 @@ defmodule CamelotWeb.Router do
     scope "/", CamelotWeb do
       pipe_through :browser
 
-      live "/agent-templates", AgentTemplateLive.Index, :index
-      live "/agent-templates/new", AgentTemplateLive.Index, :new
-      live "/agent-templates/:id/edit", AgentTemplateLive.Index, :edit
+      live "/agents", AgentLive.Index, :index
+      live "/agents/new", AgentLive.Index, :new
+      live "/agents/:id/edit", AgentLive.Index, :edit
     end
   end
 

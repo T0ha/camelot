@@ -1,13 +1,13 @@
-defmodule Camelot.Runtime.AgentSupervisor do
+defmodule Camelot.Runtime.TaskRunnerSupervisor do
   @moduledoc """
-  DynamicSupervisor for AgentProcess GenServers.
-  Each agent gets one supervised process that manages
-  CLI Port execution.
+  DynamicSupervisor for TaskRunner GenServers.
+  Each in-flight task gets one supervised process that manages
+  CLI Port execution across its stages and retries.
   """
   use DynamicSupervisor
 
-  alias Camelot.Runtime.AgentProcess
-  alias Camelot.Runtime.AgentRegistry
+  alias Camelot.Runtime.TaskRegistry
+  alias Camelot.Runtime.TaskRunner
 
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts) do
@@ -23,18 +23,18 @@ defmodule Camelot.Runtime.AgentSupervisor do
     DynamicSupervisor.init(strategy: :one_for_one)
   end
 
-  @spec start_agent(String.t()) ::
+  @spec start_task_runner(String.t()) ::
           DynamicSupervisor.on_start_child()
-  def start_agent(agent_id) do
+  def start_task_runner(task_id) do
     DynamicSupervisor.start_child(
       __MODULE__,
-      {AgentProcess, agent_id: agent_id}
+      {TaskRunner, task_id: task_id}
     )
   end
 
-  @spec stop_agent(String.t()) :: :ok | {:error, :not_found}
-  def stop_agent(agent_id) do
-    case AgentRegistry.lookup(agent_id) do
+  @spec stop_task_runner(String.t()) :: :ok | {:error, :not_found}
+  def stop_task_runner(task_id) do
+    case TaskRegistry.lookup(task_id) do
       nil ->
         {:error, :not_found}
 

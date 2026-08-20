@@ -1,6 +1,6 @@
 defmodule Camelot.Agents.Session do
   @moduledoc """
-  A single CLI execution session tied to an agent and task.
+  A single CLI execution session tied to an agent CLI and task.
   Tracks output, timing, and exit status.
   """
   use Ash.Resource,
@@ -22,7 +22,7 @@ defmodule Camelot.Agents.Session do
     :prewarm,
     :custom
   ]
-  @statuses [:queued, :running, :completed, :failed, :cancelled]
+  @statuses [:queued, :running, :completed, :failed, :cancelled, :empty]
 
   attributes do
     uuid_primary_key(:id)
@@ -140,9 +140,10 @@ defmodule Camelot.Agents.Session do
       allow_nil?(true)
 
       description(
-        "Owner of the session (matches agent.user). Cached on " <>
-          "the Session row so the pool and reconciler can index " <>
-          "without joining through Agent."
+        "Owner of the session — the task's creator for task-bound " <>
+          "sessions, explicit for bootstrap sessions. Cached on the " <>
+          "Session row so the pool and reconciler can index without " <>
+          "joining through Task."
       )
     end
   end
@@ -211,6 +212,18 @@ defmodule Camelot.Agents.Session do
 
     update :cancel do
       change(set_attribute(:status, :cancelled))
+      change(set_attribute(:finished_at, &DateTime.utc_now/0))
+    end
+
+    update :mark_empty do
+      accept([
+        :output_log,
+        :exit_code,
+        :error_message,
+        :permission_denials
+      ])
+
+      change(set_attribute(:status, :empty))
       change(set_attribute(:finished_at, &DateTime.utc_now/0))
     end
 

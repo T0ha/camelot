@@ -3,7 +3,6 @@ defmodule CamelotWeb.TaskLiveTest do
 
   import Phoenix.LiveViewTest
 
-  alias Camelot.Agents.Agent
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
@@ -23,7 +22,8 @@ defmodule CamelotWeb.TaskLiveTest do
         title: "Live task",
         description: "A task for live testing",
         project_id: project.id,
-        creator_id: user.id
+        creator_id: user.id,
+        agent_id: agent!("claude_code").id
       })
 
     %{task: task, project: project}
@@ -36,13 +36,54 @@ defmodule CamelotWeb.TaskLiveTest do
       assert html =~ "todo"
     end
 
+    test "plan section without a distinct full plan only links to download", %{
+      conn: conn,
+      project: project,
+      user: user
+    } do
+      task =
+        Ash.Seed.seed!(Task, %{
+          title: "Planned task",
+          project_id: project.id,
+          creator_id: user.id,
+          plan: "See ~/.claude/plans/x.md — summary."
+        })
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      refute html =~ "Full plan"
+      refute html =~ ~s(href="#{~p"/tasks/#{task.id}/plan"}")
+      assert html =~ ~s(href="#{~p"/tasks/#{task.id}/plan/download"}")
+    end
+
+    test "plan section with a distinct full plan links to both full plan and download", %{
+      conn: conn,
+      project: project,
+      user: user
+    } do
+      task =
+        Ash.Seed.seed!(Task, %{
+          title: "Planned task",
+          project_id: project.id,
+          creator_id: user.id,
+          plan: "See ~/.claude/plans/x.md — summary.",
+          full_plan: "# Full plan\n\nThe complete plan document."
+        })
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ ~s(href="#{~p"/tasks/#{task.id}/plan"}")
+      assert html =~ ~s(href="#{~p"/tasks/#{task.id}/plan/download"}")
+    end
+
     test "renders GFM markdown tables in the description", %{conn: conn, project: project, user: user} do
       {:ok, task} =
         Ash.create(Task, %{
           title: "Tabular task",
           description: "| A | B |\n|---|---|\n| 1 | 2 |",
           project_id: project.id,
-          creator_id: user.id
+          creator_id: user.id,
+          agent_id: agent!("claude_code").id
         })
 
       {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
@@ -64,31 +105,14 @@ defmodule CamelotWeb.TaskLiveTest do
   end
 
   describe "reset_task" do
-    test "re-queues task and marks agent idle", %{conn: conn, project: project, user: user} do
-      {:ok, agent} =
-        Ash.create(Agent, %{
-          name: "stuck-agent",
-          template_id: agent_template!("claude_code").id,
-          project_id: project.id,
-          user_id: user.id
-        })
-
-      {:ok, task} =
-        Ash.create(Task, %{
-          title: "Stuck task",
-          project_id: project.id,
-          creator_id: user.id
-        })
-
-      {:ok, task} =
-        Ash.update(task, %{agent_id: agent.id}, action: :begin_work)
-
-      {:ok, _busy} = Ash.update(agent, %{}, action: :mark_busy)
+    test "re-queues a stuck task", %{conn: conn, task: task} do
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
 
       assert task.stage == :planning
       assert task.state == :in_progress
 
-      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+      {:ok, view, html} = live(conn, ~p"/tasks/#{task.id}")
+      assert html =~ "Reset Task"
 
       html =
         view
@@ -97,55 +121,35 @@ defmodule CamelotWeb.TaskLiveTest do
 
       assert html =~ "work will resume"
 
-      {:ok, reloaded} = Ash.get(Task, task.id, load: [:agent])
+      reloaded = Ash.get!(Task, task.id)
       assert reloaded.state == :queued
       assert reloaded.stage == :planning
-      assert reloaded.agent.status == :idle
     end
 
-    test "button is hidden when no agent is assigned", %{conn: conn, task: task} do
+    test "button is hidden when the task isn't stuck", %{conn: conn, task: task} do
       {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
       refute html =~ "Reset Task"
     end
   end
 
   describe "live output" do
-    setup %{project: project, user: user} do
-      {:ok, agent} =
-        Ash.create(Agent, %{
-          name: "live-output-agent",
-          template_id: agent_template!("claude_code").id,
-          project_id: project.id,
-          user_id: user.id
-        })
-
-      {:ok, task} =
-        Ash.create(Task, %{
-          title: "Streaming task",
-          project_id: project.id,
-          creator_id: user.id
-        })
-
-      {:ok, task} = Ash.update(task, %{agent_id: agent.id}, action: :begin_work)
+    setup %{task: task} do
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
 
       {:ok, session} =
-        Ash.create(Session, %{agent_id: agent.id, task_id: task.id})
+        Ash.create(Session, %{agent_id: task.agent_id, task_id: task.id})
 
       {:ok, session} = Ash.update(session, %{}, action: :mark_running)
 
-      %{agent: agent, task: task, session: session}
+      %{task: task, session: session}
     end
 
-    test "streamed output renders inside the running session card", %{
-      conn: conn,
-      task: task,
-      agent: agent
-    } do
+    test "streamed output renders inside the running session card", %{conn: conn, task: task} do
       {:ok, view, html} = live(conn, ~p"/tasks/#{task.id}")
 
       refute html =~ "Live output"
 
-      send(view.pid, {:agent_output, agent.id, ~s({"type":"result","result":"hello"}\n)})
+      send(view.pid, {:agent_output, task.id, ~s({"type":"result","result":"hello"}\n)})
 
       html = render(view)
 
@@ -163,27 +167,11 @@ defmodule CamelotWeb.TaskLiveTest do
   end
 
   describe "session output log" do
-    setup %{project: project, user: user} do
-      {:ok, agent} =
-        Ash.create(Agent, %{
-          name: "output-log-agent",
-          template_id: agent_template!("claude_code").id,
-          project_id: project.id,
-          user_id: user.id
-        })
+    setup %{task: task} do
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+      {:ok, session} = Ash.create(Session, %{agent_id: task.agent_id, task_id: task.id})
 
-      {:ok, task} =
-        Ash.create(Task, %{
-          title: "Output log task",
-          project_id: project.id,
-          creator_id: user.id
-        })
-
-      {:ok, task} = Ash.update(task, %{agent_id: agent.id}, action: :begin_work)
-
-      {:ok, session} = Ash.create(Session, %{agent_id: agent.id, task_id: task.id})
-
-      %{agent: agent, task: task, session: session}
+      %{task: task, session: session}
     end
 
     test "a failed session's large output log is truncated to its tail in the render",
@@ -228,65 +216,15 @@ defmodule CamelotWeb.TaskLiveTest do
     end
   end
 
-  describe "agent updates" do
-    test "survives an {:agent_updated, agent} broadcast and reflects new status",
-         %{conn: conn, project: project, user: user} do
-      {:ok, agent} =
-        Ash.create(Agent, %{
-          name: "live-agent",
-          template_id: agent_template!("claude_code").id,
-          project_id: project.id,
-          user_id: user.id
-        })
-
-      {:ok, task} =
-        Ash.create(Task, %{
-          title: "Agent-bound task",
-          project_id: project.id,
-          creator_id: user.id
-        })
-
-      {:ok, _task} = Ash.update(task, %{agent_id: agent.id}, action: :begin_work)
-
-      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
-
-      {:ok, busy_agent} = Ash.update(agent, %{}, action: :mark_busy)
-
-      Phoenix.PubSub.broadcast(
-        Camelot.PubSub,
-        "agent:#{agent.id}",
-        {:agent_updated, busy_agent}
-      )
-
-      # Before the fix this crashed the LiveView with a FunctionClauseError;
-      # render/1 forces a round-trip so a dead process would raise here.
-      assert render(view) =~ "Agent-bound task"
-    end
-
-    test "ignores unrelated PubSub messages without crashing",
-         %{conn: conn, project: project, user: user} do
-      {:ok, agent} =
-        Ash.create(Agent, %{
-          name: "live-agent-2",
-          template_id: agent_template!("claude_code").id,
-          project_id: project.id,
-          user_id: user.id
-        })
-
-      {:ok, task} =
-        Ash.create(Task, %{
-          title: "Catch-all task",
-          project_id: project.id,
-          creator_id: user.id
-        })
-
-      {:ok, _task} = Ash.update(task, %{agent_id: agent.id}, action: :begin_work)
+  describe "pubsub" do
+    test "ignores unrelated PubSub messages without crashing", %{conn: conn, task: task} do
+      {:ok, _task} = Ash.update(task, %{}, action: :begin_work)
 
       {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
 
       send(view.pid, {:some_unexpected_message, :payload})
 
-      assert render(view) =~ "Catch-all task"
+      assert render(view) =~ "Live task"
     end
   end
 
@@ -316,6 +254,64 @@ defmodule CamelotWeb.TaskLiveTest do
     end
   end
 
+  describe "attachments" do
+    setup %{task: task} do
+      on_exit(fn ->
+        System.tmp_dir!()
+        |> Path.join("camelot-attachments/#{task.id}")
+        |> File.rm_rf()
+      end)
+
+      :ok
+    end
+
+    test "uploading a file lists it with a download link", %{conn: conn, task: task} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      file =
+        file_input(view, "#attachment-upload-form", :attachment, [
+          %{
+            name: "screenshot.png",
+            content: "fake png bytes",
+            type: "image/png"
+          }
+        ])
+
+      html =
+        file
+        |> render_upload("screenshot.png")
+        |> then(fn _ -> view |> element("#attachment-upload-form") |> render_submit() end)
+
+      assert html =~ "screenshot.png"
+      assert html =~ ~s(/attachments/)
+
+      {:ok, reloaded} = Ash.load(task, :attachments)
+      assert [%{filename: "screenshot.png"}] = reloaded.attachments
+    end
+
+    test "deleting an attachment removes it from the list", %{conn: conn, task: task} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      file =
+        file_input(view, "#attachment-upload-form", :attachment, [
+          %{name: "log.txt", content: "boom", type: "text/plain"}
+        ])
+
+      render_upload(file, "log.txt")
+      view |> element("#attachment-upload-form") |> render_submit()
+
+      {:ok, reloaded} = Ash.load(task, :attachments)
+      [attachment] = reloaded.attachments
+
+      html =
+        view
+        |> element(~s(button[phx-value-id="#{attachment.id}"]))
+        |> render_click()
+
+      refute html =~ "log.txt"
+    end
+  end
+
   describe "scoping" do
     test "redirects non-member from another user's task", %{conn: conn} do
       other = Ash.Seed.seed!(Camelot.Accounts.User, %{email: "to-#{System.unique_integer()}@x.com"})
@@ -331,7 +327,8 @@ defmodule CamelotWeb.TaskLiveTest do
         Ash.create(Task, %{
           title: "Other's task",
           project_id: project.id,
-          creator_id: other.id
+          creator_id: other.id,
+          agent_id: agent!("claude_code").id
         })
 
       assert {:error, {kind, %{to: "/"}}} =

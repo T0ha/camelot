@@ -97,6 +97,20 @@ materialise_one() {
       # a git credential helper for github.com (and any GH_HOST) so
       # `git clone`/`git push` over HTTPS also authenticate.
       gh auth setup-git || log "gh auth setup-git failed; git HTTPS auth may not work"
+      # A GitHub App gives us an HTTPS installation token, never an SSH
+      # key. When a project's clone URL is `git@github.com:…` (or
+      # `ssh://git@github.com/…`) the transport would go over SSH and
+      # need the user's per-user key registered on GitHub — which App
+      # users haven't done. Rewrite GitHub SSH URLs to HTTPS so every
+      # git op (clone here, plus fetch/push the agent runs) resolves
+      # over HTTPS and authenticates with the token via the helper
+      # above. Only applied when a token is present; the mounted SSH
+      # key still serves non-GitHub hosts and GitHub without an App.
+      # --unset-all first keeps this idempotent across container boots
+      # on a persisted /home/agent cache volume.
+      git config --global --unset-all url."https://github.com/".insteadOf 2>/dev/null || true
+      git config --global --add url."https://github.com/".insteadOf "git@github.com:"
+      git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"
       ;;
     ssh_private_key)
       mkdir -p "$HOME/.ssh"
@@ -166,6 +180,21 @@ clone_workspace() {
   fi
 }
 
+fetch_attachments() {
+  [ -n "${ATTACHMENTS_JSON:-}" ] || return 0
+
+  local dir="/workspace/.camelot/attachments"
+  mkdir -p "$dir"
+
+  printf '%s' "$ATTACHMENTS_JSON" | jq -c '.[]' | while IFS= read -r entry; do
+    local filename url
+    filename="$(printf '%s' "$entry" | jq -r '.filename')"
+    url="$(printf '%s' "$entry" | jq -r '.url')"
+    log "fetching attachment $filename"
+    curl -fsSL "$url" -o "$dir/$filename" || log "failed to fetch attachment $filename"
+  done
+}
+
 install_repo_languages() {
   cd /workspace
   if [ -f .tool-versions ]; then
@@ -206,6 +235,7 @@ main() {
   fi
 
   clone_workspace
+  fetch_attachments
   install_repo_languages
   mark_ready
 

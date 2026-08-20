@@ -1,19 +1,23 @@
-defmodule Camelot.Agents.Changes.DispatchTasks do
+defmodule Camelot.Board.Changes.DispatchTasks do
   @moduledoc """
-  Ash generic action implementation that scans idle agents,
-  finds matching pending tasks, and dispatches them.
-  Only picks up queued tasks in dispatchable stages.
+  Ash generic action implementation that scans dispatchable
+  tasks and dispatches all of them, highest priority first.
+
+  Concurrency is bounded independently by `Camelot.Runtime.RunnerPool`
+  (keyed by task creator), not by this dispatcher — a task's agent CLI
+  is fixed at creation time, so there's no per-agent idle/busy slot to
+  gate on anymore. `RunnerPool` never refuses a dispatch; it queues.
   """
   use Ash.Resource.Actions.Implementation
 
-  alias Camelot.Agents.Agent
+  alias Camelot.Board.Changes.CheckPrStatus
   alias Camelot.Board.Task
   alias Camelot.Github.Client
   alias Camelot.Github.Resolver
   alias Camelot.Prompts.Renderer
-  alias Camelot.Runtime.AgentProcess
-  alias Camelot.Runtime.AgentRegistry
-  alias Camelot.Runtime.AgentSupervisor
+  alias Camelot.Runtime.TaskRegistry
+  alias Camelot.Runtime.TaskRunner
+  alias Camelot.Runtime.TaskRunnerSupervisor
 
   require Logger
 
@@ -26,58 +30,34 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
           Ash.Resource.Actions.Implementation.Context.t()
         ) :: :ok
   def run(_input, _opts, _context) do
-    idle_agents = fetch_idle_agents()
-
-    Enum.each(idle_agents, fn agent ->
-      case find_next_task(agent.project_id) do
-        nil ->
-          :ok
-
-        task ->
-          dispatch_task(agent, task)
-      end
-    end)
+    dispatchable_tasks()
+    |> Enum.sort_by(& &1.priority, :desc)
+    |> Enum.each(&dispatch_task/1)
 
     :ok
   end
 
-  defp fetch_idle_agents do
-    Agent
-    |> Ash.read!(load: [:project])
-    |> Enum.filter(&(&1.status == :idle))
-  end
-
-  defp find_next_task(project_id) do
+  defp dispatchable_tasks do
     Task
-    |> Ash.read!(load: [:messages, :project, creator: [:github_installations]], authorize?: false)
+    |> Ash.read!(
+      load: [:messages, :attachments, :project, creator: [:github_installations]],
+      authorize?: false
+    )
     |> Enum.filter(fn task ->
-      task.project_id == project_id and
-        task.state == :queued and
-        task.stage in @dispatchable_stages
+      task.state == :queued and task.stage in @dispatchable_stages
     end)
-    |> Enum.sort_by(& &1.priority, :desc)
-    |> List.first()
   end
 
-  defp dispatch_task(agent, task) do
-    case Ash.update(
-           task,
-           %{agent_id: agent.id},
-           action: :begin_work
-         ) do
+  defp dispatch_task(task) do
+    case Ash.update(task, %{}, action: :begin_work) do
       {:ok, task} ->
         broadcast_task_update(task)
-        ensure_agent_process(agent.id)
+        ensure_task_runner(task.id)
         prompt = build_prompt(task)
 
-        case AgentProcess.dispatch(
-               agent.id,
-               task.id,
-               prompt,
-               task.allowed_tools || []
-             ) do
+        case TaskRunner.dispatch(task.id, prompt, task.allowed_tools || []) do
           :ok ->
-            Logger.info("Dispatched task #{task.id} to agent #{agent.id}")
+            Logger.info("Dispatched task #{task.id}")
 
           {:error, reason} ->
             Logger.warning(
@@ -108,9 +88,9 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
   defp github_owner(%{project: %{github_owner: owner}}), do: owner
   defp github_owner(_task), do: nil
 
-  defp ensure_agent_process(agent_id) do
-    case AgentRegistry.lookup(agent_id) do
-      nil -> AgentSupervisor.start_agent(agent_id)
+  defp ensure_task_runner(task_id) do
+    case TaskRegistry.lookup(task_id) do
+      nil -> TaskRunnerSupervisor.start_task_runner(task_id)
       _pid -> :ok
     end
   end
@@ -142,12 +122,64 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
 
     base
     |> append_branch_directive(task, slug)
+    |> append_conflict_directive(task)
     |> append_conversation(task.messages)
+  end
+
+  # A PR-stage task whose PR has merge conflicts must be told so
+  # explicitly: the pr_review prompt otherwise only mentions comments and
+  # CI, so the agent inspects those, finds nothing, and concludes there
+  # is nothing to do — leaving the conflict unresolved. The app already
+  # detects the conflict when polling; surface it to the runner with a
+  # concrete resolve-and-push instruction.
+  defp append_conflict_directive(prompt, %{stage: :pr} = task) do
+    prompt <> conflict_note(fetch_pull_request(task), task)
+  end
+
+  defp append_conflict_directive(prompt, _task), do: prompt
+
+  defp fetch_pull_request(task) do
+    project = task.project
+    opts = [installation_id: installation_id(task)]
+
+    case Client.get_pull_request(
+           project.github_owner,
+           project.github_repo,
+           task.pr_number,
+           opts
+         ) do
+      {:ok, pr} -> pr
+      {:error, _reason} -> %{}
+    end
+  end
+
+  @doc """
+  Renders the merge-conflict directive appended to a PR-stage prompt.
+
+  Returns an empty string when the PR is not in conflict (reusing
+  `CheckPrStatus.merge_conflict?/1` so detection stays in one place), and
+  otherwise an explicit instruction to merge the base branch, resolve the
+  conflicts on the task branch, and push.
+  """
+  @spec conflict_note(map(), Task.t()) :: String.t()
+  def conflict_note(pr, task) do
+    if CheckPrStatus.merge_conflict?(pr) do
+      base = get_in(pr, ["base", "ref"]) || "the base branch"
+
+      "\n\n--- Merge Conflict ---\n" <>
+        "This pull request (#{task.pr_url}) has merge conflicts with its " <>
+        "base branch `#{base}` and cannot be merged as-is. Resolve them: " <>
+        "fetch the latest `#{base}`, merge (or rebase) it into the working " <>
+        "branch `camelot/task-#{task.id}`, resolve every conflict, verify " <>
+        "the build and tests pass, and push so the PR becomes mergeable."
+    else
+      ""
+    end
   end
 
   # Pin the working branch to a deterministic, task-scoped name so a
   # PR that the agent opens can be recovered from GitHub even when its
-  # URL is missing from the final output (see AgentProcess fallback).
+  # URL is missing from the final output (see TaskRunner fallback).
   defp append_branch_directive(prompt, task, "execution") do
     prompt <>
       "\n\nWork on a git branch named exactly `camelot/task-#{task.id}` " <>
@@ -168,10 +200,11 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
     %{
       "title" => task.title || "",
       "description" => task.description || "",
-      "plan" => task.plan || "",
+      "plan" => prompt_plan(task),
       "pr_url" => task.pr_url || "",
       "pr_number" => to_string(task.pr_number || ""),
-      "pr_comments" => comments
+      "pr_comments" => comments,
+      "attachments" => attachments_block(task)
     }
   end
 
@@ -179,8 +212,30 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
     %{
       "title" => task.title || "",
       "description" => task.description || "",
-      "plan" => task.plan || ""
+      "plan" => prompt_plan(task),
+      "attachments" => attachments_block(task)
     }
+  end
+
+  @doc """
+  Renders the attachments block listing filenames available to the
+  agent under `.camelot/attachments/` in the workspace, or `""` when
+  the task has none (the template renderer strips the resulting
+  blank line).
+  """
+  @spec attachments_block(map()) :: String.t()
+  def attachments_block(%{attachments: attachments}) when is_list(attachments) and attachments != [] do
+    names = Enum.map_join(attachments, "\n", &"- #{&1.filename}")
+
+    "Attachments (available under .camelot/attachments/ in the workspace):\n" <> names
+  end
+
+  def attachments_block(_task), do: ""
+
+  # Prefer the full plan document captured from the agent's plan file
+  # over `plan`, which may be only a pointer + summary.
+  defp prompt_plan(task) do
+    task.full_plan || task.plan || ""
   end
 
   defp fetch_pr_comments(task) do
@@ -248,8 +303,14 @@ defmodule Camelot.Agents.Changes.DispatchTasks do
 
     parts =
       if task.plan,
-        do: parts ++ ["\nPlan: #{task.plan}"],
+        do: parts ++ ["\nPlan: #{prompt_plan(task)}"],
         else: parts
+
+    parts =
+      case attachments_block(task) do
+        "" -> parts
+        block -> parts ++ ["\n" <> block]
+      end
 
     Enum.join(parts)
   end

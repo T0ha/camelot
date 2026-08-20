@@ -210,14 +210,34 @@ defmodule Camelot.Board.Changes.CheckPrStatusTest do
   end
 
   describe "auto_fix_available?/1" do
-    test "allows fixes below the cap of 2" do
+    test "allows fixes below the default cap of 2" do
       assert CheckPrStatus.auto_fix_available?(%Task{pr_auto_fix_attempts: 0})
       assert CheckPrStatus.auto_fix_available?(%Task{pr_auto_fix_attempts: 1})
     end
 
-    test "stops once the cap of 2 is reached" do
+    test "stops once the default cap of 2 is reached" do
       refute CheckPrStatus.auto_fix_available?(%Task{pr_auto_fix_attempts: 2})
       refute CheckPrStatus.auto_fix_available?(%Task{pr_auto_fix_attempts: 3})
+    end
+  end
+
+  describe "under_cap?/2" do
+    test "an integer cap stops at the configured number of attempts" do
+      assert CheckPrStatus.under_cap?(0, 3)
+      assert CheckPrStatus.under_cap?(2, 3)
+      refute CheckPrStatus.under_cap?(3, 3)
+      refute CheckPrStatus.under_cap?(4, 3)
+    end
+
+    test ":infinity never gives up, no matter how many attempts" do
+      assert CheckPrStatus.under_cap?(0, :infinity)
+      assert CheckPrStatus.under_cap?(99, :infinity)
+    end
+  end
+
+  describe "max_auto_fix_attempts/0" do
+    test "defaults to 2 when unconfigured" do
+      assert CheckPrStatus.max_auto_fix_attempts() == 2
     end
   end
 

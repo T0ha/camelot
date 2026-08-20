@@ -2,7 +2,6 @@ defmodule Camelot.Board.TaskTest do
   use Camelot.DataCase, async: true
 
   alias Camelot.Accounts.User
-  alias Camelot.Agents.Agent
   alias Camelot.Board.Task
   alias Camelot.Board.Workers.SendTaskStateEmail
   alias Camelot.Projects.Project
@@ -23,13 +22,7 @@ defmodule Camelot.Board.TaskTest do
         hashed_password: hashed
       })
 
-    {:ok, agent} =
-      Ash.create(Agent, %{
-        name: "test-agent",
-        template_id: agent_template!("claude_code").id,
-        project_id: project.id,
-        user_id: user.id
-      })
+    agent = agent!("claude_code")
 
     %{project: project, user: user, agent: agent}
   end
@@ -38,7 +31,8 @@ defmodule Camelot.Board.TaskTest do
     defaults = %{
       title: "Test task",
       project_id: project.id,
-      creator_id: user.id
+      creator_id: user.id,
+      agent_id: agent!("claude_code").id
     }
 
     Ash.create(Task, Map.merge(defaults, attrs))
@@ -77,7 +71,7 @@ defmodule Camelot.Board.TaskTest do
       assert {:ok, updated} =
                Ash.update(
                  task,
-                 %{agent_id: ctx.agent.id},
+                 %{},
                  action: :begin_work
                )
 
@@ -91,7 +85,7 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} =
         Ash.update(
           task,
-          %{agent_id: ctx.agent.id},
+          %{},
           action: :begin_work
         )
 
@@ -107,7 +101,7 @@ defmodule Camelot.Board.TaskTest do
       assert {:ok, updated} =
                Ash.update(
                  task,
-                 %{agent_id: ctx.agent.id},
+                 %{},
                  action: :begin_work
                )
 
@@ -121,7 +115,7 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} =
         Ash.update(
           task,
-          %{agent_id: ctx.agent.id},
+          %{},
           action: :begin_work
         )
 
@@ -130,7 +124,7 @@ defmodule Camelot.Board.TaskTest do
       assert {:error, _} =
                Ash.update(
                  task,
-                 %{agent_id: ctx.agent.id},
+                 %{},
                  action: :begin_work
                )
     end
@@ -143,7 +137,7 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} =
         Ash.update(
           task,
-          %{agent_id: ctx.agent.id},
+          %{},
           action: :begin_work
         )
 
@@ -159,13 +153,48 @@ defmodule Camelot.Board.TaskTest do
       assert updated.plan == "Do X then Y"
     end
 
+    test "submit_plan stores full_plan and nil clears it", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      {:ok, task} =
+        Ash.update(
+          task,
+          %{},
+          action: :begin_work
+        )
+
+      assert {:ok, task} =
+               Ash.update(
+                 task,
+                 %{plan: "See ~/.claude/plans/x.md", full_plan: "# Full doc"},
+                 action: :submit_plan
+               )
+
+      assert task.full_plan == "# Full doc"
+
+      # A later planning round without a plan file must clear the
+      # stale document, not leave the old one attached.
+      {:ok, task} = Ash.update(task, %{}, action: :request_plan_changes)
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+
+      assert {:ok, task} =
+               Ash.update(
+                 task,
+                 %{plan: "Inline plan", full_plan: nil},
+                 action: :submit_plan
+               )
+
+      assert task.full_plan == nil
+      assert task.plan == "Inline plan"
+    end
+
     test "approve_plan → executing/queued", ctx do
       {:ok, task} = create_task(ctx.project, ctx.user)
 
       {:ok, task} =
         Ash.update(
           task,
-          %{agent_id: ctx.agent.id},
+          %{},
           action: :begin_work
         )
 
@@ -185,7 +214,7 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} =
         Ash.update(
           task,
-          %{agent_id: ctx.agent.id},
+          %{},
           action: :begin_work
         )
 
@@ -207,7 +236,7 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} =
         Ash.update(
           task,
-          %{agent_id: ctx.agent.id},
+          %{},
           action: :begin_work
         )
 
@@ -221,7 +250,7 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} =
         Ash.update(
           task,
-          %{agent_id: ctx.agent.id},
+          %{},
           action: :begin_work
         )
 
@@ -260,7 +289,7 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} =
         Ash.update(
           task,
-          %{agent_id: ctx.agent.id},
+          %{},
           action: :begin_work
         )
 
@@ -273,7 +302,7 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} =
         Ash.update(
           task,
-          %{agent_id: ctx.agent.id},
+          %{},
           action: :begin_work
         )
 
@@ -315,7 +344,7 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} =
         Ash.update(
           task,
-          %{agent_id: ctx.agent.id},
+          %{},
           action: :begin_work
         )
 
@@ -336,7 +365,7 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} = create_task(ctx.project, ctx.user)
 
       {:ok, task} =
-        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+        Ash.update(task, %{}, action: :begin_work)
 
       {:ok, task} =
         Ash.update(
@@ -358,7 +387,7 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} = create_task(ctx.project, ctx.user)
 
       {:ok, task} =
-        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+        Ash.update(task, %{}, action: :begin_work)
 
       {:ok, task} =
         Ash.update(task, %{last_error: "boom"}, action: :mark_error)
@@ -366,7 +395,7 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} = Ash.update(task, %{}, action: :retry)
 
       {:ok, task} =
-        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+        Ash.update(task, %{}, action: :begin_work)
 
       assert task.state == :in_progress
       assert task.last_error == nil
@@ -376,7 +405,7 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} = create_task(ctx.project, ctx.user)
 
       {:ok, task} =
-        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+        Ash.update(task, %{}, action: :begin_work)
 
       {:ok, task} =
         Ash.update(task, %{runner_handle: "svc123"}, action: :set_runner_handle)
@@ -413,7 +442,7 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} =
         Ash.update(
           task,
-          %{agent_id: ctx.agent.id},
+          %{},
           action: :begin_work
         )
 
@@ -425,7 +454,7 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} =
         Ash.update(
           task,
-          %{agent_id: ctx.agent.id},
+          %{},
           action: :begin_work
         )
 
@@ -458,7 +487,7 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} = create_task(ctx.project, ctx.user)
 
       {:ok, task} =
-        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+        Ash.update(task, %{}, action: :begin_work)
 
       {:ok, task} = Ash.update(task, %{plan: "plan"}, action: :submit_plan)
 
@@ -472,7 +501,7 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} = create_task(ctx.project, ctx.user)
 
       {:ok, task} =
-        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+        Ash.update(task, %{}, action: :begin_work)
 
       {:ok, task} = Ash.update(task, %{}, action: :request_input)
 
@@ -486,13 +515,13 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} = create_task(ctx.project, ctx.user)
 
       {:ok, task} =
-        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+        Ash.update(task, %{}, action: :begin_work)
 
       {:ok, task} = Ash.update(task, %{plan: "plan"}, action: :submit_plan)
       {:ok, task} = Ash.update(task, %{}, action: :approve_plan)
 
       {:ok, task} =
-        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+        Ash.update(task, %{}, action: :begin_work)
 
       {:ok, task} =
         Ash.update(
@@ -511,7 +540,7 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} = create_task(ctx.project, ctx.user)
 
       {:ok, task} =
-        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+        Ash.update(task, %{}, action: :begin_work)
 
       {:ok, task} = Ash.update(task, %{}, action: :mark_error)
 
@@ -539,13 +568,13 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} = create_task(ctx.project, ctx.user)
 
       {:ok, task} =
-        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+        Ash.update(task, %{}, action: :begin_work)
 
       {:ok, task} = Ash.update(task, %{plan: "plan"}, action: :submit_plan)
       {:ok, task} = Ash.update(task, %{}, action: :approve_plan)
 
       {:ok, task} =
-        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+        Ash.update(task, %{}, action: :begin_work)
 
       {:ok, task} =
         Ash.update(
@@ -566,7 +595,7 @@ defmodule Camelot.Board.TaskTest do
       {:ok, task} = create_task(ctx.project, ctx.user)
 
       {:ok, _task} =
-        Ash.update(task, %{agent_id: ctx.agent.id}, action: :begin_work)
+        Ash.update(task, %{}, action: :begin_work)
 
       refute_enqueued(worker: SendTaskStateEmail)
     end

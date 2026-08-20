@@ -32,6 +32,15 @@ defmodule Camelot.Board.Task do
   @states [:queued, :waiting_for_input, :in_progress, :error]
 
   oban do
+    scheduled_actions do
+      schedule :dispatch_tasks, "* * * * *" do
+        action(:dispatch_tasks)
+        queue(:tasks)
+
+        worker_module_name(Camelot.Board.Task.AshOban.ActionWorker.DispatchTasks)
+      end
+    end
+
     triggers do
       trigger :check_pr_status do
         action(:check_pr_status)
@@ -74,6 +83,18 @@ defmodule Camelot.Board.Task do
     attribute :plan, :string do
       allow_nil?(true)
       public?(true)
+    end
+
+    attribute :full_plan, :string do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Complete plan document fetched from the plan file the agent " <>
+          "wrote in its workspace (~/.claude/plans/). `plan` holds " <>
+          "whatever the agent returned inline, which may be only a " <>
+          "pointer to that file plus a summary."
+      )
     end
 
     attribute :pr_url, :string do
@@ -171,6 +192,7 @@ defmodule Camelot.Board.Task do
 
     has_many(:sessions, Camelot.Agents.Session)
     has_many(:messages, Camelot.Board.TaskMessage)
+    has_many(:attachments, Camelot.Board.TaskAttachment)
   end
 
   actions do
@@ -188,8 +210,13 @@ defmodule Camelot.Board.Task do
         allow_nil?(false)
       end
 
+      argument :agent_id, :uuid do
+        allow_nil?(false)
+      end
+
       change(manage_relationship(:project_id, :project, type: :append))
       change(manage_relationship(:creator_id, :creator, type: :append))
+      change(manage_relationship(:agent_id, :agent, type: :append))
     end
 
     update :update do
@@ -220,10 +247,6 @@ defmodule Camelot.Board.Task do
     update :begin_work do
       accept([])
       require_atomic?(false)
-
-      argument :agent_id, :uuid do
-        allow_nil?(false)
-      end
 
       validate(attribute_equals(:state, :queued))
 
@@ -260,12 +283,10 @@ defmodule Camelot.Board.Task do
 
         Ash.Changeset.force_change_attribute(changeset, :last_error, nil)
       end)
-
-      change(manage_relationship(:agent_id, :agent, type: :append))
     end
 
     update :submit_plan do
-      accept([:plan])
+      accept([:plan, :full_plan])
       notifiers([NotifyTaskStateEmail])
 
       validate(attribute_equals(:stage, :planning))
@@ -394,6 +415,10 @@ defmodule Camelot.Board.Task do
       require_atomic?(false)
 
       change(Camelot.Board.Changes.CheckPrStatus)
+    end
+
+    action :dispatch_tasks do
+      run(Camelot.Board.Changes.DispatchTasks)
     end
   end
 

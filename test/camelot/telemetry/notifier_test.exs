@@ -1,7 +1,6 @@
 defmodule Camelot.Telemetry.NotifierTest do
   use Camelot.DataCase, async: true
 
-  alias Camelot.Agents.Agent
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
 
@@ -33,28 +32,13 @@ defmodule Camelot.Telemetry.NotifierTest do
     assert metadata.actor == nil
   end
 
-  test "emits [:camelot, :ash, :notify] when an agent is created", ctx do
-    assert {:ok, agent} =
-             Ash.create(Agent, %{
-               name: "notifier-test-agent",
-               template_id: agent_template!("claude_code").id,
-               project_id: ctx.project.id,
-               user_id: ctx.user.id
-             })
-
-    agent_id = agent.id
-
-    assert_received {[:camelot, :ash, :notify], _ref, %{}, %{resource: Agent, data: %{id: ^agent_id}} = metadata}
-
-    assert metadata.action.name == :create
-  end
-
   test "emits [:camelot, :ash, :notify] when a task is created", ctx do
     assert {:ok, task} =
              Ash.create(Task, %{
                title: "Notifier task",
                project_id: ctx.project.id,
-               creator_id: ctx.user.id
+               creator_id: ctx.user.id,
+               agent_id: agent!("claude_code").id
              })
 
     task_id = task.id
@@ -84,7 +68,8 @@ defmodule Camelot.Telemetry.NotifierTest do
       Ash.create(Task, %{
         title: "Notifier update task",
         project_id: ctx.project.id,
-        creator_id: ctx.user.id
+        creator_id: ctx.user.id,
+        agent_id: agent!("claude_code").id
       })
 
     task_id = task.id

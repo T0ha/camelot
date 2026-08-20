@@ -4,7 +4,7 @@ defmodule Camelot.Runtime.Runner.Spec do
   invocation: argv, env, mounts, secrets, scheduling
   hints, and the session id it serves.
 
-  Built by `Camelot.Runtime.AgentProcess` from the
+  Built by `Camelot.Runtime.TaskRunner` from the
   resolved `AgentConfig`, the Agent, its User, and (for
   task sessions) its Project. Backends pattern-match on
   the fields they understand and ignore the rest — the
@@ -26,6 +26,7 @@ defmodule Camelot.Runtime.Runner.Spec do
             mcp_config_json: nil,
             repo_url: nil,
             repo_branch: nil,
+            attachments_json: nil,
             bootstrap?: false,
             node_label: nil,
             resources: %{},
@@ -48,6 +49,7 @@ defmodule Camelot.Runtime.Runner.Spec do
           mcp_config_json: String.t() | nil,
           repo_url: String.t() | nil,
           repo_branch: String.t() | nil,
+          attachments_json: String.t() | nil,
           bootstrap?: boolean(),
           node_label: String.t() | nil,
           resources: %{optional(String.t()) => String.t()},

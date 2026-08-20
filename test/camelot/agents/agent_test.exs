@@ -2,86 +2,122 @@ defmodule Camelot.Agents.AgentTest do
   use Camelot.DataCase, async: true
 
   alias Camelot.Agents.Agent
-  alias Camelot.Projects.Project
+  alias Ecto.Adapters.SQL
 
-  setup do
-    {:ok, project} =
-      Ash.create(Project, %{
-        name: "agent-proj",
-        path: "/tmp/agent-proj"
-      })
+  describe "seeded data" do
+    test "claude_code agent exists with expected fields" do
+      agent = agent!("claude_code")
 
-    user = user!()
-    claude = agent_template!("claude_code")
-    codex = agent_template!("codex")
+      assert agent.name == "Claude Code"
+      assert agent.executable == "claude"
+      assert agent.base_args == ["--output-format", "stream-json", "--verbose"]
+      assert agent.prompt_flag == "-p"
+      assert agent.tools_flag == "--allowedTools"
+      assert agent.parser == :claude_code_json
+      assert "EnterPlanMode" in agent.internal_tools
+      assert "ExitPlanMode" in agent.internal_tools
+      assert agent.env_vars == %{"CLAUDECODE" => "false"}
+      assert agent.max_retries == 3
+    end
 
-    %{project: project, user: user, claude: claude, codex: codex}
+    test "codex agent exists with raw_text parser" do
+      agent = agent!("codex")
+
+      assert agent.name == "Codex"
+      assert agent.parser == :raw_text
+      assert agent.base_args == ["--quiet"]
+      assert agent.prompt_flag == nil
+    end
   end
 
   describe "create" do
-    test "creates an agent with valid attrs", ctx do
+    test "creates a custom agent" do
       assert {:ok, agent} =
                Ash.create(Agent, %{
-                 name: "Claude",
-                 template_id: ctx.claude.id,
-                 project_id: ctx.project.id,
-                 user_id: ctx.user.id
+                 slug: "aider",
+                 name: "Aider",
+                 executable: "aider",
+                 base_args: ["--no-stream"],
+                 parser: :raw_text
                })
 
-      assert agent.name == "Claude"
-      assert agent.template_id == ctx.claude.id
-      assert agent.status == :idle
+      assert agent.slug == "aider"
+      assert agent.tools_separator == ","
+      assert agent.base_retry_delay_ms == 5_000
+      assert agent.max_retries == 3
     end
 
-    test "fails without name", ctx do
+    test "creates a custom agent with an explicit max_retries" do
+      assert {:ok, agent} =
+               Ash.create(Agent, %{
+                 slug: "no-retry",
+                 name: "No Retry",
+                 executable: "no-retry",
+                 max_retries: 0
+               })
+
+      assert agent.max_retries == 0
+    end
+
+    test "enforces unique slug" do
       assert {:error, _} =
                Ash.create(Agent, %{
-                 template_id: ctx.claude.id,
-                 project_id: ctx.project.id,
-                 user_id: ctx.user.id
+                 slug: "claude_code",
+                 name: "Dup",
+                 executable: "x"
                })
     end
 
-    test "allows different templates for the same (project, user)", ctx do
-      assert {:ok, _} =
+    test "rejects unknown parser" do
+      assert {:error, _} =
                Ash.create(Agent, %{
-                 name: "A1",
-                 template_id: ctx.claude.id,
-                 project_id: ctx.project.id,
-                 user_id: ctx.user.id
-               })
-
-      assert {:ok, _} =
-               Ash.create(Agent, %{
-                 name: "A2",
-                 template_id: ctx.codex.id,
-                 project_id: ctx.project.id,
-                 user_id: ctx.user.id
+                 slug: "weird",
+                 name: "Weird",
+                 executable: "weird",
+                 parser: :not_a_parser
                })
     end
   end
 
-  describe "mark_busy / mark_idle" do
-    test "transitions between idle and busy", ctx do
-      {:ok, agent} =
-        Ash.create(Agent, %{
-          name: "Toggler",
-          template_id: ctx.claude.id,
-          project_id: ctx.project.id,
-          user_id: ctx.user.id
-        })
+  describe "update" do
+    test "edits CLI args without changing slug" do
+      agent = agent!("codex")
 
-      assert agent.status == :idle
+      assert {:ok, updated} =
+               Ash.update(agent, %{
+                 base_args: ["--quiet", "--no-color"]
+               })
 
-      assert {:ok, busy} =
-               Ash.update(agent, %{}, action: :mark_busy)
+      assert updated.base_args == ["--quiet", "--no-color"]
+      assert updated.slug == "codex"
+    end
 
-      assert busy.status == :busy
+    test "edits max_retries" do
+      agent = agent!("codex")
 
-      assert {:ok, idle} =
-               Ash.update(busy, %{}, action: :mark_idle)
+      assert {:ok, updated} = Ash.update(agent, %{max_retries: 5})
+      assert updated.max_retries == 5
+    end
+  end
 
-      assert idle.status == :idle
+  describe "required_credential_kinds legacy values" do
+    test "loads a row carrying a retired kind, dropping it instead of failing" do
+      agent = agent!("claude_code")
+
+      # Simulate data left behind by a credential-kind retirement (e.g.
+      # PR #75 removing github_pat/github_oauth) without a cleanup
+      # migration having run yet: a raw SQL write, bypassing Ash, since
+      # `String.to_existing_atom("github_pat")` no longer succeeds and
+      # Ash's own `one_of`-validated write path would reject it outright.
+      SQL.query!(
+        Camelot.Repo,
+        "UPDATE agents SET required_credential_kinds = $1 WHERE id = $2",
+        [["claude_api_key", "github_pat"], Ecto.UUID.dump!(agent.id)]
+      )
+
+      reloaded = agent!("claude_code")
+
+      assert reloaded.required_credential_kinds == [:claude_api_key]
     end
   end
 end

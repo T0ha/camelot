@@ -10,9 +10,9 @@ Camelot authenticates to GitHub two ways:
    independently of the GitHub App and needs no configuration.
 
 Pasted personal access tokens / OAuth tokens are **not** supported. If an
-`AgentTemplate`'s MCP config references `${credential:github_pat}`, update it
-to `${credential:github_app_token}` (only meaningful for projects linked to a
-GitHub App installation).
+`Agent`'s (Agent CLI's) MCP config references `${credential:github_pat}`,
+update it to `${credential:github_app_token}` (only meaningful for projects
+linked to a GitHub App installation).
 
 ## 1. Register the App
 

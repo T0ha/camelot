@@ -14,7 +14,7 @@ defmodule Camelot.Runtime.Runner.Swarm do
       of the same task reuses the workspace.
     * `stop_task/1` removes the Swarm service backing
       the task and stops the TaskService. Called by
-      `AgentProcess` when the task hits a terminal stage.
+      `TaskRunner` when the task hits a terminal stage.
 
   Per-node `docker exec` routing goes through
   `Camelot.Runtime.Runner.Swarm.ProxyRouter`, which
@@ -24,6 +24,7 @@ defmodule Camelot.Runtime.Runner.Swarm do
   @behaviour Camelot.Runtime.Runner
 
   alias Camelot.Runtime.Runner.Spec
+  alias Camelot.Runtime.Runner.Swarm.ContainerFile
   alias Camelot.Runtime.Runner.Swarm.ExecSession
   alias Camelot.Runtime.Runner.Swarm.TaskService
 
@@ -37,4 +38,9 @@ defmodule Camelot.Runtime.Runner.Swarm do
 
   @impl true
   def stop_task(task_id) when is_binary(task_id), do: TaskService.stop_task(task_id)
+
+  @impl true
+  def read_task_file(task_id, path) when is_binary(task_id) and is_binary(path) do
+    ContainerFile.read(task_id, path)
+  end
 end

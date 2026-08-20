@@ -1,6 +1,6 @@
-defmodule Camelot.Runtime.AgentProcess do
+defmodule Camelot.Runtime.TaskRunner do
   @moduledoc """
-  GenServer managing a single AI agent's run lifecycle.
+  GenServer managing a single task's run lifecycle.
 
   Each session goes through three states inside this
   process:
@@ -17,15 +17,18 @@ defmodule Camelot.Runtime.AgentProcess do
        the pool slot, and (if the run failed) optionally
        schedule a retry.
 
-  All CLI/parser knobs come from the agent's
-  `AgentTemplate` via `AgentConfig`. Backend choice
-  (LocalPort / DockerEngine / Swarm) is determined by
+  A process is started per task (keyed by `task_id`) the
+  first time it needs to run, and persists across that
+  task's stages (planning, executing, pr) and retries — the
+  task's `Agent` (CLI template) and `Project` are fixed for
+  its whole life. All CLI/parser knobs come from
+  `Camelot.Runtime.AgentConfig`. Backend choice (LocalPort /
+  DockerEngine / Swarm) is determined by
   `Camelot.Runtime.Runner`.
   """
   use GenServer, restart: :transient
 
   alias Camelot.Accounts.Credential
-  alias Camelot.Agents.Agent
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
   alias Camelot.Board.TaskMessage
@@ -34,7 +37,6 @@ defmodule Camelot.Runtime.AgentProcess do
   alias Camelot.Github.InstallationTokenCache
   alias Camelot.Github.Resolver
   alias Camelot.Runtime.AgentConfig
-  alias Camelot.Runtime.AgentRegistry
   alias Camelot.Runtime.EnvVarResolver
   alias Camelot.Runtime.OutputParser
   alias Camelot.Runtime.Runner
@@ -45,14 +47,14 @@ defmodule Camelot.Runtime.AgentProcess do
   alias Camelot.Runtime.RunnerPool
   alias Camelot.Runtime.SecretSync
   alias Camelot.Runtime.SessionRegistry
+  alias Camelot.Runtime.TaskRegistry
 
   require Ash.Query
   require Logger
 
   defstruct [
-    :agent_id,
+    :task_id,
     :config,
-    :current_task_id,
     :current_session_id,
     :current_prompt,
     :runner,
@@ -60,14 +62,12 @@ defmodule Camelot.Runtime.AgentProcess do
     max_retries: 0,
     retry_count: 0,
     output_buffer: "",
-    allowed_tools: [],
-    subscribed_tasks: MapSet.new()
+    allowed_tools: []
   ]
 
   @type t :: %__MODULE__{
-          agent_id: String.t(),
+          task_id: String.t(),
           config: AgentConfig.t() | nil,
-          current_task_id: String.t() | nil,
           current_session_id: String.t() | nil,
           current_prompt: String.t() | nil,
           runner: pid() | nil,
@@ -75,29 +75,26 @@ defmodule Camelot.Runtime.AgentProcess do
           max_retries: non_neg_integer(),
           retry_count: non_neg_integer(),
           output_buffer: String.t(),
-          allowed_tools: [String.t()],
-          subscribed_tasks: MapSet.t(String.t())
+          allowed_tools: [String.t()]
         }
-
-  @unscoped_user "_unscoped"
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
-    agent_id = Keyword.fetch!(opts, :agent_id)
+    task_id = Keyword.fetch!(opts, :task_id)
 
     GenServer.start_link(
       __MODULE__,
-      agent_id,
-      name: AgentRegistry.via(agent_id)
+      task_id,
+      name: TaskRegistry.via(task_id)
     )
   end
 
-  @spec dispatch(String.t(), String.t(), String.t(), [String.t()]) ::
+  @spec dispatch(String.t(), String.t(), [String.t()]) ::
           :ok | {:error, :busy | :not_found}
-  def dispatch(agent_id, task_id, prompt, allowed_tools \\ []) do
-    case AgentRegistry.lookup(agent_id) do
+  def dispatch(task_id, prompt, allowed_tools \\ []) do
+    case TaskRegistry.lookup(task_id) do
       nil -> {:error, :not_found}
-      pid -> GenServer.call(pid, {:dispatch, task_id, prompt, allowed_tools})
+      pid -> GenServer.call(pid, {:dispatch, prompt, allowed_tools})
     end
   end
 
@@ -105,19 +102,19 @@ defmodule Camelot.Runtime.AgentProcess do
   Re-attach to a `:running` session whose runner container survived a
   Camelot restart, instead of failing it. Reads the durable tee'd
   output on completion and finalises normally. The caller must have
-  ensured the AgentProcess is started (see `Reconciler`).
+  ensured the TaskRunner is started (see `Reconciler`).
   """
   @spec adopt(String.t(), String.t()) :: :ok | {:error, :busy | :not_found}
-  def adopt(agent_id, session_id) do
-    case AgentRegistry.lookup(agent_id) do
+  def adopt(task_id, session_id) do
+    case TaskRegistry.lookup(task_id) do
       nil -> {:error, :not_found}
       pid -> GenServer.call(pid, {:adopt, session_id})
     end
   end
 
   @spec retry(String.t()) :: :ok | {:error, :not_found | :no_task}
-  def retry(agent_id) do
-    case AgentRegistry.lookup(agent_id) do
+  def retry(task_id) do
+    case TaskRegistry.lookup(task_id) do
       nil -> {:error, :not_found}
       pid -> GenServer.call(pid, :retry)
     end
@@ -125,31 +122,24 @@ defmodule Camelot.Runtime.AgentProcess do
 
   @spec respond_and_retry(String.t(), [String.t()], String.t()) ::
           :ok | {:error, :not_found | :no_task | :busy}
-  def respond_and_retry(agent_id, tool_names \\ [], answers_text \\ "") do
-    case AgentRegistry.lookup(agent_id) do
+  def respond_and_retry(task_id, tool_names \\ [], answers_text \\ "") do
+    case TaskRegistry.lookup(task_id) do
       nil -> {:error, :not_found}
       pid -> GenServer.call(pid, {:respond_and_retry, tool_names, answers_text})
-    end
-  end
-
-  @spec status(String.t()) :: {:ok, :idle | :busy} | {:error, :not_found}
-  def status(agent_id) do
-    case AgentRegistry.lookup(agent_id) do
-      nil -> {:error, :not_found}
-      pid -> GenServer.call(pid, :status)
     end
   end
 
   # --- Server Callbacks ---
 
   @impl true
-  def init(agent_id) do
-    Logger.info("AgentProcess started for agent #{agent_id}")
-    {:ok, %__MODULE__{agent_id: agent_id}}
+  def init(task_id) do
+    Logger.info("TaskRunner started for task #{task_id}")
+    Phoenix.PubSub.subscribe(Camelot.PubSub, "task:#{task_id}")
+    {:ok, %__MODULE__{task_id: task_id}}
   end
 
   @impl true
-  def handle_call({:dispatch, task_id, prompt, allowed_tools}, _from, state) do
+  def handle_call({:dispatch, prompt, allowed_tools}, _from, state) do
     cond do
       state.runner ->
         {:reply, {:error, :busy}, state}
@@ -158,9 +148,8 @@ defmodule Camelot.Runtime.AgentProcess do
         {:reply, {:error, :busy}, state}
 
       true ->
-        case enqueue_session(state, task_id, prompt, allowed_tools, 0) do
+        case enqueue_session(state, prompt, allowed_tools, 0) do
           {:ok, new_state} ->
-            mark_agent_busy(state.agent_id)
             {:reply, :ok, new_state}
 
           {:error, reason} ->
@@ -175,7 +164,6 @@ defmodule Camelot.Runtime.AgentProcess do
     else
       case start_adoption(state, session_id) do
         {:ok, new_state} ->
-          mark_agent_busy(state.agent_id)
           {:reply, :ok, new_state}
 
         {:error, reason} ->
@@ -189,11 +177,11 @@ defmodule Camelot.Runtime.AgentProcess do
       state.runner || state.current_session_id ->
         {:reply, {:error, :busy}, state}
 
-      is_nil(state.current_task_id) || is_nil(state.current_prompt) ->
+      is_nil(state.current_prompt) ->
         {:reply, {:error, :no_task}, state}
 
       true ->
-        case enqueue_session(state, state.current_task_id, state.current_prompt, state.allowed_tools, 0) do
+        case enqueue_session(state, state.current_prompt, state.allowed_tools, 0) do
           {:ok, new_state} -> {:reply, :ok, new_state}
           {:error, reason} -> {:reply, {:error, reason}, state}
         end
@@ -205,7 +193,7 @@ defmodule Camelot.Runtime.AgentProcess do
       state.runner || state.current_session_id ->
         {:reply, {:error, :busy}, state}
 
-      is_nil(state.current_task_id) || is_nil(state.current_prompt) ->
+      is_nil(state.current_prompt) ->
         {:reply, {:error, :no_task}, state}
 
       true ->
@@ -214,16 +202,11 @@ defmodule Camelot.Runtime.AgentProcess do
           |> apply_tool_approvals(tool_names)
           |> apply_answers(answers_text)
 
-        case enqueue_session(updated, updated.current_task_id, updated.current_prompt, updated.allowed_tools, 0) do
+        case enqueue_session(updated, updated.current_prompt, updated.allowed_tools, 0) do
           {:ok, new_state} -> {:reply, :ok, new_state}
           {:error, reason} -> {:reply, {:error, reason}, state}
         end
     end
-  end
-
-  def handle_call(:status, _from, state) do
-    status = if state.runner || state.current_session_id, do: :busy, else: :idle
-    {:reply, {:ok, status}, state}
   end
 
   @impl true
@@ -234,8 +217,7 @@ defmodule Camelot.Runtime.AgentProcess do
           mark_session_running(session_id, runner_pid)
           SessionRegistry.register(session_id)
           Process.monitor(runner_pid)
-          broadcast_agent_update(state.agent_id)
-          state = subscribe_task(state, state.current_task_id)
+          broadcast_session_update(state.task_id)
 
           {:noreply,
            %{
@@ -247,12 +229,12 @@ defmodule Camelot.Runtime.AgentProcess do
 
         {:error, reason} ->
           fail_session_for(state, "Runner failed to start: #{inspect(reason)}")
-          release_and_idle(state)
+          release_pool_slot(state)
           {:noreply, reset_runner(state)}
       end
     else
       Logger.warning(
-        "AgentProcess #{state.agent_id} got slot for #{session_id} " <>
+        "TaskRunner #{state.task_id} got slot for #{session_id} " <>
           "but current is #{inspect(state.current_session_id)}"
       )
 
@@ -260,16 +242,14 @@ defmodule Camelot.Runtime.AgentProcess do
     end
   end
 
-  def handle_info({:task_updated, %{id: task_id, stage: stage}}, state) when stage in [:done, :cancelled] do
-    if MapSet.member?(state.subscribed_tasks, task_id) do
-      Logger.info("AgentProcess #{state.agent_id}: task #{task_id} reached #{stage}; tearing down runner")
+  def handle_info({:task_updated, %{id: task_id, stage: stage}}, %{task_id: task_id} = state)
+      when stage in [:done, :cancelled] do
+    Logger.info("TaskRunner #{task_id}: task reached #{stage}; tearing down runner")
 
-      Runner.stop_task(task_id)
-      Phoenix.PubSub.unsubscribe(Camelot.PubSub, "task:#{task_id}")
-      {:noreply, %{state | subscribed_tasks: MapSet.delete(state.subscribed_tasks, task_id)}}
-    else
-      {:noreply, state}
-    end
+    Runner.stop_task(task_id)
+    Camelot.Board.purge_task_attachments!(task_id)
+    Phoenix.PubSub.unsubscribe(Camelot.PubSub, "task:#{task_id}")
+    {:noreply, state}
   end
 
   def handle_info({:task_updated, _task}, state), do: {:noreply, state}
@@ -279,8 +259,8 @@ defmodule Camelot.Runtime.AgentProcess do
 
     Phoenix.PubSub.broadcast(
       Camelot.PubSub,
-      "agent:#{state.agent_id}",
-      {:agent_output, state.agent_id, output}
+      "task:#{state.task_id}",
+      {:agent_output, state.task_id, output}
     )
 
     {:noreply, %{state | output_buffer: state.output_buffer <> output}}
@@ -295,20 +275,20 @@ defmodule Camelot.Runtime.AgentProcess do
   end
 
   def handle_info({:runner_exit, handle, exit_code}, %{runner: handle} = state) do
-    Logger.info("Agent #{state.agent_id} runner exited with code #{exit_code}")
+    Logger.info("Task #{state.task_id} runner exited with code #{exit_code}")
     finalize_runner_exit(state, exit_code, nil)
   end
 
   # Runner GenServer died without sending us :runner_exit (e.g. a
   # linked Task inside the runner crashed, or the exec never
   # started because the node proxy was unreachable). Finalise as
-  # exit-1 so we clean up — otherwise the AgentProcess sits forever
+  # exit-1 so we clean up — otherwise the TaskRunner sits forever
   # pinned to a dead runner pid. The death `reason` is threaded
   # through so the session records it instead of the misleading
   # "empty output" the parser would infer from an empty buffer.
   def handle_info({:DOWN, _ref, :process, pid, reason}, %{runner: pid} = state) do
     Logger.warning(
-      "Agent #{state.agent_id} runner #{inspect(pid)} died without " <>
+      "Task #{state.task_id} runner #{inspect(pid)} died without " <>
         "sending exit: #{inspect(reason)}"
     )
 
@@ -323,7 +303,6 @@ defmodule Camelot.Runtime.AgentProcess do
     else
       case enqueue_session(
              state,
-             state.current_task_id,
              state.current_prompt,
              state.allowed_tools,
              state.retry_count + 1
@@ -345,25 +324,70 @@ defmodule Camelot.Runtime.AgentProcess do
   defp finalize_runner_exit(state, exit_code, died_reason) do
     parsed = parsed_for_exit(state, died_reason)
     denials = extract_denials(parsed)
-    finish_session(state, exit_code, parsed, denials)
+    empty? = exit_code == 0 and empty_result?(parsed)
+    finish_session(state, exit_code, parsed, denials, empty?)
     if state.current_session_id, do: SessionRegistry.unregister(state.current_session_id)
 
     failed? = exit_code != 0 or match?({:error, _}, parsed)
 
-    if failed? and state.retry_count < state.max_retries do
+    # A clean-but-empty run (agent produced nothing actionable) is retried
+    # on the same footing as a failure — bounded by the agent's
+    # `max_retries` — instead of silently parking the task.
+    if (failed? or empty?) and state.retry_count < state.max_retries do
       release_pool_slot(state)
       schedule_retry(state)
     else
-      handle_cli_exit(state, exit_code, parsed)
-      if failed?, do: mark_task_error(state.current_task_id, parsed_error(parsed))
-      release_and_idle(state)
-
-      if denials == [] do
-        {:noreply, reset_runner(state)}
-      else
-        {:noreply, clear_runner(state)}
-      end
+      finalize_terminal(state, exit_code, parsed, denials, failed?, empty?)
     end
+  end
+
+  # Terminal handling once retries are exhausted (or none configured). An
+  # empty run bypasses the stage handlers and errors the task with a clear
+  # reason, so it never lands in a message-less `waiting_for_input`.
+  defp finalize_terminal(state, exit_code, parsed, denials, failed?, empty?) do
+    if empty? do
+      mark_task_error(state.task_id, empty_error_reason(state))
+    else
+      handle_cli_exit(state, exit_code, parsed)
+      if failed?, do: mark_task_error(state.task_id, parsed_error(parsed))
+    end
+
+    release_pool_slot(state)
+
+    if denials == [] do
+      {:noreply, reset_runner(state)}
+    else
+      {:noreply, clear_runner(state)}
+    end
+  end
+
+  @doc """
+  Whether a parsed run produced nothing actionable: no result text, no
+  structured payload, no permission denials, and no non-blank assistant
+  turns. Such a run is retried (up to the agent's `max_retries`) and its
+  session is marked `:empty`, rather than silently parking the task in
+  `waiting_for_input`.
+  """
+  @spec empty_result?(term()) :: boolean()
+  def empty_result?({:ok, parsed}) do
+    blank?(parsed.result_text) and is_nil(parsed.structured) and
+      (parsed.permission_denials || []) == [] and
+      Enum.all?(parsed.assistant_texts || [], &blank?/1)
+  end
+
+  def empty_result?(_parsed), do: false
+
+  defp blank?(nil), do: true
+  defp blank?(text) when is_binary(text), do: String.trim(text) == ""
+  defp blank?(_other), do: false
+
+  defp empty_error_reason(%{max_retries: 0}) do
+    "Agent finished without producing any output."
+  end
+
+  defp empty_error_reason(%{max_retries: retries}) do
+    "Agent finished without producing any output after " <>
+      "#{retries + 1} attempts."
   end
 
   defp parsed_for_exit(state, nil) do
@@ -381,7 +405,7 @@ defmodule Camelot.Runtime.AgentProcess do
   # container logs. Any failure here (service already gone, proxy
   # unreachable) collapses to `nil` so finalisation never crashes.
   @spec runner_log_tail(t()) :: String.t() | nil
-  defp runner_log_tail(%__MODULE__{current_task_id: task_id}) when is_binary(task_id) do
+  defp runner_log_tail(%__MODULE__{task_id: task_id}) do
     service = Spec.task_runner_name(task_id)
 
     case DockerApi.service_logs(service, tail: 50) do
@@ -393,8 +417,6 @@ defmodule Camelot.Runtime.AgentProcess do
       Logger.debug("runner_log_tail failed for task #{task_id}: #{inspect(error)}")
       nil
   end
-
-  defp runner_log_tail(_state), do: nil
 
   @doc false
   @spec runner_died_message(term()) :: String.t()
@@ -429,7 +451,7 @@ defmodule Camelot.Runtime.AgentProcess do
     delay = retry_delay_for(state, state.retry_count)
 
     Logger.info(
-      "Agent #{state.agent_id} scheduling retry " <>
+      "Task #{state.task_id} scheduling retry " <>
         "#{state.retry_count + 1}/#{state.max_retries} in #{delay}ms"
     )
 
@@ -445,7 +467,6 @@ defmodule Camelot.Runtime.AgentProcess do
     %{
       state
       | runner: nil,
-        current_task_id: nil,
         current_session_id: nil,
         current_prompt: nil,
         config: nil,
@@ -475,76 +496,73 @@ defmodule Camelot.Runtime.AgentProcess do
   end
 
   # Creates a queued Session row, enqueues it in the pool,
-  # and updates AgentProcess state. The actual runner starts
+  # and updates TaskRunner state. The actual runner starts
   # later, when the pool sends {:runner_slot, session_id}.
-  defp enqueue_session(state, task_id, prompt, allowed_tools, retry_number) do
-    agent = Ash.get!(Agent, state.agent_id, load: [:template, :user, project: [owner_membership: [:user]]])
-    config = AgentConfig.resolve(agent)
-    user_id = agent_user_id(agent)
+  defp enqueue_session(state, prompt, allowed_tools, retry_number) do
+    task =
+      Ash.get!(Task, state.task_id,
+        load: [:agent, project: [owner_membership: [:user]]],
+        authorize?: false
+      )
+
+    config = AgentConfig.resolve(task.agent, task.project)
 
     {:ok, session} =
       Ash.create(Session, %{
-        agent_id: state.agent_id,
-        task_id: task_id,
-        user_id: agent.user_id,
+        agent_id: task.agent_id,
+        task_id: state.task_id,
+        user_id: task.creator_id,
         retry_number: retry_number
       })
 
-    {:ok, _} = RunnerPool.enqueue(user_id, session.id, self())
+    {:ok, _} = RunnerPool.enqueue(task.creator_id, session.id, self())
 
     {:ok,
      %{
        state
-       | current_task_id: task_id,
-         current_session_id: session.id,
+       | current_session_id: session.id,
          current_prompt: prompt,
          allowed_tools: allowed_tools,
          config: config,
-         user_id: user_id,
-         max_retries: agent.max_retries,
+         user_id: task.creator_id,
+         max_retries: task.agent.max_retries,
          retry_count: retry_number,
          output_buffer: ""
      }}
   rescue
     e ->
-      Logger.error("AgentProcess enqueue failed: #{inspect(e)}")
+      Logger.error("TaskRunner enqueue failed: #{inspect(e)}")
       {:error, e}
   end
 
-  defp agent_user_id(%Agent{user_id: nil}), do: @unscoped_user
-  defp agent_user_id(%Agent{user_id: id}), do: id
-
   # Re-attach to an already-running session after a restart. Rebuilds
-  # the minimal state finalisation needs (config, task, output so far)
-  # and starts the runner in adopt mode — no pool slot, no new exec.
+  # the minimal state finalisation needs (config, output so far) and
+  # starts the runner in adopt mode — no pool slot, no new exec.
   defp start_adoption(state, session_id) do
     session = Ash.get!(Session, session_id)
-    agent = Ash.get!(Agent, session.agent_id, load: [:template, :user, project: [owner_membership: [:user]]])
 
     task =
-      session.task_id &&
-        Ash.get!(Task, session.task_id,
-          load: [:project, creator: [:github_installations]],
-          authorize?: false
-        )
+      Ash.get!(Task, state.task_id,
+        load: [:agent, :project, :attachments, creator: [:github_installations]],
+        authorize?: false
+      )
 
-    config = AgentConfig.resolve(agent)
+    config = AgentConfig.resolve(task.agent, task.project)
 
     state = %{
       state
-      | current_task_id: session.task_id,
-        current_session_id: session.id,
+      | current_session_id: session.id,
         current_prompt: "",
-        allowed_tools: (task && task.allowed_tools) || [],
+        allowed_tools: task.allowed_tools || [],
         config: config,
-        user_id: agent_user_id(agent),
-        max_retries: agent.max_retries,
+        user_id: task.creator_id,
+        max_retries: task.agent.max_retries,
         retry_count: session.retry_number,
         output_buffer: session.output_log || ""
     }
 
     spec = %{
-      build_spec(state, agent, task, config, [])
+      build_spec(state, task, config, [])
       | adopt?: true,
         adopt_since: session.started_at
     }
@@ -554,8 +572,7 @@ defmodule Camelot.Runtime.AgentProcess do
         mark_session_adopted(session_id, runner_pid)
         SessionRegistry.register(session_id)
         Process.monitor(runner_pid)
-        broadcast_agent_update(state.agent_id)
-        state = subscribe_task(state, session.task_id)
+        broadcast_session_update(state.task_id)
         {:ok, %{state | runner: runner_pid, config: config}}
 
       {:error, reason} ->
@@ -563,7 +580,7 @@ defmodule Camelot.Runtime.AgentProcess do
     end
   rescue
     e ->
-      Logger.error("AgentProcess adopt failed: #{inspect(e)}")
+      Logger.error("TaskRunner adopt failed: #{inspect(e)}")
       {:error, e}
   end
 
@@ -573,26 +590,23 @@ defmodule Camelot.Runtime.AgentProcess do
   end
 
   defp start_runner(state) do
-    agent = Ash.get!(Agent, state.agent_id, load: [:template, :user, project: [owner_membership: [:user]]])
-
     task =
-      state.current_task_id &&
-        Ash.get!(Task, state.current_task_id,
-          load: [:project, creator: [:github_installations]],
-          authorize?: false
-        )
+      Ash.get!(Task, state.task_id,
+        load: [:agent, :project, :attachments, creator: [:github_installations]],
+        authorize?: false
+      )
 
-    config = AgentConfig.resolve(agent)
+    config = AgentConfig.resolve(task.agent, task.project)
 
     cli_args =
       AgentConfig.build_cli_args(
         config,
         state.current_prompt,
         state.allowed_tools,
-        task && task.stage
+        task.stage
       )
 
-    spec = build_spec(state, agent, task, config, cli_args)
+    spec = build_spec(state, task, config, cli_args)
 
     case Runner.start(spec) do
       {:ok, pid} -> {:ok, pid, config}
@@ -600,8 +614,8 @@ defmodule Camelot.Runtime.AgentProcess do
     end
   end
 
-  defp build_spec(state, agent, task, config, cli_args) do
-    prefix_tokens = AgentConfig.prefix_tokens(config, project_path(agent))
+  defp build_spec(state, task, config, cli_args) do
+    prefix_tokens = AgentConfig.prefix_tokens(config, project_path(task))
     argv = build_argv(prefix_tokens, config.executable, cli_args)
     backend = Runner.backend()
     task_id = task_id_for(backend, task)
@@ -615,24 +629,39 @@ defmodule Camelot.Runtime.AgentProcess do
         config
         |> AgentConfig.env_for_port()
         |> normalise_env()
-        |> Map.merge(EnvVarResolver.resolve(agent)),
+        |> Map.merge(EnvVarResolver.resolve(task.agent_id, task.project_id, task.creator_id)),
       image: config.runner_image,
-      cwd: cwd_for(backend, agent),
-      profile_volume: if(agent.user_id, do: "camelot_user_#{agent.user_id}_profile"),
+      cwd: cwd_for(backend, task),
+      profile_volume: "camelot_user_#{task.creator_id}_profile",
       resources: config.runner_resources,
-      node_label: node_label_for(agent),
-      secrets: agent |> build_secrets(config) |> maybe_append_github_app_token(task, task_id),
-      repo_url: repo_url_for(backend, agent),
+      node_label: node_label_for(task),
+      secrets: task |> build_secrets(config) |> maybe_append_github_app_token(task, task_id),
+      repo_url: repo_url_for(backend, task),
       repo_branch: nil,
-      mcp_config_json: build_mcp_config_json(agent),
-      bootstrap?: task == nil,
+      mcp_config_json: build_mcp_config_json(task),
+      attachments_json: build_attachments_json(task),
+      bootstrap?: false,
       task_id: task_id
     }
   end
 
+  defp build_attachments_json(%Task{attachments: attachments}) when is_list(attachments) and attachments != [] do
+    Jason.encode!(
+      Enum.map(attachments, fn attachment ->
+        %{filename: attachment.filename, url: attachment_download_url(attachment)}
+      end)
+    )
+  end
+
+  defp build_attachments_json(_task), do: nil
+
+  defp attachment_download_url(attachment) do
+    token = CamelotWeb.TaskAttachmentController.sign_token(attachment.id)
+    CamelotWeb.Endpoint.url() <> "/attachments/#{attachment.id}/download?token=#{token}"
+  end
+
   defp task_id_for(LocalPort, _task), do: nil
-  defp task_id_for(_backend, %{id: id}) when is_binary(id), do: id
-  defp task_id_for(_backend, _task), do: nil
+  defp task_id_for(_backend, %Task{id: id}), do: id
 
   defp build_argv([], executable, cli_args), do: [executable | cli_args]
 
@@ -640,51 +669,49 @@ defmodule Camelot.Runtime.AgentProcess do
     prefix ++ [executable] ++ cli_args
   end
 
-  defp project_path(%Agent{project: %{path: p}}) when is_binary(p), do: p
-  defp project_path(_), do: nil
+  defp project_path(%Task{project: %{path: p}}) when is_binary(p), do: p
+  defp project_path(_task), do: nil
 
-  defp project_repo_url(%Agent{project: %{github_repo_url: u}}) when is_binary(u), do: u
-  defp project_repo_url(_), do: nil
+  defp task_repo_url(%Task{project: %{github_repo_url: u}}) when is_binary(u), do: u
+  defp task_repo_url(_task), do: nil
 
   # LocalPort: BEAM cd's into the host path; the CLI runs there
   # directly. Container backends (DockerEngine, Swarm): /workspace,
   # populated by cloning github_repo_url at session start.
-  defp cwd_for(LocalPort, agent), do: project_path(agent)
-  defp cwd_for(_backend, _agent), do: "/workspace"
+  defp cwd_for(LocalPort, task), do: project_path(task)
+  defp cwd_for(_backend, _task), do: "/workspace"
 
   # DockerEngine and Swarm both clone github_repo_url into the
   # ephemeral /workspace. LocalPort doesn't clone — it runs in-place.
-  defp repo_url_for(LocalPort, _agent), do: nil
-  defp repo_url_for(_backend, agent), do: project_repo_url(agent)
+  defp repo_url_for(LocalPort, _task), do: nil
+  defp repo_url_for(_backend, task), do: task_repo_url(task)
 
   @doc false
   # Precedence: a project's own pin wins, then its owner's
   # personal pin, then the instance-wide default. Public (with
   # @doc false) so the precedence table can be unit-tested
-  # directly instead of only through build_spec/5.
-  @spec node_label_for(Agent.t()) :: String.t() | nil
-  def node_label_for(%Agent{project: %{swarm_node_label: p}}) when is_binary(p), do: p
+  # directly instead of only through build_spec/4.
+  @spec node_label_for(Task.t()) :: String.t() | nil
+  def node_label_for(%Task{project: %{swarm_node_label: p}}) when is_binary(p), do: p
 
-  def node_label_for(%Agent{project: %{owner_membership: %{user: %{swarm_node_label: u}}}}) when is_binary(u), do: u
+  def node_label_for(%Task{project: %{owner_membership: %{user: %{swarm_node_label: u}}}}) when is_binary(u), do: u
 
-  def node_label_for(_agent), do: Camelot.Settings.default_swarm_node_label()
+  def node_label_for(_task), do: Camelot.Settings.default_swarm_node_label()
 
   @doc false
   # Builds the secrets list mounted into the runner.
   #
-  # Always appends the user's default SSH key (`name: "default"`) when
-  # present, regardless of the template's `required_credential_kinds`,
-  # so git just works without every template having to declare the
-  # requirement. Dedupes by `kind` — the template's explicit entry
-  # wins if it's already in the list.
-  def build_secrets(%Agent{user_id: nil}, _config), do: []
-
-  def build_secrets(%Agent{user_id: uid}, %AgentConfig{required_credential_kinds: kinds}) do
+  # Always appends the task creator's default SSH key
+  # (`name: "default"`) when present, regardless of the agent CLI's
+  # `required_credential_kinds`, so git just works without every
+  # agent CLI having to declare the requirement. Dedupes by `kind` —
+  # the agent CLI's explicit entry wins if it's already in the list.
+  def build_secrets(%Task{creator_id: uid}, %AgentConfig{required_credential_kinds: kinds}) do
     template_secrets =
       Enum.flat_map(kinds, fn kind_atom ->
         case fetch_credential(uid, kind_atom) do
           nil ->
-            Logger.warning("AgentProcess: missing credential #{kind_atom} for user #{uid}")
+            Logger.warning("TaskRunner: missing credential #{kind_atom} for user #{uid}")
             []
 
           %Credential{value: value} ->
@@ -755,8 +782,14 @@ defmodule Camelot.Runtime.AgentProcess do
     end
   end
 
+  # Force a fresh mint (never a cached token) so the runner can't inherit
+  # a token GitHub revoked early but that is still unexpired in the cache.
+  # On failure, append a clear marker rather than nothing: the runner must
+  # not silently fall back to the (now-stale) token baked into its
+  # container at start time — an expired token 401s every `gh` call and
+  # looks like the agent declined to open a PR.
   defp mint_github_app_token(secrets, installation_id, task_id) do
-    case InstallationTokenCache.fetch(installation_id) do
+    case InstallationTokenCache.refresh(installation_id) do
       {:ok, token} ->
         name = github_app_token_secret_name(task_id)
         publish_swarm_secret(name, token)
@@ -764,12 +797,12 @@ defmodule Camelot.Runtime.AgentProcess do
 
       {:error, reason} ->
         Logger.warning(
-          "AgentProcess: could not mint GitHub App token for " <>
+          "TaskRunner: could not mint GitHub App token for " <>
             "installation #{installation_id} (#{inspect(reason)}); " <>
-            "skipping github_app_token secret"
+            "clearing GH_TOKEN so the runner can't use a stale baked-in token"
         )
 
-        secrets
+        secrets ++ [%{kind: :github_token_clear, name: "", value: ""}]
     end
   end
 
@@ -810,7 +843,7 @@ defmodule Camelot.Runtime.AgentProcess do
     Map.new(env, fn {k, v} -> {to_string(k), to_string(v)} end)
   end
 
-  defp build_mcp_config_json(%Agent{project: %{mcps: mcps}}) when is_list(mcps) do
+  defp build_mcp_config_json(%Task{project: %{mcps: mcps}}) when is_list(mcps) do
     case mcps do
       [] -> nil
       list -> Jason.encode!(Enum.map(list, &mcp_to_map/1))
@@ -829,20 +862,12 @@ defmodule Camelot.Runtime.AgentProcess do
     end
   end
 
-  defp release_and_idle(state) do
-    release_pool_slot(state)
-    mark_agent_idle(state.agent_id)
-    broadcast_agent_update(state.agent_id)
-  end
-
   defp fail_session_for(state, message) do
     if state.current_session_id do
       session = Ash.get!(Session, state.current_session_id)
       Ash.update(session, %{error_message: message}, action: :fail)
     end
   end
-
-  defp mark_task_error(nil, _reason), do: :ok
 
   defp mark_task_error(task_id, reason) do
     task = Ash.get!(Task, task_id)
@@ -889,9 +914,8 @@ defmodule Camelot.Runtime.AgentProcess do
   end
 
   defp handle_cli_exit(state, exit_code, parsed) do
-    with task_id when not is_nil(task_id) <- state.current_task_id,
-         true <- exit_code == 0 and state.output_buffer != "",
-         task = Ash.get!(Task, task_id),
+    with true <- exit_code == 0 and state.output_buffer != "",
+         task = Ash.get!(Task, state.task_id),
          :in_progress <- task.state do
       handle_task_result(state, task, build_result(state, parsed), task.id)
     else
@@ -927,7 +951,7 @@ defmodule Camelot.Runtime.AgentProcess do
   defp handle_task_result(state, %{stage: :planning} = task, result, task_id) do
     case planning_action(state, result) do
       {:submit_plan, plan} ->
-        submit_plan(task, plan, task_id)
+        submit_plan(task, plan, fetch_referenced_plan(plan, task_id), task_id)
 
       {:request_input, text} ->
         request_user_input(task, text, task_id)
@@ -969,11 +993,26 @@ defmodule Camelot.Runtime.AgentProcess do
         request_user_input(task, result.text, task_id)
 
       true ->
-        transition(task, :request_input)
+        request_user_input(task, pr_review_message(result), task_id)
     end
   end
 
   defp handle_task_result(_state, _task, _result, _task_id), do: :ok
+
+  # A clean PR-stage run with no question and no denials: surface the
+  # agent's summary so the waiting-for-input email always corresponds to a
+  # visible message. A genuinely empty run never reaches here — it is
+  # retried and marked `:empty` in `finalize_runner_exit`.
+  defp pr_review_message(result) do
+    case String.trim(result.text) do
+      "" ->
+        "I finished reviewing the PR. Please review the changes, or " <>
+          "reply with further guidance."
+
+      text ->
+        text
+    end
+  end
 
   @doc """
   Decides the planning-stage outcome from a parsed runner result.
@@ -1161,8 +1200,14 @@ defmodule Camelot.Runtime.AgentProcess do
 
   defp extract_pr_info(_state, _), do: {nil, nil}
 
-  defp submit_plan(task, plan_text, task_id) do
-    case Ash.update(task, %{plan: plan_text}, action: :submit_plan) do
+  # `full_plan` is always written — nil clears a stale document left
+  # from a previous planning round after `request_plan_changes`.
+  defp submit_plan(task, plan_text, full_plan, task_id) do
+    case Ash.update(
+           task,
+           %{plan: plan_text, full_plan: full_plan},
+           action: :submit_plan
+         ) do
       {:ok, updated} ->
         broadcast_task_update(updated)
 
@@ -1170,6 +1215,58 @@ defmodule Camelot.Runtime.AgentProcess do
         Logger.warning("Failed to submit plan for task #{task_id}: #{inspect(error)}")
     end
   end
+
+  # Claude Code plan mode writes the complete plan to a file under
+  # `~/.claude/plans/` and returns only a pointer + summary. When the
+  # submitted plan references such a file, fetch the document from the
+  # still-running task workspace; on any failure fall back to nil so
+  # the task submits exactly as it would without this feature.
+  @full_plan_max_bytes 512_000
+
+  defp fetch_referenced_plan(plan, task_id) do
+    case plan_file_reference(plan) do
+      nil -> nil
+      path -> read_plan_file(task_id, path)
+    end
+  end
+
+  defp read_plan_file(task_id, path) do
+    case Runner.read_task_file(task_id, path) do
+      {:ok, content} ->
+        non_empty_capped(content)
+
+      {:error, reason} ->
+        Logger.warning(
+          "Failed to fetch referenced plan file #{path} for task " <>
+            "#{task_id}: #{inspect(reason)}"
+        )
+
+        nil
+    end
+  end
+
+  defp non_empty_capped(content) do
+    case String.trim(content) do
+      "" -> nil
+      trimmed -> binary_slice(trimmed, 0, @full_plan_max_bytes)
+    end
+  end
+
+  @doc """
+  Extracts the first `~/.claude/plans/*.md` file reference from a plan
+  text, or nil. Claude Code plan mode writes the full plan there and
+  returns only a pointer + summary; the path is matched both `~`- and
+  absolute-rooted (e.g. `/home/agent/.claude/plans/foo.md`).
+  """
+  @spec plan_file_reference(String.t() | nil) :: String.t() | nil
+  def plan_file_reference(plan) when is_binary(plan) do
+    case Regex.run(~r{(?:~|(?:/[\w.-]+)+)/\.claude/plans/[\w.-]+\.md}, plan) do
+      [path] -> path
+      nil -> nil
+    end
+  end
+
+  def plan_file_reference(_), do: nil
 
   defp request_user_input(task, text, task_id) do
     Ash.create!(TaskMessage, %{
@@ -1211,19 +1308,30 @@ defmodule Camelot.Runtime.AgentProcess do
     Phoenix.PubSub.broadcast(Camelot.PubSub, "board", {:task_updated, task})
   end
 
+  # Notifies task subscribers (currently just TaskLive) that a session
+  # attached to this task changed — a fresh session started running, or
+  # an adoption re-attached — without waiting for the task's own
+  # stage/state to change.
+  defp broadcast_session_update(task_id) do
+    task = Ash.get!(Task, task_id, load: [:sessions])
+    broadcast_task_update(task)
+  end
+
   @doc false
   # Finalise the current session row. Wrapped in a rescue so a transient
   # DB error (or a session deleted out from under us) logs and returns
-  # instead of crashing AgentProcess mid-finalisation — which would
+  # instead of crashing TaskRunner mid-finalisation — which would
   # strand the session as :running until the Reconciler swept it.
-  @spec finish_session(t(), integer(), term(), [map()]) :: :ok
-  def finish_session(%__MODULE__{current_session_id: nil}, _exit_code, _parsed, _denials) do
+  @spec finish_session(t(), integer(), term(), [map()], boolean()) :: :ok
+  def finish_session(state, exit_code, parsed, denials, empty? \\ false)
+
+  def finish_session(%__MODULE__{current_session_id: nil}, _exit_code, _parsed, _denials, _empty?) do
     :ok
   end
 
-  def finish_session(state, exit_code, parsed, denials) do
+  def finish_session(state, exit_code, parsed, denials, empty?) do
     session = Ash.get!(Session, state.current_session_id)
-    action = session_action(exit_code)
+    action = session_action(exit_code, empty?)
 
     case Ash.update(
            session,
@@ -1240,59 +1348,27 @@ defmodule Camelot.Runtime.AgentProcess do
 
       {:error, reason} ->
         Logger.error(
-          "AgentProcess #{state.agent_id} failed to mark session " <>
+          "TaskRunner #{state.task_id} failed to mark session " <>
             "#{state.current_session_id} as #{action}: #{inspect(reason)}"
         )
     end
   rescue
     error ->
       Logger.error(
-        "AgentProcess #{state.agent_id} crashed finalising session " <>
+        "TaskRunner #{state.task_id} crashed finalising session " <>
           "#{state.current_session_id}: #{Exception.message(error)}"
       )
 
       :ok
   end
 
-  defp session_action(0), do: :complete
-  defp session_action(_exit_code), do: :fail
+  defp session_action(_exit_code, true), do: :mark_empty
+  defp session_action(0, false), do: :complete
+  defp session_action(_exit_code, false), do: :fail
 
   defp parsed_error({:error, msg}), do: msg
   defp parsed_error(_parsed), do: nil
 
   defp extract_denials({:ok, %{permission_denials: d}}), do: d
   defp extract_denials(_), do: []
-
-  defp mark_agent_busy(agent_id) do
-    agent = Ash.get!(Agent, agent_id)
-    Ash.update!(agent, %{}, action: :mark_busy)
-  end
-
-  defp mark_agent_idle(agent_id) do
-    agent = Ash.get!(Agent, agent_id)
-    Ash.update!(agent, %{}, action: :mark_idle)
-  end
-
-  defp broadcast_agent_update(agent_id) do
-    agent = Ash.get!(Agent, agent_id, load: [:project])
-
-    Phoenix.PubSub.broadcast(
-      Camelot.PubSub,
-      "agent:#{agent_id}",
-      {:agent_updated, agent}
-    )
-  end
-
-  # Subscribe once per task so we can react when it hits
-  # a terminal stage and tear down the per-task runner.
-  defp subscribe_task(state, nil), do: state
-
-  defp subscribe_task(state, task_id) do
-    if MapSet.member?(state.subscribed_tasks, task_id) do
-      state
-    else
-      Phoenix.PubSub.subscribe(Camelot.PubSub, "task:#{task_id}")
-      %{state | subscribed_tasks: MapSet.put(state.subscribed_tasks, task_id)}
-    end
-  end
 end

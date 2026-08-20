@@ -10,7 +10,7 @@
 # We recommend using the bang functions (`insert!`, `update!`
 # and so on) as they will fail if something goes wrong.
 
-alias Camelot.Agents.AgentTemplate
+alias Camelot.Agents.Agent
 alias Camelot.Agents.ClaudeCodeDefaults
 alias Camelot.Prompts.PromptTemplate
 
@@ -31,7 +31,7 @@ question_phrases = [
   "let me know"
 ]
 
-existing_templates = Ash.read!(AgentTemplate)
+existing_templates = Ash.read!(Agent)
 
 # Planning delivers a machine-readable decision via the CLI's
 # `--json-schema` structured-output contract (see
@@ -53,12 +53,13 @@ claude_code_attrs = %{
   parser: :claude_code_json,
   pr_url_pattern: pr_url_pattern,
   question_phrases: question_phrases,
-  base_retry_delay_ms: 5_000
+  base_retry_delay_ms: 5_000,
+  max_retries: 3
 }
 
 case Enum.find(existing_templates, &(&1.slug == "claude_code")) do
   nil ->
-    Ash.create!(AgentTemplate, Map.put(claude_code_attrs, :slug, "claude_code"))
+    Ash.create!(Agent, Map.put(claude_code_attrs, :slug, "claude_code"))
 
   template ->
     # Reconcile existing installs onto the structured-output contract.
@@ -66,7 +67,7 @@ case Enum.find(existing_templates, &(&1.slug == "claude_code")) do
 end
 
 if !Enum.any?(existing_templates, &(&1.slug == "codex")) do
-  Ash.create!(AgentTemplate, %{
+  Ash.create!(Agent, %{
     slug: "codex",
     name: "Codex",
     executable: "codex",
@@ -74,7 +75,8 @@ if !Enum.any?(existing_templates, &(&1.slug == "codex")) do
     tools_separator: ",",
     parser: :raw_text,
     pr_url_pattern: pr_url_pattern,
-    base_retry_delay_ms: 5_000
+    base_retry_delay_ms: 5_000,
+    max_retries: 3
   })
 end
 

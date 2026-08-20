@@ -47,7 +47,7 @@ JSON string under `result`). `Camelot.Runtime.OutputParser` surfaces it as
 `parsed.structured`, and also exposes `parsed.assistant_texts` — every
 top-level assistant turn — as a fallback source of truth.
 
-`Camelot.Runtime.AgentProcess.planning_action/2` routes, in precedence:
+`Camelot.Runtime.TaskRunner.planning_action/2` routes, in precedence:
 
 1. `structured.decision == "plan"` → `submit_plan/3` with the full plan.
 2. `structured.decision == "question"` → `request_user_input/3`, which

@@ -543,7 +543,7 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
 
   defp env_pairs(%Spec{} = spec) do
     base = Enum.map(spec.env, fn {k, v} -> "#{k}=#{v}" end)
-    base ++ bootstrap_env(spec) ++ repo_env(spec) ++ mcp_env(spec)
+    base ++ bootstrap_env(spec) ++ repo_env(spec) ++ mcp_env(spec) ++ attachments_env(spec)
   end
 
   defp bootstrap_env(%Spec{bootstrap?: true}), do: ["BOOTSTRAP=1"]
@@ -557,6 +557,9 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
 
   defp mcp_env(%Spec{mcp_config_json: nil}), do: []
   defp mcp_env(%Spec{mcp_config_json: json}), do: ["PROJECT_MCP_CONFIG_JSON=#{json}"]
+
+  defp attachments_env(%Spec{attachments_json: nil}), do: []
+  defp attachments_env(%Spec{attachments_json: json}), do: ["ATTACHMENTS_JSON=#{json}"]
 
   defp mounts(%Spec{profile_volume: nil}), do: []
 
@@ -574,31 +577,36 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
   defp secrets(%Spec{secrets: []}), do: []
 
   defp secrets(%Spec{secrets: secrets}) do
-    Enum.flat_map(secrets, fn %{kind: kind, name: name} ->
-      case SecretSync.lookup_id_by_name(name) do
-        {:ok, id} ->
-          [
-            %{
-              "SecretID" => id,
-              "SecretName" => name,
-              "File" => %{
-                "Name" => Atom.to_string(kind),
-                "UID" => "1000",
-                "GID" => "1000",
-                "Mode" => 0o400
-              }
+    Enum.flat_map(secrets, &secret_mount/1)
+  end
+
+  # Env-only marker (blanks GH_TOKEN in the exec); nothing to mount.
+  defp secret_mount(%{kind: :github_token_clear}), do: []
+
+  defp secret_mount(%{kind: kind, name: name}) do
+    case SecretSync.lookup_id_by_name(name) do
+      {:ok, id} ->
+        [
+          %{
+            "SecretID" => id,
+            "SecretName" => name,
+            "File" => %{
+              "Name" => Atom.to_string(kind),
+              "UID" => "1000",
+              "GID" => "1000",
+              "Mode" => 0o400
             }
-          ]
+          }
+        ]
 
-        :error ->
-          Logger.warning(
-            "Swarm.TaskService: secret #{name} not found; " <>
-              "runner will start without /run/secrets/#{kind}"
-          )
+      :error ->
+        Logger.warning(
+          "Swarm.TaskService: secret #{name} not found; " <>
+            "runner will start without /run/secrets/#{kind}"
+        )
 
-          []
-      end
-    end)
+        []
+    end
   end
 
   defp placement(%Spec{node_label: nil}), do: %{}

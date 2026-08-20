@@ -72,7 +72,18 @@ defmodule CamelotWeb.ProjectLive.Index do
   end
 
   def handle_event("save", params, socket) do
-    save_project(socket, socket.assigns.live_action, extract_project_params(params))
+    project_params = extract_project_params(params)
+
+    case build_override_attrs(project_params) do
+      {:ok, attrs} ->
+        save_project(socket, socket.assigns.live_action, attrs)
+
+      {:error, msg} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, msg)
+         |> assign(form: to_form(project_params))}
+    end
   end
 
   def handle_event("toggle_scope", _params, socket) do
@@ -136,7 +147,14 @@ defmodule CamelotWeb.ProjectLive.Index do
       "github_repo_url" => "",
       "github_owner" => "",
       "github_repo" => "",
-      "runner_image_override" => ""
+      "runner_image_override" => "",
+      "command_prefix_override" => "",
+      "executable_override" => "",
+      "base_args_override" => "",
+      "env_vars_override" => "",
+      "permission_args_by_stage_override" => "",
+      "internal_tools_override" => "",
+      "base_retry_delay_ms_override" => ""
     }
   end
 
@@ -148,6 +166,13 @@ defmodule CamelotWeb.ProjectLive.Index do
       "github_owner" => project.github_owner || "",
       "github_repo" => project.github_repo || "",
       "runner_image_override" => project.runner_image_override || "",
+      "command_prefix_override" => project.command_prefix_override || "",
+      "executable_override" => project.executable_override || "",
+      "base_args_override" => lines(project.base_args_override),
+      "env_vars_override" => json_or_blank(project.env_vars_override),
+      "permission_args_by_stage_override" => json_or_blank(project.permission_args_by_stage_override),
+      "internal_tools_override" => lines(project.internal_tools_override),
+      "base_retry_delay_ms_override" => int_or_blank(project.base_retry_delay_ms_override),
       "status" => to_string(project.status)
     }
   end
@@ -157,11 +182,91 @@ defmodule CamelotWeb.ProjectLive.Index do
   end
 
   @project_fields ~w(name path description github_repo_url
-                     github_owner github_repo runner_image_override status)
+                     github_owner github_repo runner_image_override status
+                     command_prefix_override executable_override base_args_override
+                     env_vars_override permission_args_by_stage_override
+                     internal_tools_override base_retry_delay_ms_override)
 
   defp extract_project_params(params) do
     Map.take(params, @project_fields)
   end
+
+  # The 7 project-level overrides mirror the array/map/integer field
+  # editing conventions already used in `CamelotWeb.AgentLive.Index` for
+  # the same underlying types on the agent CLI resource.
+  defp build_override_attrs(params) do
+    with {:ok, base_args} <- parse_optional_lines(params["base_args_override"]),
+         {:ok, internal_tools} <- parse_optional_lines(params["internal_tools_override"]),
+         {:ok, env_vars} <- parse_optional_json_map(params, "env_vars_override"),
+         {:ok, permission_args} <- parse_optional_json_map(params, "permission_args_by_stage_override"),
+         {:ok, retry_ms} <- parse_optional_int(params, "base_retry_delay_ms_override") do
+      {:ok,
+       params
+       |> Map.put("command_prefix_override", nilify(params["command_prefix_override"]))
+       |> Map.put("executable_override", nilify(params["executable_override"]))
+       |> Map.put("base_args_override", base_args)
+       |> Map.put("internal_tools_override", internal_tools)
+       |> Map.put("env_vars_override", env_vars)
+       |> Map.put("permission_args_by_stage_override", permission_args)
+       |> Map.put("base_retry_delay_ms_override", retry_ms)}
+    end
+  end
+
+  defp parse_optional_lines(nil), do: {:ok, nil}
+  defp parse_optional_lines(""), do: {:ok, nil}
+
+  defp parse_optional_lines(text) do
+    case text |> String.split(~r/\R/, trim: true) |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == "")) do
+      [] -> {:ok, nil}
+      list -> {:ok, list}
+    end
+  end
+
+  defp parse_optional_json_map(params, key) do
+    case params[key] do
+      nil ->
+        {:ok, nil}
+
+      "" ->
+        {:ok, nil}
+
+      text ->
+        case Jason.decode(text) do
+          {:ok, %{} = map} -> {:ok, map}
+          {:ok, _} -> {:error, "#{key} must be a JSON object"}
+          {:error, _} -> {:error, "#{key} is not valid JSON"}
+        end
+    end
+  end
+
+  defp parse_optional_int(params, key) do
+    case params[key] do
+      nil ->
+        {:ok, nil}
+
+      "" ->
+        {:ok, nil}
+
+      text ->
+        case Integer.parse(text) do
+          {n, ""} when n > 0 -> {:ok, n}
+          _ -> {:error, "#{key} must be a positive integer"}
+        end
+    end
+  end
+
+  defp nilify(""), do: nil
+  defp nilify(nil), do: nil
+  defp nilify(s), do: s
+
+  defp lines(list) when is_list(list), do: Enum.join(list, "\n")
+  defp lines(_), do: ""
+
+  defp json_or_blank(nil), do: ""
+  defp json_or_blank(map) when is_map(map), do: Jason.encode!(map, pretty: true)
+
+  defp int_or_blank(nil), do: ""
+  defp int_or_blank(n) when is_integer(n), do: to_string(n)
 
   defp update_path_from_name(params, socket) do
     name = Map.get(params, "name", "")
@@ -359,6 +464,56 @@ defmodule CamelotWeb.ProjectLive.Index do
               type="text"
               label="Runner Image Override"
             />
+
+            <hr class="my-2 border-base-content/20" />
+            <p class="text-sm font-semibold">
+              Agent CLI overrides
+            </p>
+            <p class="text-xs text-base-content/50 -mt-2">
+              Applied to every task in this project, on top of the chosen
+              agent CLI's defaults. Leave blank to use the agent CLI default.
+            </p>
+
+            <.input
+              field={@form[:command_prefix_override]}
+              type="text"
+              label="Command prefix override"
+            />
+            <.input
+              field={@form[:executable_override]}
+              type="text"
+              label="Executable override"
+            />
+            <.input
+              field={@form[:base_args_override]}
+              type="textarea"
+              label="Base args override (one per line)"
+              rows="3"
+            />
+            <.input
+              field={@form[:env_vars_override]}
+              type="textarea"
+              label="Environment variables override (JSON object)"
+              rows="3"
+            />
+            <.input
+              field={@form[:permission_args_by_stage_override]}
+              type="textarea"
+              label="Permission args by stage override (JSON)"
+              rows="3"
+            />
+            <.input
+              field={@form[:internal_tools_override]}
+              type="textarea"
+              label="Internal tools override (one per line)"
+              rows="3"
+            />
+            <.input
+              field={@form[:base_retry_delay_ms_override]}
+              type="number"
+              label="Base retry delay override (ms)"
+            />
+
             <%= if @live_action == :edit do %>
               <.input
                 field={@form[:status]}

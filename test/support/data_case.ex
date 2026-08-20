@@ -32,22 +32,22 @@ defmodule Camelot.DataCase do
   end
 
   @doc """
-  Looks up a seeded `Camelot.Agents.AgentTemplate` by slug.
+  Looks up a seeded `Camelot.Agents.Agent` (CLI template) by slug.
 
   Seeded by the `add_agent_templates` migration; available
   in every sandboxed test transaction.
   """
-  def agent_template!(slug) do
+  def agent!(slug) do
     require Ash.Query
 
-    Camelot.Agents.AgentTemplate
+    Camelot.Agents.Agent
     |> Ash.Query.filter(slug == ^slug)
     |> Ash.read_one!()
   end
 
   @doc """
   Seeds a `Camelot.Accounts.User` with a unique email. Used
-  by tests that need an owning user for an `Agent` row.
+  by tests that need a task creator.
   """
   def user!(attrs \\ %{}) do
     defaults = %{email: "test-#{System.unique_integer([:positive])}@example.com"}

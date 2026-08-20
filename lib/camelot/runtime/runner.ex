@@ -8,7 +8,7 @@ defmodule Camelot.Runtime.Runner do
   process forwards stdout/stderr to the caller as
   `{:runner_data, handle, bytes}` and the final exit as
   `{:runner_exit, handle, exit_code}` — the same message
-  shape Port produces, so `AgentProcess` can route both
+  shape Port produces, so `TaskRunner` can route both
   alike.
 
   Three implementations:
@@ -34,14 +34,24 @@ defmodule Camelot.Runtime.Runner do
 
   @doc """
   Tear down the long-lived per-task container/service for
-  `task_id`. Called by `AgentProcess` when the task hits a
+  `task_id`. Called by `TaskRunner` when the task hits a
   terminal stage (`:done` or `:cancelled`). Backends that
   don't keep state across sessions (`LocalPort`) return `:ok`
   immediately.
   """
   @callback stop_task(task_id :: String.t()) :: :ok
 
-  @optional_callbacks stop_task: 1
+  @doc """
+  Read a file from the workspace of the per-task
+  container/service for `task_id`. Used to fetch documents
+  the agent wrote but only referenced in its output (e.g.
+  the full plan under `~/.claude/plans/`). Backends without
+  a live workspace for the task return `{:error, reason}`.
+  """
+  @callback read_task_file(task_id :: String.t(), path :: String.t()) ::
+              {:ok, binary()} | {:error, reason()}
+
+  @optional_callbacks stop_task: 1, read_task_file: 2
 
   @doc """
   Returns the configured runner backend module.
@@ -78,6 +88,23 @@ defmodule Camelot.Runtime.Runner do
       mod.stop_task(task_id)
     else
       :ok
+    end
+  end
+
+  @doc """
+  Read a file from the per-task workspace via the configured
+  backend. `{:error, :unsupported}` when the backend doesn't
+  implement `read_task_file/2`.
+  """
+  @spec read_task_file(String.t(), String.t()) ::
+          {:ok, binary()} | {:error, reason()}
+  def read_task_file(task_id, path) do
+    mod = backend()
+
+    if function_exported?(mod, :read_task_file, 2) do
+      mod.read_task_file(task_id, path)
+    else
+      {:error, :unsupported}
     end
   end
 end

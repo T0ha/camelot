@@ -8,9 +8,11 @@ defmodule CamelotWeb.BoardLive do
 
   import CamelotWeb.BoardComponents
 
+  alias Camelot.Agents.Agent
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
   alias CamelotWeb.Scope
+  alias CamelotWeb.TaskAttachments
   alias Phoenix.LiveView.Socket
 
   require Ash.Query
@@ -23,7 +25,13 @@ defmodule CamelotWeb.BoardLive do
       Phoenix.PubSub.subscribe(Camelot.PubSub, "board")
     end
 
-    {:ok, socket |> assign(see_all: params["scope"] == "all") |> load_board()}
+    socket =
+      socket
+      |> assign(see_all: params["scope"] == "all")
+      |> load_board()
+      |> allow_upload(:attachment, accept: :any, max_entries: 5, max_file_size: 25_000_000)
+
+    {:ok, socket}
   end
 
   @impl true
@@ -39,7 +47,7 @@ defmodule CamelotWeb.BoardLive do
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   @impl true
-  @task_fields ~w(title description priority project_id)
+  @task_fields ~w(title description priority project_id agent_id)
 
   def handle_event("validate_task", params, socket) do
     {:noreply, assign(socket, task_form: to_form(Map.take(params, @task_fields)))}
@@ -51,6 +59,10 @@ defmodule CamelotWeb.BoardLive do
 
     case Ash.create(Task, Map.put(task_params, "creator_id", user.id)) do
       {:ok, task} ->
+        consume_uploaded_entries(socket, :attachment, fn %{path: tmp_path}, entry ->
+          {:ok, TaskAttachments.store!(task.id, tmp_path, entry)}
+        end)
+
         broadcast_task_event(:task_created, task)
 
         {:noreply,
@@ -107,6 +119,8 @@ defmodule CamelotWeb.BoardLive do
       |> Scope.maybe_scope(user, see_all, &Scope.scope_projects/2)
       |> Ash.read!()
 
+    agents = Agent |> Ash.read!() |> Enum.sort_by(& &1.name)
+
     columns =
       Enum.map(Task.column_stages(), fn stage ->
         {stage,
@@ -119,12 +133,14 @@ defmodule CamelotWeb.BoardLive do
       page_title: "Board",
       columns: columns,
       projects: projects,
+      agents: agents,
       task_form:
         to_form(%{
           "title" => "",
           "description" => "",
           "priority" => "0",
-          "project_id" => ""
+          "project_id" => "",
+          "agent_id" => ""
         })
     )
   end
@@ -204,10 +220,26 @@ defmodule CamelotWeb.BoardLive do
             options={Enum.map(@projects, &{&1.name, &1.id})}
           />
           <.input
+            field={@task_form[:agent_id]}
+            type="select"
+            label="CLI Agent"
+            prompt="Select agent CLI"
+            options={Enum.map(@agents, &{&1.name, &1.id})}
+          />
+          <.input
             field={@task_form[:priority]}
             type="number"
             label="Priority"
           />
+          <fieldset class="fieldset">
+            <label class="label" for={@uploads.attachment.ref}>
+              Attachments
+            </label>
+            <.live_file_input upload={@uploads.attachment} class="text-sm" />
+            <p :for={err <- upload_errors(@uploads.attachment)} class="text-xs text-error">
+              {TaskAttachments.error_to_string(err)}
+            </p>
+          </fieldset>
           <:actions>
             <.button class="btn btn-primary">
               Create Task
