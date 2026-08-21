@@ -50,6 +50,21 @@ them at the edge and only hit the origin on a miss or revalidation.
 Internal-only docs stay **flat** under `docs/` (like this file) and are
 never globbed or published.
 
+## Serving on CapRover directly (test): the `docs` proxy app
+
+CapRover rejects `docs.<root-domain>` as a *custom domain* on the main app
+("Custom domain cannot be subdomain of root domain"), so on the test cluster
+the docs site is exposed via a small companion app named `docs` (an app
+subdomain, which CapRover allows and auto-SSLs). It is a one-container
+`nginx:alpine` reverse proxy that forwards to the main app with the `Host`
+rewritten to a `docs.` value. Definition and setup live in
+[`docs-proxy/`](../docs-proxy/README.md); CI deploys it via
+`.github/workflows/deploy-docs-proxy.yml`.
+
+This gives `https://docs.test.camelotai.tech`. Production instead fronts the
+same app with CloudFront (below), so the proxy app is a test/staging
+convenience, not the production path.
+
 ## One-time infrastructure (AWS)
 
 DNS is in Route53; the origin is the CapRover-hosted app.

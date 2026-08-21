@@ -1,0 +1,48 @@
+name: Deploy docs proxy
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - "docs-proxy/**"
+      - ".github/workflows/deploy-docs-proxy.yml"
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    name: Deploy docs proxy to test
+    runs-on: ubuntu-24.04
+    environment: test
+    # Opt-in: set repo/environment variable DEPLOY_DOCS_PROXY=true once the
+    # 'docs' app + DOCS_PROXY_APP_TOKEN exist (see docs-proxy/README.md).
+    if: ${{ vars.DEPLOY_DOCS_PROXY == 'true' }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # The docs proxy is a standalone nginx app (see docs-proxy/README.md).
+      # CapRover builds it from the tarball's Dockerfile — no registry push.
+      # Pin the caprover CLI to 2.3.1 (2.4.0 crashes on deploy).
+      - name: Deploy docs proxy to CapRover (test)
+        env:
+          CAPROVER_URL: "${{ vars.CAPROVER_SERVER }}"
+          CAPROVER_APP_TOKEN: "${{ secrets.DOCS_PROXY_APP_TOKEN }}"
+          APP_NAME: "${{ vars.DOCS_PROXY_APP_NAME || 'docs' }}"
+        run: |
+          if [ -z "$CAPROVER_APP_TOKEN" ]; then
+            echo "::error::DOCS_PROXY_APP_TOKEN is not set for the 'test'" \
+                 "environment. Create the '$APP_NAME' app in CapRover and add" \
+                 "its app token as the DOCS_PROXY_APP_TOKEN secret." \
+                 "See docs-proxy/README.md."
+            exit 1
+          fi
+          tar -czf "$RUNNER_TEMP/docs-proxy.tar.gz" -C docs-proxy .
+          npx --yes caprover@2.3.1 deploy \
+            --caproverUrl "$CAPROVER_URL" \
+            --appToken "$CAPROVER_APP_TOKEN" \
+            --appName "$APP_NAME" \
+            --tarFile "$RUNNER_TEMP/docs-proxy.tar.gz"
