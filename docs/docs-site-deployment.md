@@ -28,8 +28,8 @@ them at the edge and only hit the origin on a miss or revalidation.
 ## Adding / publishing a page
 
 1. Put the markdown under a category folder, e.g.
-   `docs/runners/my-guide.md`. Nesting to any depth is supported
-   (`docs/runners/local/…`) — each folder becomes a nav category.
+   `docs/self-hosting/my-guide.md`. Nesting to any depth is supported
+   (`docs/self-hosting/runners/…`) — each folder becomes a nav category.
 2. Add front-matter at the very top:
 
    ```

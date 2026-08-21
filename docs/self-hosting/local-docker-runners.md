@@ -155,7 +155,7 @@ flow exactly: it always clones `github_repo_url` into an ephemeral
 - Set `github_repo_url` to a clonable URL. Public repos work without
   extra credentials; private repos need either a linked GitHub App
   installation on the project or the user's SSH key (see
-  `docs/integrations/github-app.md`).
+  `docs/self-hosting/github-app.md`).
 - For the smoke test, leave it empty — the entrypoint will skip the
   clone and `/workspace` will be an empty tmpfs.
 
