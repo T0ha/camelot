@@ -11,7 +11,7 @@ defmodule CamelotWeb.DocsControllerTest do
       conn = get(conn, "/")
       body = html_response(conn, 200)
 
-      assert body =~ "Runners"
+      assert body =~ "Self Hosting"
       assert body =~ "GitHub App"
       # internal (unpublished) docs never appear
       refute body =~ "Session adoption"
@@ -29,7 +29,7 @@ defmodule CamelotWeb.DocsControllerTest do
 
   describe "GET /*path (show)" do
     test "renders a page addressed by a multi-segment slug", %{conn: conn} do
-      conn = get(conn, "/runners/cluster-runners")
+      conn = get(conn, "/self-hosting/cluster-runners")
       body = html_response(conn, 200)
 
       assert body =~ "Cluster runners"
@@ -38,7 +38,7 @@ defmodule CamelotWeb.DocsControllerTest do
     end
 
     test "returns 404 for an unknown slug", %{conn: conn} do
-      conn = get(conn, "/runners/does-not-exist")
+      conn = get(conn, "/self-hosting/does-not-exist")
       assert response(conn, 404)
     end
   end

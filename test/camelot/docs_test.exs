@@ -10,8 +10,8 @@ defmodule Camelot.DocsTest do
     test "exposes only published pages in category folders" do
       slugs = Enum.map(Docs.all_pages(), & &1.slug)
 
-      assert "runners/cluster-runners" in slugs
-      assert "integrations/github-app" in slugs
+      assert "self-hosting/cluster-runners" in slugs
+      assert "self-hosting/github-app" in slugs
 
       # Internal docs live flat under docs/ (not in a category folder), so
       # they are never globbed or published.
@@ -21,7 +21,7 @@ defmodule Camelot.DocsTest do
 
     test "get_page/1 returns the page or :error" do
       assert {:ok, %Page{title: title, body: body}} =
-               Docs.get_page("runners/cluster-runners")
+               Docs.get_page("self-hosting/cluster-runners")
 
       assert is_binary(title) and title != ""
       # body is rendered HTML

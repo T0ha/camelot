@@ -1,7 +1,7 @@
 %{
   title: "GitHub App",
   description: "Authenticate Camelot to GitHub for PRs, issues and webhooks.",
-  order: 1,
+  order: 4,
   published: true
 }
 ---
