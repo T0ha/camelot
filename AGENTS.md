@@ -59,6 +59,7 @@ Follow the [Elixir Style Guide](https://github.com/christopheradams/elixir_style
 
 - Use `mix precommit` alias when you are done with all changes and fix any pending issues
 - Use the already included `:req` (`Req`) library for HTTP requests
+- `POSTHOG_API_KEY` / `POSTHOG_API_HOST` drive both server-side capture (`Camelot.Telemetry.PostHogHandler`) and browser-side capture (`CamelotWeb.PostHogConfig`, `posthog-js` in `assets/js/app.js`) — both are disabled unless the key is set
 
 ### Phoenix v1.8 Guidelines
 

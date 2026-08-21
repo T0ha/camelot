@@ -29,6 +29,23 @@ defmodule CamelotWeb.Router do
     plug CamelotWeb.Plugs.VerifyGithubSignature
   end
 
+  # Public docs site (docs. host). Cookie-free and CSRF-free (GET only)
+  # so responses stay cacheable behind a CDN. Uses its own minimal root
+  # layout (no LiveSocket).
+  pipeline :docs do
+    plug :accepts, ["html"]
+    plug :put_root_layout, html: {CamelotWeb.Layouts, :docs_root}
+    plug :put_secure_browser_headers
+    plug CamelotWeb.Plugs.DocsCacheControl
+  end
+
+  scope "/", CamelotWeb, host: "docs." do
+    pipe_through :docs
+
+    get "/", DocsController, :index
+    get "/*path", DocsController, :show
+  end
+
   scope "/github", CamelotWeb do
     pipe_through :browser
 

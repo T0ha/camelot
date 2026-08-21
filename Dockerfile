@@ -21,8 +21,10 @@ ARG RUNNER_IMAGE="docker.io/debian:${DEBIAN_VERSION}"
 FROM ${BUILDER_IMAGE} AS builder
 
 # install build dependencies
+# nodejs + npm are needed for the JS package deps (e.g. posthog-js) that
+# esbuild bundles from assets/node_modules during `mix assets.deploy`.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends build-essential git \
+  && apt-get install -y --no-install-recommends build-essential git nodejs npm \
   && rm -rf /var/lib/apt/lists/*
 
 # prepare build dir
@@ -46,18 +48,22 @@ RUN mkdir config
 COPY config/config.exs config/${MIX_ENV}.exs config/
 RUN mix deps.compile
 
-RUN mix assets.setup
-
 COPY priv priv
 
 COPY lib lib
+
+# Public docs content: NimblePublisher (Camelot.Docs) globs docs/<category>/
+# markdown at compile time and bakes the rendered HTML into the release, so
+# docs/ must be present before `mix compile` or the docs site ships empty.
+COPY docs docs
 
 # Compile the release
 RUN mix compile
 
 COPY assets assets
 
-# compile assets
+# install asset tooling + JS deps (assets/node_modules), then compile assets
+RUN mix assets.setup
 RUN mix assets.deploy
 
 # Changes to config/runtime.exs don't require recompiling the code

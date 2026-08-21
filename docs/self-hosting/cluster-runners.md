@@ -1,3 +1,10 @@
+%{
+  title: "Cluster runners",
+  description: "Deploy Camelot's Docker Swarm agent runners.",
+  order: 1,
+  published: true
+}
+---
 # Cluster runners deployment guide
 
 Camelot runs every agent CLI inside an isolated container scheduled by

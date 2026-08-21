@@ -1,3 +1,10 @@
+%{
+  title: "GitHub App",
+  description: "Authenticate Camelot to GitHub for PRs, issues and webhooks.",
+  order: 4,
+  published: true
+}
+---
 # GitHub App integration
 
 Camelot authenticates to GitHub two ways:

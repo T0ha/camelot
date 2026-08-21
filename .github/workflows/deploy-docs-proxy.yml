@@ -1,0 +1,85 @@
+name: Deploy docs proxy
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - "docs-proxy/**"
+      - ".github/workflows/deploy-docs-proxy.yml"
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  IMAGE: ghcr.io/t0ha/camelotai-docs-proxy
+
+jobs:
+  deploy:
+    name: Build & deploy docs proxy to test
+    runs-on: ubuntu-24.04
+    environment: test
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # DEPLOY_DOCS_PROXY is a `test`-environment variable, so it is only
+      # readable once the job's environment is resolved (not in a job-level
+      # `if:`). Resolve it into a step output the later steps gate on.
+      - name: Gate on DEPLOY_DOCS_PROXY
+        id: gate
+        run: echo "go=${{ vars.DEPLOY_DOCS_PROXY == 'true' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout repo
+        if: steps.gate.outputs.go == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        if: steps.gate.outputs.go == 'true'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: steps.gate.outputs.go == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        if: steps.gate.outputs.go == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build & push the proxy image ourselves (multi-arch: the test swarm
+      # has amd64 and arm64 nodes). CapRover only pulls by --imageName, which
+      # avoids the "CapRover builds then push fails" registry-scope problem.
+      - name: Build and push proxy image
+        if: steps.gate.outputs.go == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: docs-proxy
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Pin the caprover CLI to 2.3.1 (2.4.0 crashes on deploy).
+      - name: Deploy docs proxy to CapRover (test)
+        if: steps.gate.outputs.go == 'true'
+        env:
+          CAPROVER_URL: "${{ vars.CAPROVER_SERVER }}"
+          CAPROVER_APP_TOKEN: "${{ secrets.DOCS_PROXY_APP_TOKEN }}"
+          APP_NAME: "${{ vars.DOCS_PROXY_APP_NAME || 'docs' }}"
+        run: |
+          if [ -z "$CAPROVER_APP_TOKEN" ]; then
+            echo "::error::DOCS_PROXY_APP_TOKEN is not set for the 'test'" \
+                 "environment. See docs-proxy/README.md."
+            exit 1
+          fi
+          npx --yes caprover@2.3.1 deploy \
+            --caproverUrl "$CAPROVER_URL" \
+            --appToken "$CAPROVER_APP_TOKEN" \
+            --appName "$APP_NAME" \
+            --imageName "${{ env.IMAGE }}:${{ github.sha }}"

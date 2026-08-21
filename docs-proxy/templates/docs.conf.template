@@ -1,0 +1,28 @@
+# Rendered by the nginx entrypoint (envsubst) at container start.
+# The entrypoint substitutes ONLY real env vars (DOCS_UPSTREAM, DOCS_HOST),
+# so nginx runtime vars like $proxy_add_x_forwarded_for are left untouched.
+server {
+  listen 80 default_server;
+  server_name _;
+
+  # Re-resolve the upstream via Docker's embedded DNS (127.0.0.11) so a
+  # rescheduled main-app container (new overlay IP) is picked up without a
+  # proxy restart. Using a variable in proxy_pass defers resolution to
+  # request time instead of pinning the IP at startup.
+  resolver 127.0.0.11 valid=10s ipv6=off;
+  set $docs_upstream ${DOCS_UPSTREAM};
+
+  location / {
+    proxy_pass http://$docs_upstream;
+    proxy_http_version 1.1;
+
+    # Phoenix serves the docs site only for hosts starting with "docs.".
+    proxy_set_header Host ${DOCS_HOST};
+
+    # The main app has force_ssl; tell it the original request was https so
+    # it doesn't redirect-loop behind the CapRover TLS terminator.
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Real-IP $remote_addr;
+  }
+}
