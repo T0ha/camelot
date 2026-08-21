@@ -17,9 +17,6 @@ jobs:
     name: Deploy docs proxy to test
     runs-on: ubuntu-24.04
     environment: test
-    # Opt-in: set repo/environment variable DEPLOY_DOCS_PROXY=true once the
-    # 'docs' app + DOCS_PROXY_APP_TOKEN exist (see docs-proxy/README.md).
-    if: ${{ vars.DEPLOY_DOCS_PROXY == 'true' }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -27,7 +24,13 @@ jobs:
       # The docs proxy is a standalone nginx app (see docs-proxy/README.md).
       # CapRover builds it from the tarball's Dockerfile — no registry push.
       # Pin the caprover CLI to 2.3.1 (2.4.0 crashes on deploy).
+      #
+      # Opt-in: set the `test` environment variable DEPLOY_DOCS_PROXY=true
+      # once the 'docs' app + DOCS_PROXY_APP_TOKEN exist. The gate is at the
+      # step level (not job level) because environment-scoped variables are
+      # not available to a job-level `if:`.
       - name: Deploy docs proxy to CapRover (test)
+        if: ${{ vars.DEPLOY_DOCS_PROXY == 'true' }}
         env:
           CAPROVER_URL: "${{ vars.CAPROVER_SERVER }}"
           CAPROVER_APP_TOKEN: "${{ secrets.DOCS_PROXY_APP_TOKEN }}"
