@@ -22,16 +22,28 @@ browser → docs.<root> (CapRover edge, TLS)
         → Phoenix docs host-route
 ```
 
+## Image build model
+
+The image is **built and pushed by CI** (GitHub Actions →
+`ghcr.io/t0ha/camelotai-docs-proxy`), and CapRover only **pulls it by image
+name**. We do not let CapRover build from source: on this cluster CapRover's
+source-build push to the registry is denied ("token does not match expected
+scopes"), because the registry credentials are read-only for pulling the main
+app. Building in CI (as the main app already does) sidesteps that entirely.
+
 ## One-time CapRover setup
 
 1. **Create New App** named `docs` (no persistent data).
 2. Generate an **App Token** (App → Deployment) and store it as the
    `DOCS_PROXY_APP_TOKEN` secret in the matching GitHub environment (`test`).
-3. **Enable HTTPS** on the app's default `docs.<root>` domain.
+3. **Enable HTTPS** on the app's default `docs.<root>` domain (do this
+   *before* toggling "Force HTTPS", otherwise CapRover errors with
+   "Cannot force SSL without at least one SSL-enabled domain").
 4. Container HTTP Port is `80` (nginx default) — the CapRover default, so no
    change needed.
-5. Set the GitHub variable `DEPLOY_DOCS_PROXY=true` to enable the CI workflow
-   (it is opt-in so it stays green until the app + token exist).
+5. Set the GitHub variable `DEPLOY_DOCS_PROXY=true` (in the `test`
+   environment) to enable the CI workflow (it is opt-in so it stays green
+   until the app + token exist).
 
 Optionally override the defaults via the app's **Environmental Variables**:
 
@@ -46,16 +58,16 @@ CI deploys this on pushes to `develop` that touch `docs-proxy/**` (see
 `.github/workflows/deploy-docs-proxy.yml`), and it can be run manually
 (workflow_dispatch).
 
-Locally / by hand:
+To deploy by hand, build & push the image, then point CapRover at it:
 
 ```sh
-tar -czf /tmp/docs-proxy.tar.gz -C docs-proxy .
+IMAGE=ghcr.io/t0ha/camelotai-docs-proxy:manual
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t "$IMAGE" --push docs-proxy
+
 npx --yes caprover@2.3.1 deploy \
   --caproverUrl "$CAPROVER_SERVER" \
   --appToken "$DOCS_PROXY_APP_TOKEN" \
   --appName docs \
-  --tarFile /tmp/docs-proxy.tar.gz
+  --imageName "$IMAGE"
 ```
-
-CapRover builds the image from `Dockerfile` server-side (just an nginx config
-copy), so no registry push is needed.
