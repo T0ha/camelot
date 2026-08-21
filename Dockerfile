@@ -52,6 +52,11 @@ COPY priv priv
 
 COPY lib lib
 
+# Public docs content: NimblePublisher (Camelot.Docs) globs docs/<category>/
+# markdown at compile time and bakes the rendered HTML into the release, so
+# docs/ must be present before `mix compile` or the docs site ships empty.
+COPY docs docs
+
 # Compile the release
 RUN mix compile
 
