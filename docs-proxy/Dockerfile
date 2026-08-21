@@ -14,4 +14,9 @@ FROM nginx:alpine
 ENV DOCS_UPSTREAM=srv-captain--camelotai:4000
 ENV DOCS_HOST=docs.test.camelotai.tech
 
+# Drop the stock welcome server, otherwise it stays the default server on
+# :80 (it loads first, alphabetically) and answers every request instead of
+# our proxy block.
+RUN rm -f /etc/nginx/conf.d/default.conf
+
 COPY templates/docs.conf.template /etc/nginx/templates/docs.conf.template
