@@ -134,10 +134,11 @@ defmodule Camelot.MixProject do
         "esbuild.install --if-missing",
         "cmd --cd assets npm ci"
       ],
-      "assets.build": ["compile", "tailwind camelot", "esbuild camelot"],
+      "assets.build": ["compile", "tailwind camelot", "esbuild camelot", "esbuild docs"],
       "assets.deploy": [
         "tailwind camelot --minify",
         "esbuild camelot --minify",
+        "esbuild docs --minify",
         "phx.digest"
       ],
       precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]
