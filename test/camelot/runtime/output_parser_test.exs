@@ -9,13 +9,19 @@ defmodule Camelot.Runtime.OutputParserTest do
         Jason.encode!(%{
           "result" => "Here is the plan...",
           "cost_usd" => 0.05,
-          "duration_ms" => 1234
+          "duration_ms" => 1234,
+          "duration_api_ms" => 987,
+          "num_turns" => 3,
+          "usage" => %{"input_tokens" => 100, "output_tokens" => 50}
         })
 
       assert {:ok, parsed} = OutputParser.parse(:claude_code_json, buffer)
       assert parsed.result_text == "Here is the plan..."
       assert parsed.cost_usd == 0.05
       assert parsed.duration_ms == 1234
+      assert parsed.duration_api_ms == 987
+      assert parsed.num_turns == 3
+      assert parsed.usage == %{"input_tokens" => 100, "output_tokens" => 50}
     end
 
     test "parses JSON response without optional fields" do
@@ -25,6 +31,9 @@ defmodule Camelot.Runtime.OutputParserTest do
       assert parsed.result_text == "Done."
       assert is_nil(parsed.cost_usd)
       assert is_nil(parsed.duration_ms)
+      assert is_nil(parsed.duration_api_ms)
+      assert is_nil(parsed.num_turns)
+      assert is_nil(parsed.usage)
     end
 
     test "returns error for is_error response" do
@@ -116,6 +125,32 @@ defmodule Camelot.Runtime.OutputParserTest do
       assert parsed.cost_usd == 0.12
       assert parsed.duration_ms == 4567
       assert parsed.permission_denials == []
+    end
+
+    test "extracts num_turns, duration_api_ms, and usage from a result event" do
+      buffer =
+        Jason.encode!(%{
+          "result" => "All done.",
+          "num_turns" => 6,
+          "duration_api_ms" => 2345,
+          "usage" => %{
+            "input_tokens" => 10,
+            "output_tokens" => 20,
+            "cache_creation_input_tokens" => 5,
+            "cache_read_input_tokens" => 15
+          }
+        })
+
+      assert {:ok, parsed} = OutputParser.parse(:claude_code_json, buffer)
+      assert parsed.num_turns == 6
+      assert parsed.duration_api_ms == 2345
+
+      assert parsed.usage == %{
+               "input_tokens" => 10,
+               "output_tokens" => 20,
+               "cache_creation_input_tokens" => 5,
+               "cache_read_input_tokens" => 15
+             }
     end
 
     test "prefers type:result even when a later line also decodes" do
@@ -308,6 +343,9 @@ defmodule Camelot.Runtime.OutputParserTest do
       assert parsed.result_text == buffer
       assert is_nil(parsed.cost_usd)
       assert is_nil(parsed.duration_ms)
+      assert is_nil(parsed.duration_api_ms)
+      assert is_nil(parsed.num_turns)
+      assert is_nil(parsed.usage)
       assert is_nil(parsed.structured)
       assert parsed.assistant_texts == []
     end

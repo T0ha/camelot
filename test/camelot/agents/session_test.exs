@@ -78,7 +78,12 @@ defmodule Camelot.Agents.SessionTest do
                  session,
                  %{
                    output_log: "Done!",
-                   exit_code: 0
+                   exit_code: 0,
+                   cost_usd: 0.1234,
+                   duration_ms: 5000,
+                   duration_api_ms: 4000,
+                   num_turns: 3,
+                   usage: %{"input_tokens" => 100, "output_tokens" => 50}
                  },
                  action: :complete
                )
@@ -87,6 +92,11 @@ defmodule Camelot.Agents.SessionTest do
       assert completed.output_log == "Done!"
       assert completed.exit_code == 0
       assert completed.finished_at
+      assert completed.cost_usd == 0.1234
+      assert completed.duration_ms == 5000
+      assert completed.duration_api_ms == 4000
+      assert completed.num_turns == 3
+      assert completed.usage == %{"input_tokens" => 100, "output_tokens" => 50}
     end
   end
 
@@ -101,12 +111,21 @@ defmodule Camelot.Agents.SessionTest do
       assert {:ok, failed} =
                Ash.update(
                  session,
-                 %{output_log: "Error", exit_code: 1},
+                 %{
+                   output_log: "Error",
+                   exit_code: 1,
+                   cost_usd: 0.02,
+                   duration_ms: 1000,
+                   num_turns: 1
+                 },
                  action: :fail
                )
 
       assert failed.status == :failed
       assert failed.exit_code == 1
+      assert failed.cost_usd == 0.02
+      assert failed.duration_ms == 1000
+      assert failed.num_turns == 1
     end
   end
 

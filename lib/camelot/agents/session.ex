@@ -80,6 +80,36 @@ defmodule Camelot.Agents.Session do
       public?(true)
     end
 
+    attribute :cost_usd, :float do
+      allow_nil?(true)
+      public?(true)
+      description("Session cost in USD, as reported by the CLI's result event")
+    end
+
+    attribute :duration_ms, :integer do
+      allow_nil?(true)
+      public?(true)
+      description("Total wall-clock duration of the CLI run, in milliseconds")
+    end
+
+    attribute :duration_api_ms, :integer do
+      allow_nil?(true)
+      public?(true)
+      description("Time spent waiting on API responses, in milliseconds")
+    end
+
+    attribute :num_turns, :integer do
+      allow_nil?(true)
+      public?(true)
+      description("Number of conversational turns in the CLI run")
+    end
+
+    attribute :usage, :map do
+      allow_nil?(true)
+      public?(true)
+      description("Raw token-usage object reported by the CLI's result event")
+    end
+
     attribute :retry_number, :integer do
       allow_nil?(false)
       public?(true)
@@ -191,7 +221,12 @@ defmodule Camelot.Agents.Session do
         :output_log,
         :exit_code,
         :error_message,
-        :permission_denials
+        :permission_denials,
+        :cost_usd,
+        :duration_ms,
+        :duration_api_ms,
+        :num_turns,
+        :usage
       ])
 
       change(set_attribute(:status, :completed))
@@ -203,7 +238,12 @@ defmodule Camelot.Agents.Session do
         :output_log,
         :exit_code,
         :error_message,
-        :permission_denials
+        :permission_denials,
+        :cost_usd,
+        :duration_ms,
+        :duration_api_ms,
+        :num_turns,
+        :usage
       ])
 
       change(set_attribute(:status, :failed))
@@ -220,7 +260,12 @@ defmodule Camelot.Agents.Session do
         :output_log,
         :exit_code,
         :error_message,
-        :permission_denials
+        :permission_denials,
+        :cost_usd,
+        :duration_ms,
+        :duration_api_ms,
+        :num_turns,
+        :usage
       ])
 
       change(set_attribute(:status, :empty))
