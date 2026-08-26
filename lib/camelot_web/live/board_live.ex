@@ -126,7 +126,7 @@ defmodule CamelotWeb.BoardLive do
     tasks =
       Task
       |> Scope.maybe_scope(user, see_all, &Scope.scope_tasks/2)
-      |> Ash.read!(load: [:project, :sessions])
+      |> Ash.read!(load: [:project, :waiting_for_slot?])
 
     projects =
       Project

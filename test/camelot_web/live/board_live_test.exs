@@ -3,6 +3,7 @@ defmodule CamelotWeb.BoardLiveTest do
 
   import Phoenix.LiveViewTest
 
+  alias Camelot.Agents.Session
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
 
@@ -219,6 +220,69 @@ defmodule CamelotWeb.BoardLiveTest do
       render_submit(task_form)
 
       refute Task |> Ash.Query.filter(title == ^title) |> Ash.read_one!()
+    end
+  end
+
+  describe "runner slot badge" do
+    setup %{user: user} do
+      {:ok, project} =
+        Ash.create(
+          Project,
+          %{name: "slot-#{System.unique_integer()}", path: "/tmp/slot"},
+          actor: user
+        )
+
+      %{project: project}
+    end
+
+    test "a dispatched task waiting on a runner slot shows the waiting badge", %{
+      conn: conn,
+      user: user,
+      project: project
+    } do
+      task =
+        Ash.Seed.seed!(Task, %{
+          title: "waiting-task-#{System.unique_integer()}",
+          project_id: project.id,
+          creator_id: user.id,
+          agent_id: agent!("claude_code").id,
+          stage: :executing,
+          state: :in_progress
+        })
+
+      {:ok, _session} =
+        Ash.create(Session, %{agent_id: task.agent_id, task_id: task.id})
+
+      {:ok, _view, html} = live(conn, ~p"/")
+
+      assert html =~ "Waiting for a runner slot"
+    end
+
+    test "a task whose session is running shows the in progress badge", %{
+      conn: conn,
+      user: user,
+      project: project
+    } do
+      task =
+        Ash.Seed.seed!(Task, %{
+          title: "running-task-#{System.unique_integer()}",
+          project_id: project.id,
+          creator_id: user.id,
+          agent_id: agent!("claude_code").id,
+          stage: :executing,
+          state: :in_progress
+        })
+
+      Ash.Seed.seed!(Session, %{
+        agent_id: task.agent_id,
+        task_id: task.id,
+        status: :running
+      })
+
+      {:ok, _view, html} = live(conn, ~p"/")
+
+      refute html =~ "Waiting for a runner slot"
+      assert html =~ ~s(title="In progress")
     end
   end
 
