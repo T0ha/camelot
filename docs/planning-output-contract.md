@@ -1,6 +1,6 @@
 # Planning output contract
 
-How Camelot captures a **plan** or a **clarifying question** from a
+How 🏰 Camelot AI captures a **plan** or a **clarifying question** from a
 headless Claude Code planning run.
 
 ## Why a contract is needed

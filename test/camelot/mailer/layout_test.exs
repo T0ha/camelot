@@ -7,7 +7,7 @@ defmodule Camelot.Mailer.LayoutTest do
     test "wraps inner content in the branded shell" do
       html = Layout.html("<p>hello there</p>")
 
-      assert html =~ "Camelot AI"
+      assert html =~ "🏰 Camelot AI"
       assert html =~ "MedievalSharp"
       assert html =~ "#1a1a2e"
       assert html =~ "<p>hello there</p>"

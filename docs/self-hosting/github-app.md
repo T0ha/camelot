@@ -1,13 +1,13 @@
 %{
   title: "GitHub App",
-  description: "Authenticate Camelot to GitHub for PRs, issues and webhooks.",
+  description: "Authenticate 🏰 Camelot AI to GitHub for PRs, issues and webhooks.",
   order: 4,
   published: true
 }
 ---
 # GitHub App integration
 
-Camelot authenticates to GitHub two ways:
+🏰 Camelot AI authenticates to GitHub two ways:
 
 1. **GitHub App** (recommended) — per-project, used for server-side PR/issue
    polling (`Camelot.Github.Client`) and for runner git/`gh` auth once a
@@ -31,9 +31,9 @@ On github.com, create a new GitHub App (either a personal or org App) with:
 - **Setup URL**: `https://<your-camelot-host>/github/setup`
 - **Webhook URL**: `https://<your-camelot-host>/github/webhooks`
 
-**Checks (read) is required** for PR CI-status polling — Camelot reads
+**Checks (read) is required** for PR CI-status polling — 🏰 Camelot AI reads
 `commits/{sha}/check-runs` to auto-fix a task when CI fails. Without it that
-endpoint returns `403 "Resource not accessible by integration"`. Camelot now
+endpoint returns `403 "Resource not accessible by integration"`. 🏰 Camelot AI now
 degrades gracefully (CI-failure detection is skipped; merge-conflict, review,
 and comment handling keep working), so it is safe to omit, but CI-failure
 auto-fix stays off until the permission is granted.
@@ -41,7 +41,7 @@ auto-fix stays off until the permission is granted.
 > **Changing permissions on an already-installed App does not take effect
 > immediately.** GitHub raises a *pending permission request* that the
 > account/org owner must approve (Settings → Installed GitHub Apps → the App →
-> "Review request"), and Camelot caches installation access tokens for up to
+> "Review request"), and 🏰 Camelot AI caches installation access tokens for up to
 > ~1h — so a newly granted permission can take up to an hour to apply unless
 > the app is restarted.
 
@@ -75,7 +75,7 @@ base64 -w0 < downloaded-private-key.pem
 
 All six are optional — if any is missing, the integration is treated as not
 configured (`Camelot.Github.AppConfig.configured?/0` returns `false`), and
-Camelot falls back to unauthenticated GitHub API calls / SSH-only runner
+🏰 Camelot AI falls back to unauthenticated GitHub API calls / SSH-only runner
 auth, exactly as if the App didn't exist.
 
 ## 3. Link a project
@@ -92,5 +92,5 @@ back to the user's SSH key (if any) with no other change needed.
 
 Installation access tokens last about an hour. A task whose run outlives
 that isn't refreshed mid-run today — the next dispatch mints a fresh token.
-A git-credential-helper hitting an internal Camelot endpoint is the natural
+A git-credential-helper hitting an internal 🏰 Camelot AI endpoint is the natural
 follow-up if long-running tasks become common, but isn't implemented yet.
