@@ -3,6 +3,7 @@ defmodule Camelot.Runtime.TaskRunnerTest do
 
   alias Camelot.Accounts.Credential
   alias Camelot.Accounts.User
+  alias Camelot.Agents.Session
   alias Camelot.Board.AttachmentStore
   alias Camelot.Board.Task
   alias Camelot.Board.TaskAttachment
@@ -527,6 +528,44 @@ defmodule Camelot.Runtime.TaskRunnerTest do
       # Ash.get! raises for the missing row; the rescue must swallow it
       # so TaskRunner survives instead of stranding the session.
       assert :ok = TaskRunner.finish_session(state, 1, {:error, "boom"}, [])
+    end
+
+    test "persists cost/duration/usage parsed from a successful result", ctx do
+      {:ok, session} =
+        Ash.create(Session, %{
+          agent_id: ctx.task.agent_id,
+          task_id: ctx.task.id
+        })
+
+      state = %TaskRunner{
+        task_id: ctx.task.id,
+        current_session_id: session.id,
+        output_buffer: "done"
+      }
+
+      parsed =
+        {:ok,
+         %{
+           result_text: "done",
+           cost_usd: 0.42,
+           duration_ms: 6000,
+           duration_api_ms: 5000,
+           num_turns: 7,
+           usage: %{"input_tokens" => 200, "output_tokens" => 80},
+           permission_denials: [],
+           structured: nil,
+           assistant_texts: ["done"]
+         }}
+
+      assert :ok = TaskRunner.finish_session(state, 0, parsed, [])
+
+      reloaded = Ash.get!(Session, session.id)
+      assert reloaded.status == :completed
+      assert reloaded.cost_usd == 0.42
+      assert reloaded.duration_ms == 6000
+      assert reloaded.duration_api_ms == 5000
+      assert reloaded.num_turns == 7
+      assert reloaded.usage == %{"input_tokens" => 200, "output_tokens" => 80}
     end
   end
 

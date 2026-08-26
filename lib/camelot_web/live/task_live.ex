@@ -524,6 +524,9 @@ defmodule CamelotWeb.TaskLive do
               <span class="font-semibold text-xs uppercase opacity-60">
                 {msg.role}
               </span>
+              <span class="text-xs text-base-content/40 ml-2">
+                {format_timestamp(msg.inserted_at)}
+              </span>
               <p class="mt-1 whitespace-pre-wrap">{msg.content}</p>
             </div>
           </div>
@@ -619,6 +622,40 @@ defmodule CamelotWeb.TaskLive do
                 <span :if={session.exit_code} class="text-xs">
                   exit: {session.exit_code}
                 </span>
+              </div>
+              <div
+                :if={session.queued_at || session.started_at || session.finished_at}
+                class="mt-1 text-xs text-base-content/50 flex flex-wrap gap-x-2"
+              >
+                <span :if={session.queued_at}>
+                  Queued {format_timestamp(session.queued_at)}
+                </span>
+                <span :if={session.started_at}>
+                  Started {format_timestamp(session.started_at)}
+                </span>
+                <span :if={session.finished_at}>
+                  Finished {format_timestamp(session.finished_at)}
+                </span>
+              </div>
+              <div
+                :if={session.cost_usd || session.num_turns || session_duration_ms(session)}
+                class="mt-1 text-xs text-base-content/50 flex flex-wrap gap-x-3"
+              >
+                <span :if={session_duration_ms(session)}>
+                  Duration {format_duration(session_duration_ms(session))}
+                </span>
+                <span :if={session.cost_usd}>
+                  Cost {format_cost(session.cost_usd)}
+                </span>
+                <span :if={session.num_turns}>
+                  Turns {session.num_turns}
+                </span>
+              </div>
+              <div
+                :if={session.usage && format_tokens(session.usage)}
+                class="mt-1 text-xs text-base-content/50"
+              >
+                Tokens: {format_tokens(session.usage)}
               </div>
               <div
                 :if={session.error_message}
@@ -863,6 +900,59 @@ defmodule CamelotWeb.TaskLive do
   defp human_size(bytes) when bytes < 1024, do: "#{bytes} B"
   defp human_size(bytes) when bytes < 1024 * 1024, do: "#{Float.round(bytes / 1024, 1)} KB"
   defp human_size(bytes), do: "#{Float.round(bytes / (1024 * 1024), 1)} MB"
+
+  @spec format_timestamp(DateTime.t() | nil) :: String.t()
+  defp format_timestamp(nil), do: ""
+  defp format_timestamp(%DateTime{} = dt), do: Calendar.strftime(dt, "%Y-%m-%d %H:%M")
+
+  @spec format_cost(float() | nil) :: String.t() | nil
+  defp format_cost(nil), do: nil
+  defp format_cost(cost), do: "$#{:erlang.float_to_binary(cost * 1.0, decimals: 4)}"
+
+  @spec format_duration(integer() | nil) :: String.t() | nil
+  defp format_duration(nil), do: nil
+  defp format_duration(ms) when ms < 1000, do: "#{ms}ms"
+  defp format_duration(ms) when ms < 60_000, do: "#{Float.round(ms / 1000, 1)}s"
+
+  defp format_duration(ms) do
+    minutes = div(ms, 60_000)
+    seconds = div(rem(ms, 60_000), 1000)
+    "#{minutes}m #{seconds}s"
+  end
+
+  # Prefers the run stats parsed from the CLI's result event; falls back
+  # to the wall-clock span between started_at/finished_at for sessions
+  # that predate those columns or whose CLI output never parsed.
+  @spec session_duration_ms(Session.t()) :: integer() | nil
+  defp session_duration_ms(session) do
+    session.duration_ms || session.duration_api_ms || computed_duration_ms(session)
+  end
+
+  defp computed_duration_ms(%{started_at: %DateTime{} = started, finished_at: %DateTime{} = finished}) do
+    DateTime.diff(finished, started, :millisecond)
+  end
+
+  defp computed_duration_ms(_session), do: nil
+
+  @spec format_tokens(map() | nil) :: String.t() | nil
+  defp format_tokens(nil), do: nil
+
+  defp format_tokens(usage) when is_map(usage) do
+    [
+      token_part("in", usage["input_tokens"]),
+      token_part("out", usage["output_tokens"]),
+      token_part("cache read", usage["cache_read_input_tokens"]),
+      token_part("cache write", usage["cache_creation_input_tokens"])
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> case do
+      [] -> nil
+      parts -> Enum.join(parts, " · ")
+    end
+  end
+
+  defp token_part(_label, nil), do: nil
+  defp token_part(label, count), do: "#{label} #{count}"
 
   @internal_tools ~w(ExitPlanMode EnterPlanMode)
 

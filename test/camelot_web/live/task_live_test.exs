@@ -5,6 +5,7 @@ defmodule CamelotWeb.TaskLiveTest do
 
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
+  alias Camelot.Board.TaskMessage
   alias Camelot.Projects.Project
 
   setup :register_and_log_in_user
@@ -213,6 +214,54 @@ defmodule CamelotWeb.TaskLiveTest do
       refute html =~ "truncated"
       assert html =~ "Download logs"
       assert html =~ ~p"/sessions/#{session.id}/download"
+    end
+  end
+
+  describe "run stats" do
+    test "renders message timestamps and session cost/duration/tokens", %{
+      conn: conn,
+      task: task
+    } do
+      inserted_at = ~U[2026-08-25 10:05:00Z]
+
+      Ash.Seed.seed!(TaskMessage, %{
+        role: :assistant,
+        content: "Working on it.",
+        task_id: task.id,
+        inserted_at: inserted_at
+      })
+
+      Ash.Seed.seed!(Session, %{
+        agent_id: task.agent_id,
+        task_id: task.id,
+        status: :completed,
+        queued_at: ~U[2026-08-25 10:00:00Z],
+        started_at: ~U[2026-08-25 10:03:00Z],
+        finished_at: ~U[2026-08-25 10:07:00Z],
+        cost_usd: 0.1234,
+        duration_ms: 65_000,
+        num_turns: 5,
+        usage: %{
+          "input_tokens" => 100,
+          "output_tokens" => 50,
+          "cache_read_input_tokens" => 30,
+          "cache_creation_input_tokens" => 10
+        }
+      })
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ "2026-08-25 10:05"
+      assert html =~ "Started 2026-08-25 10:03"
+      assert html =~ "Finished 2026-08-25 10:07"
+      assert html =~ "1m 5s"
+      assert html =~ "$0.1234"
+      assert html =~ "Turns"
+      assert html =~ "5"
+      assert html =~ "in 100"
+      assert html =~ "out 50"
+      assert html =~ "cache read 30"
+      assert html =~ "cache write 10"
     end
   end
 
