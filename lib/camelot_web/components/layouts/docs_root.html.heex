@@ -16,6 +16,14 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href={~p"/assets/css/app.css"} />
+    <meta
+      :if={config = CamelotWeb.PostHogConfig.for(assigns)}
+      id="posthog-config"
+      data-api-key={config.api_key}
+      data-api-host={config.api_host}
+      data-distinct-id={config.distinct_id}
+      data-email={config.email}
+    />
     <script>
       (() => {
         const setTheme = (theme) => {
@@ -31,5 +39,7 @@
   </head>
   <body>
     {@inner_content}
+    <script defer src={~p"/assets/js/docs.js"}>
+    </script>
   </body>
 </html>
