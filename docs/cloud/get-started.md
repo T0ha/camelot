@@ -13,9 +13,8 @@ all the way to a merged pull request.
 
 ## Prerequisites
 
-You need an email address that's already been granted access to your
-team's Camelot workspace — someone on your team invites you before you
-can sign in. This guide uses Camelot Cloud at
+All you need is an email address — Camelot Cloud is open for anyone to
+register, no invite required. This guide uses Camelot Cloud at
 [app.camelotai.tech](https://app.camelotai.tech); everything below
 assumes you're signed in there.
 
@@ -50,7 +49,9 @@ Visit `/profile` to finish your personal setup:
   it a **Name**, and paste the **Value**. These are encrypted at rest
   and shipped securely to runner containers. Pasted GitHub personal
   access tokens or OAuth tokens aren't supported — use the GitHub App
-  above for git/GitHub access instead.
+  above for git/GitHub access instead. Right now, **Claude Code is the
+  only Agent CLI that's fully integrated and tested** — start with a
+  Claude API key unless you know you need another provider.
 
 ## 3. Create a project
 
