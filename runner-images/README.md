@@ -1,7 +1,7 @@
-# Camelot runner images
+# 🏰 Camelot AI runner images
 
-These images host the AI agent CLIs that Camelot dispatches into one-shot
-runner containers (one per session). They are *not* part of the Camelot
+These images host the AI agent CLIs that 🏰 Camelot AI dispatches into one-shot
+runner containers (one per session). They are *not* part of the 🏰 Camelot AI
 release image — they ship separately and are referenced by name from
 `Agent.runner_image` (the Agent CLI resource).
 
@@ -25,7 +25,7 @@ base/                    debian + asdf + nodejs (default) + git + gh + tini + en
 2. Merges the image's baseline MCP set with `$PROJECT_MCP_CONFIG_JSON`,
    resolving `${credential:<kind>}` placeholders against
    `/run/secrets/<kind>`.
-3. If `$BOOTSTRAP=1` — runs the command Camelot supplied and exits.
+3. If `$BOOTSTRAP=1` — runs the command 🏰 Camelot AI supplied and exits.
 4. Otherwise — clones `$REPO_URL` into `/workspace`, runs `asdf install`
    (which picks up the repo's `.tool-versions`), then execs the
    command.

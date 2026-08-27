@@ -7,7 +7,7 @@ How the public documentation site is served and how to wire the CDN.
 
 ## How it works
 
-The docs site is **not** a separate app. It is served by the main Camelot
+The docs site is **not** a separate app. It is served by the main 🏰 Camelot AI
 Phoenix app through a dedicated, unauthenticated router scope bound to the
 `docs.` host:
 

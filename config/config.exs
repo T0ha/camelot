@@ -44,7 +44,7 @@ config :camelot, :attachment_store, Camelot.Board.AttachmentStore.Local
 config :camelot, :default_projects_dir, "~/projects"
 
 config :camelot, :mail,
-  from_name: "Camelot",
+  from_name: "🏰 Camelot AI",
   from_address: "noreply@camelot.local"
 
 # Consecutive automatic PR fix re-dispatches (merge conflict / CI

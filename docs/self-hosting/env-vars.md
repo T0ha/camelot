@@ -7,7 +7,7 @@
 ---
 # Runner environment variables
 
-Camelot injects custom environment variables into a project's
+🏰 Camelot AI injects custom environment variables into a project's
 runner containers via the `Camelot.Projects.EnvVar` resource.
 This is where project infrastructure config lives — a Postgres
 URL, NATS connection details, feature-flag endpoints, and the

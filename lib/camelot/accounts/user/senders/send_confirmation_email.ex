@@ -36,7 +36,7 @@ defmodule Camelot.Accounts.User.Senders.SendConfirmationEmail do
     new()
     |> from(Camelot.Mailer.from())
     |> to(to)
-    |> subject("Confirm your email for Camelot")
+    |> subject("Confirm your email for 🏰 Camelot AI")
     |> html_body(
       Layout.html("""
       <h2 style="margin-top: 0;">Confirm your email</h2>

@@ -5,7 +5,7 @@
   published: true
 }
 ---
-# Running Camelot locally with Docker runners
+# Running 🏰 Camelot AI locally with Docker runners
 
 This guide walks you through running the BEAM on your host but launching
 each agent CLI inside a Docker container via the `DockerEngine` backend.
@@ -17,7 +17,7 @@ For the multi-node Swarm story, see
 
 ## What you'll have at the end
 
-- Camelot running in `iex -S mix phx.server` on your host.
+- 🏰 Camelot AI running in `iex -S mix phx.server` on your host.
 - PostgreSQL in a container (existing `docker-compose.yml`).
 - Every agent CLI dispatch spawns a one-shot `camelot-runner-<id>`
   container on your local Docker daemon.
@@ -68,7 +68,7 @@ For a faster smoke test that only verifies the runner-spawn / log-tail
 docker pull alpine:latest
 ```
 
-## 3. Start Camelot pointed at Docker
+## 3. Start 🏰 Camelot AI pointed at Docker
 
 ```sh
 RUNNER_BACKEND=docker \
@@ -216,7 +216,7 @@ watch -n 1 'docker ps --filter "name=camelot-runner-"'
 docker logs -f $(docker ps -q --filter "name=camelot-runner-")
 ```
 
-Then in the Camelot UI:
+Then in the 🏰 Camelot AI UI:
 
 1. Open `/` (the board), create a new task on your project — pick your
    Agent CLI from the "CLI Agent" dropdown on the "New Task" modal.

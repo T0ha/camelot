@@ -33,7 +33,7 @@ defmodule Camelot.Board.Task.Senders.SendStateChangeEmailTest do
         assert email.to == [{"", "creator@example.com"}]
         assert email.subject =~ "Ship the thing"
         assert email.html_body =~ "/tasks/#{ctx.task.id}"
-        assert email.html_body =~ "Camelot AI"
+        assert email.html_body =~ "🏰 Camelot AI"
         assert email.html_body =~ "MedievalSharp"
         assert email.html_body =~ "#7c3aed"
         assert email.text_body =~ "/tasks/#{ctx.task.id}"
