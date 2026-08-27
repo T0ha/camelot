@@ -1,4 +1,4 @@
-# Camelot
+# 🏰 Camelot AI
 
 > Delegate coding tasks to AI agents. Manage them from a kanban board.
 
@@ -13,13 +13,13 @@
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome">
 </p>
 
-Camelot gives development teams a way to safely scale their engineering output
+🏰 Camelot AI gives development teams a way to safely scale their engineering output
 with AI — without giving up control. Create tasks on a board, let AI agents plan
 and implement them, review and approve before anything ships. Like having junior
 developers who never sleep, managed through a clean visual interface.
 
 <p align="center">
-  <img src="priv/static/images/screenshot.png" alt="Camelot kanban board" width="800">
+  <img src="priv/static/images/screenshot.png" alt="Camelot AI kanban board" width="800">
 </p>
 
 ## How It Works
@@ -91,6 +91,9 @@ Visit [`localhost:4000`](http://localhost:4000).
 3. Create a task, pick a CLI Agent (Claude Code or Codex) from the
    dropdown, and watch it flow through the board
 
+See [`docs/get-started.md`](docs/get-started.md) for a full walkthrough
+from first login to your first merged PR.
+
 ## Configuration
 
 Key environment variables (see `config/runtime.exs` for full details):
@@ -157,7 +160,7 @@ See `CLAUDE.md` and `AGENTS.md` for AI-assisted development guidelines.
 
 ## Deployment
 
-Camelot is a standard Phoenix application. See the
+🏰 Camelot AI is a standard Phoenix application. See the
 [Phoenix deployment guides](https://hexdocs.pm/phoenix/deployment.html)
 for general instructions.
 
@@ -175,7 +178,7 @@ Docker and docker-compose configurations are planned for a future release.
 - [ ] Webhook-based GitHub integration
 - [ ] Additional agent types
 - [ ] Team / multi-user collaboration
-- [ ] Camelot Cloud (hosted version)
+- [ ] 🏰 Camelot AI Cloud (hosted version)
 
 ## Contributing
 

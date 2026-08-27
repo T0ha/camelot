@@ -1,13 +1,13 @@
 %{
   title: "Cluster runners",
-  description: "Deploy Camelot's Docker Swarm agent runners.",
+  description: "Deploy 🏰 Camelot AI's Docker Swarm agent runners.",
   order: 1,
   published: true
 }
 ---
 # Cluster runners deployment guide
 
-Camelot runs every agent CLI inside an isolated container scheduled by
+🏰 Camelot AI runs every agent CLI inside an isolated container scheduled by
 Docker Swarm. This guide covers what an operator needs to set up.
 
 ## TL;DR
@@ -18,7 +18,7 @@ For a hosted CapRover deployment:
    exposing only `SERVICES`, `TASKS`, `NETWORKS`, `NODES`, `SECRETS`.
 2. Label worker nodes with `camelot-home=node-X` for every X you want
    to host user runner containers on.
-3. Set Camelot's env vars (CapRover app config):
+3. Set 🏰 Camelot AI's env vars (CapRover app config):
    - `RUNNER_BACKEND=swarm`
    - `DOCKER_HOST=tcp://docker-socket-proxy:2375`
    - `ENCRYPTION_KEY=<32-byte base64>`
@@ -32,7 +32,7 @@ For a hosted CapRover deployment:
    pin a different image via its `runner_image_override` field (set in
    the project's edit form) — when non-nil, it wins over the Agent
    CLI's `Agent.runner_image` for every task in that project.
-5. For each user, in Camelot's profile UI:
+5. For each user, in 🏰 Camelot AI's profile UI:
    - Add their API keys / GitHub PAT as Credentials. `SecretSync`
      will populate `camelot_user_<id>_<kind>` Swarm secrets
      automatically.
@@ -40,7 +40,7 @@ For a hosted CapRover deployment:
 
 ## Deployment topologies
 
-Camelot does *not* require running on a manager. Three supported
+🏰 Camelot AI does *not* require running on a manager. Three supported
 shapes:
 
 ### A. Local socket (smallest installs)
@@ -50,8 +50,8 @@ manager + camelot
   /var/run/docker.sock ─bind-mount─► camelot
 ```
 
-Camelot scheduled onto a manager, the manager's socket mounted in.
-`DOCKER_HOST=unix:///var/run/docker.sock`. Simplest, but Camelot can
+🏰 Camelot AI scheduled onto a manager, the manager's socket mounted in.
+`DOCKER_HOST=unix:///var/run/docker.sock`. Simplest, but 🏰 Camelot AI can
 only ever run on a manager.
 
 ### B. Remote TCP + TLS (max flexibility)
@@ -63,8 +63,8 @@ manager           camelot (anywhere)
 ```
 
 Daemon configured with `tcp://0.0.0.0:2376` + client cert auth.
-Camelot env: `DOCKER_HOST=tcp://<manager>:2376` plus `DOCKER_CERT_PATH`
-mounted as a Swarm secret. Lets Camelot live anywhere reachable.
+🏰 Camelot AI env: `DOCKER_HOST=tcp://<manager>:2376` plus `DOCKER_CERT_PATH`
+mounted as a Swarm secret. Lets 🏰 Camelot AI live anywhere reachable.
 
 ### C. Socket proxy as a Swarm service (recommended)
 
@@ -73,8 +73,8 @@ manager (proxy)             camelot (anywhere)
   socket ──► docker-socket-proxy ──tcp/2375─► Camelot
 ```
 
-Proxy service constrained to managers; Camelot reaches it via the
-in-cluster overlay network. Survives Camelot getting rescheduled to a
+Proxy service constrained to managers; 🏰 Camelot AI reaches it via the
+in-cluster overlay network. Survives 🏰 Camelot AI getting rescheduled to a
 worker, restricts the API surface, and Swarm handles proxy failover.
 
 Example proxy service:
@@ -90,7 +90,7 @@ docker service create \
   tecnativa/docker-socket-proxy:latest
 ```
 
-Camelot env: `DOCKER_HOST=tcp://docker-socket-proxy:2375`.
+🏰 Camelot AI env: `DOCKER_HOST=tcp://docker-socket-proxy:2375`.
 
 ## Node labels
 
@@ -103,7 +103,7 @@ docker node update --label-add camelot-home=node-b worker-2
 ```
 
 Then set the same label string as a pin, at whichever level fits
-(admin-only, in Camelot's UI). Each pin control shows a dropdown of
+(admin-only, in 🏰 Camelot AI's UI). Each pin control shows a dropdown of
 labels discovered live from `GET /nodes` when the Docker/Swarm API
 is reachable, falling back to a free-text field otherwise (e.g. a
 non-Swarm `RUNNER_BACKEND`, or no node labelled yet):
@@ -142,11 +142,11 @@ on that overlay, or it fails with *"Name or service not known"* /
 
 | Value | What happens |
 |---|---|
-| *(unset)* / `auto` | **Default.** Camelot copies the overlay network(s) its *own* service is on onto each runner. |
+| *(unset)* / `auto` | **Default.** 🏰 Camelot AI copies the overlay network(s) its *own* service is on onto each runner. |
 | `net-a,net-b` | Explicit network names/IDs. Combine with `auto` (`auto,net-a`) to add to the discovered set. |
 | `none` | Keep runners isolated — bridge only, no overlay. |
 
-**`auto` (the default)** — a runner reaches exactly what Camelot
+**`auto` (the default)** — a runner reaches exactly what 🏰 Camelot AI
 reaches, with nothing to hardcode. Discovery reads the app's own task and
 service via the Docker API (`TASKS` + `SERVICES`, already in the
 socket-proxy allow-list) and memoizes the result. If it can't complete
@@ -154,8 +154,8 @@ socket-proxy allow-list) and memoizes the result. If it can't complete
 discover), runners start with no extra network and a warning is logged —
 never a hard failure.
 
-**Security note:** `auto` places runners on the same overlay as Camelot,
-so they can reach the control-plane services on it (including Camelot's
+**Security note:** `auto` places runners on the same overlay as 🏰 Camelot AI,
+so they can reach the control-plane services on it (including 🏰 Camelot AI's
 own DB). Set `RUNNER_NETWORKS=none` — or an explicit, dedicated overlay —
 if you need runners isolated from the control plane.
 
@@ -165,12 +165,12 @@ if you need runners isolated from the control plane.
 - **Profile volumes are caches.** Losing one only costs the next
   session's bootstrap time (asdf re-install, CLI caches rebuilt). The
   entrypoint re-materialises credentials from secrets on every spawn.
-- **Swarm secrets**: rotate via Camelot UI (or
+- **Swarm secrets**: rotate via 🏰 Camelot AI UI (or
   `SecretSync.reconcile/2`); no manual `docker secret` calls needed.
 
 ## Local development
 
-Drop `RUNNER_BACKEND=local` (the default in dev/test). Camelot runs
+Drop `RUNNER_BACKEND=local` (the default in dev/test). 🏰 Camelot AI runs
 the CLI directly on your host via `Port.open` — identical to the
 pre-runner behaviour. No Docker required.
 

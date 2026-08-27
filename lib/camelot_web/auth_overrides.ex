@@ -20,7 +20,7 @@ defmodule CamelotWeb.AuthOverrides do
   override Components.Banner do
     set(:image_url, nil)
     set(:dark_image_url, nil)
-    set(:text, "Camelot")
+    set(:text, "🏰 Camelot AI")
     set(:text_class, "text-3xl font-bold text-base-content")
     set(:root_class, "w-full flex justify-center py-4")
   end

@@ -5,7 +5,8 @@ defmodule Camelot.Runtime.OutputParser do
 
   - `:claude_code_json` expects a single JSON object with a
     `result` field plus optional `is_error`, `cost_usd`,
-    `duration_ms`, and `permission_denials`.
+    `duration_ms`, `duration_api_ms`, `num_turns`, `usage`,
+    and `permission_denials`.
   - `:raw_text` passes the buffer through unchanged.
   """
 
@@ -21,6 +22,9 @@ defmodule Camelot.Runtime.OutputParser do
           result_text: String.t(),
           cost_usd: float() | nil,
           duration_ms: integer() | nil,
+          duration_api_ms: integer() | nil,
+          num_turns: integer() | nil,
+          usage: map() | nil,
           permission_denials: [permission_denial()],
           structured: map() | nil,
           assistant_texts: [String.t()]
@@ -34,6 +38,9 @@ defmodule Camelot.Runtime.OutputParser do
        result_text: buffer,
        cost_usd: nil,
        duration_ms: nil,
+       duration_api_ms: nil,
+       num_turns: nil,
+       usage: nil,
        permission_denials: [],
        structured: nil,
        assistant_texts: []
@@ -64,6 +71,9 @@ defmodule Camelot.Runtime.OutputParser do
        result_text: result_text,
        cost_usd: data["cost_usd"] || data["total_cost_usd"],
        duration_ms: data["duration_ms"],
+       duration_api_ms: data["duration_api_ms"],
+       num_turns: data["num_turns"],
+       usage: data["usage"],
        permission_denials: denials,
        structured: structured_output(data),
        assistant_texts: assistant_texts(objects)

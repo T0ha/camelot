@@ -64,19 +64,19 @@ defmodule Camelot.Accounts.User.Senders.SendMagicLink do
     new()
     |> from(Camelot.Mailer.from())
     |> to(to)
-    |> subject("Your sign-in link for Camelot")
+    |> subject("Your sign-in link for 🏰 Camelot AI")
     |> html_body(
       Layout.html("""
-      <h2 style="margin-top: 0;">Sign in to Camelot</h2>
+      <h2 style="margin-top: 0;">Sign in to 🏰 Camelot AI</h2>
       <p>Click the button below to sign in:</p>
-      #{Layout.button(url, "Sign in to Camelot")}
+      #{Layout.button(url, "Sign in to 🏰 Camelot AI")}
       #{Layout.fallback_link(url)}
       <p>This link expires in 10 minutes.</p>
       <p>If you didn't request this, you can safely ignore this email.</p>
       """)
     )
     |> text_body("""
-    Sign in to Camelot
+    Sign in to 🏰 Camelot AI
 
     Visit this link to sign in:
     #{url}

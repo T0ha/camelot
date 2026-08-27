@@ -292,7 +292,7 @@ if config_env() == :prod do
   config :camelot, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
   config :camelot, :mail,
-    from_name: System.get_env("MAIL_FROM_NAME") || "Camelot AI",
+    from_name: System.get_env("MAIL_FROM_NAME") || "🏰 Camelot AI",
     from_address:
       System.get_env("MAIL_FROM") ||
         raise("environment variable MAIL_FROM is missing (e.g. noreply@camelotai.tech)")

@@ -15,7 +15,7 @@ defmodule Camelot.Accounts.User.Senders.SendConfirmationEmailTest do
       assert email.to == [{"", "confirm@example.com"}]
       assert email.subject =~ "Confirm"
       assert email.html_body =~ "confirm_new_user?confirm=tok-456"
-      assert email.html_body =~ "Camelot AI"
+      assert email.html_body =~ "🏰 Camelot AI"
       assert email.html_body =~ "MedievalSharp"
       assert email.html_body =~ "#7c3aed"
       assert email.text_body =~ "confirm_new_user?confirm=tok-456"

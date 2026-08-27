@@ -41,8 +41,8 @@ defmodule Camelot.Projects.Membership.Changes.ResolveInviteeTest do
       assert to_string(user.email) == "new-invitee@e.com"
       assert user.confirmed_at
 
-      assert_email_sent(subject: "You're invited to Camelot AI")
-      assert_email_sent(subject: "You've been added to #{project.name} on Camelot AI")
+      assert_email_sent(subject: "You're invited to 🏰 Camelot AI")
+      assert_email_sent(subject: "You've been added to #{project.name} on 🏰 Camelot AI")
     end
 
     test "project owner (non-admin) can invite an unknown email into their project" do
@@ -67,8 +67,8 @@ defmodule Camelot.Projects.Membership.Changes.ResolveInviteeTest do
 
       assert Enum.count(Ash.read!(Ash.Query.filter(User, email == "existing@e.com"), authorize?: false)) == 1
 
-      refute_email_sent(subject: "You're invited to Camelot AI")
-      assert_email_sent(subject: "You've been added to #{project.name} on Camelot AI")
+      refute_email_sent(subject: "You're invited to 🏰 Camelot AI")
+      assert_email_sent(subject: "You've been added to #{project.name} on 🏰 Camelot AI")
     end
 
     test "a plain member (not owner, not admin) is rejected with a clear error" do

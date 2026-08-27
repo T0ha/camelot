@@ -35,6 +35,7 @@ config :camelot, CamelotWeb.Endpoint,
   secret_key_base: "roDaBAM6s/OI6rTvRmo3MVd2TnQ3FbJlfWVsYqHC01dPLNQn/lVxavUi4GXJC/r2",
   watchers: [
     esbuild: {Esbuild, :install_and_run, [:camelot, ~w(--sourcemap=inline --watch)]},
+    esbuild_docs: {Esbuild, :install_and_run, [:docs, ~w(--sourcemap=inline --watch)]},
     tailwind: {Tailwind, :install_and_run, [:camelot, ~w(--watch)]}
   ]
 

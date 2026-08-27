@@ -1339,7 +1339,12 @@ defmodule Camelot.Runtime.TaskRunner do
              output_log: state.output_buffer,
              exit_code: exit_code,
              error_message: parsed_error(parsed),
-             permission_denials: denials
+             permission_denials: denials,
+             cost_usd: parsed_field(parsed, :cost_usd),
+             duration_ms: parsed_field(parsed, :duration_ms),
+             duration_api_ms: parsed_field(parsed, :duration_api_ms),
+             num_turns: parsed_field(parsed, :num_turns),
+             usage: parsed_field(parsed, :usage)
            },
            action: action
          ) do
@@ -1368,6 +1373,9 @@ defmodule Camelot.Runtime.TaskRunner do
 
   defp parsed_error({:error, msg}), do: msg
   defp parsed_error(_parsed), do: nil
+
+  defp parsed_field({:ok, parsed}, key), do: Map.get(parsed, key)
+  defp parsed_field(_parsed, _key), do: nil
 
   defp extract_denials({:ok, %{permission_denials: d}}), do: d
   defp extract_denials(_), do: []

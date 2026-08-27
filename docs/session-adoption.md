@@ -1,6 +1,6 @@
 # Session adoption (reconnect after restart)
 
-When Camelot is redeployed, Swarm/Docker sends the app SIGTERM and the
+When 🏰 Camelot AI is redeployed, Swarm/Docker sends the app SIGTERM and the
 `TaskRunner` GenServers driving in-flight runs die. The **runner
 containers are separate services that keep running** (the agent process
 inside them is a `docker exec`, not tied to the app's connection), so the

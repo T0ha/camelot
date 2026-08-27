@@ -44,7 +44,7 @@ config :camelot, :attachment_store, Camelot.Board.AttachmentStore.Local
 config :camelot, :default_projects_dir, "~/projects"
 
 config :camelot, :mail,
-  from_name: "Camelot",
+  from_name: "🏰 Camelot AI",
   from_address: "noreply@camelot.local"
 
 # Consecutive automatic PR fix re-dispatches (merge conflict / CI
@@ -84,6 +84,12 @@ config :esbuild,
   camelot: [
     args:
       ~w(js/app.js --bundle --target=es2022 --outdir=../priv/static/assets/js --external:/fonts/* --external:/images/* --alias:@=.),
+    cd: Path.expand("../assets", __DIR__),
+    env: %{"NODE_PATH" => [Path.expand("../deps", __DIR__), Mix.Project.build_path()]}
+  ],
+  docs: [
+    args:
+      ~w(js/docs.js --bundle --target=es2022 --outdir=../priv/static/assets/js --external:/fonts/* --external:/images/* --alias:@=.),
     cd: Path.expand("../assets", __DIR__),
     env: %{"NODE_PATH" => [Path.expand("../deps", __DIR__), Mix.Project.build_path()]}
   ]

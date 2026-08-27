@@ -195,6 +195,21 @@ defmodule Camelot.Board.Task do
     has_many(:attachments, Camelot.Board.TaskAttachment)
   end
 
+  aggregates do
+    exists :waiting_for_slot?, :sessions do
+      public?(true)
+      filter(expr(status == :queued))
+
+      description(
+        "True while one of this task's sessions sits in the " <>
+          "`Camelot.Runtime.RunnerPool` queue. Dispatch flips a task to " <>
+          "`:in_progress` before its session asks for a slot, so an " <>
+          "`:in_progress` task is not necessarily executing — it may be " <>
+          "waiting for its creator to drop under `per_user_max`."
+      )
+    end
+  end
+
   actions do
     defaults([:read, :destroy])
 

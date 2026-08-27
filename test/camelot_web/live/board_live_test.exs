@@ -3,6 +3,7 @@ defmodule CamelotWeb.BoardLiveTest do
 
   import Phoenix.LiveViewTest
 
+  alias Camelot.Agents.Session
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
 
@@ -38,21 +39,83 @@ defmodule CamelotWeb.BoardLiveTest do
 
     {:ok, view, _html} = live(conn, ~p"/")
 
+    render_click(view, "open_new_task")
+
     task_form =
       form(view, "#new-task-form", %{
-        "title" => "Write the plan",
-        "description" => "some details",
-        "project_id" => project.id,
-        "agent_id" => agent!("claude_code").id,
-        "priority" => "2"
+        "task" => %{
+          "title" => "Write the plan",
+          "description" => "some details",
+          "project_id" => project.id,
+          "agent_id" => agent!("claude_code").id,
+          "priority" => "2"
+        }
       })
 
     render_change(task_form)
-    render_submit(task_form)
+    html = render_submit(task_form)
 
     form_html = view |> element("#new-task-form") |> render()
     refute form_html =~ "Write the plan"
     refute form_html =~ "some details"
+    refute html =~ ~r/<dialog[^>]*id="new-task-modal"[^>]*\sopen/
+  end
+
+  test "New Task form reports missing project and agent inline", %{conn: conn} do
+    title = "missing-selects-#{System.unique_integer()}"
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    render_click(view, "open_new_task")
+
+    html =
+      view
+      |> form("#new-task-form", %{
+        "task" => %{
+          "title" => title,
+          "description" => "some details",
+          "project_id" => "",
+          "agent_id" => "",
+          "priority" => "2"
+        }
+      })
+      |> render_submit()
+
+    assert html =~ "is required"
+    assert html =~ ~r/<dialog[^>]*id="new-task-modal"[^>]*\sopen/
+    refute Task |> Ash.Query.filter(title == ^title) |> Ash.read_one!()
+  end
+
+  test "New Task form falls back to the default priority when it is cleared", %{
+    conn: conn,
+    user: user
+  } do
+    title = "blank-priority-#{System.unique_integer()}"
+
+    {:ok, project} =
+      Ash.create(
+        Project,
+        %{name: "p-#{System.unique_integer()}", path: "/tmp/prio"},
+        actor: user
+      )
+
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    render_click(view, "open_new_task")
+
+    view
+    |> form("#new-task-form", %{
+      "task" => %{
+        "title" => title,
+        "description" => "some details",
+        "project_id" => project.id,
+        "agent_id" => agent!("claude_code").id,
+        "priority" => ""
+      }
+    })
+    |> render_submit()
+
+    task = Task |> Ash.Query.filter(title == ^title) |> Ash.read_one!()
+    assert task.priority == 0
   end
 
   test "restart_task resets an errored task back to queued", %{conn: conn, user: user} do
@@ -113,11 +176,13 @@ defmodule CamelotWeb.BoardLiveTest do
 
       task_form =
         form(view, "#new-task-form", %{
-          "title" => title,
-          "description" => "some details",
-          "project_id" => project.id,
-          "agent_id" => agent!("claude_code").id,
-          "priority" => "2"
+          "task" => %{
+            "title" => title,
+            "description" => "some details",
+            "project_id" => project.id,
+            "agent_id" => agent!("claude_code").id,
+            "priority" => "2"
+          }
         })
 
       render_submit(task_form)
@@ -143,16 +208,81 @@ defmodule CamelotWeb.BoardLiveTest do
 
       task_form =
         form(view, "#new-task-form", %{
-          "title" => title,
-          "description" => "some details",
-          "project_id" => "",
-          "agent_id" => "",
-          "priority" => "2"
+          "task" => %{
+            "title" => title,
+            "description" => "some details",
+            "project_id" => "",
+            "agent_id" => "",
+            "priority" => "2"
+          }
         })
 
       render_submit(task_form)
 
       refute Task |> Ash.Query.filter(title == ^title) |> Ash.read_one!()
+    end
+  end
+
+  describe "runner slot badge" do
+    setup %{user: user} do
+      {:ok, project} =
+        Ash.create(
+          Project,
+          %{name: "slot-#{System.unique_integer()}", path: "/tmp/slot"},
+          actor: user
+        )
+
+      %{project: project}
+    end
+
+    test "a dispatched task waiting on a runner slot shows the waiting badge", %{
+      conn: conn,
+      user: user,
+      project: project
+    } do
+      task =
+        Ash.Seed.seed!(Task, %{
+          title: "waiting-task-#{System.unique_integer()}",
+          project_id: project.id,
+          creator_id: user.id,
+          agent_id: agent!("claude_code").id,
+          stage: :executing,
+          state: :in_progress
+        })
+
+      {:ok, _session} =
+        Ash.create(Session, %{agent_id: task.agent_id, task_id: task.id})
+
+      {:ok, _view, html} = live(conn, ~p"/")
+
+      assert html =~ "Waiting for a runner slot"
+    end
+
+    test "a task whose session is running shows the in progress badge", %{
+      conn: conn,
+      user: user,
+      project: project
+    } do
+      task =
+        Ash.Seed.seed!(Task, %{
+          title: "running-task-#{System.unique_integer()}",
+          project_id: project.id,
+          creator_id: user.id,
+          agent_id: agent!("claude_code").id,
+          stage: :executing,
+          state: :in_progress
+        })
+
+      Ash.Seed.seed!(Session, %{
+        agent_id: task.agent_id,
+        task_id: task.id,
+        status: :running
+      })
+
+      {:ok, _view, html} = live(conn, ~p"/")
+
+      refute html =~ "Waiting for a runner slot"
+      assert html =~ ~s(title="In progress")
     end
   end
 

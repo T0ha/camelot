@@ -26,7 +26,7 @@ defmodule Camelot.Projects.Membership.Senders.SendProjectInviteEmail do
     new()
     |> from(Camelot.Mailer.from())
     |> to(to)
-    |> subject("You've been added to #{project.name} on Camelot AI")
+    |> subject("You've been added to #{project.name} on 🏰 Camelot AI")
     |> html_body(render_html_body(project, url))
     |> text_body(render_text_body(project, url))
   end
@@ -41,7 +41,7 @@ defmodule Camelot.Projects.Membership.Senders.SendProjectInviteEmail do
         <div style="background: #1a1a2e; padding: 32px 24px; text-align: center;">
           <h1 style="font-family: 'MedievalSharp', cursive; font-weight: 900; \
     letter-spacing: 0.025em; color: #ffffff; font-size: 24px; margin: 0;">
-            Camelot AI
+            🏰 Camelot AI
           </h1>
         </div>
         <div style="padding: 32px 24px;">

@@ -4,7 +4,7 @@
       href="/"
       class="flex items-center gap-2 font-brand font-black text-2xl tracking-wide"
     >
-      Camelot
+      🏰 Camelot AI
     </a>
   </div>
   <div class="flex-none">
@@ -29,6 +29,11 @@
       <li>
         <a href="/prompts" class="btn btn-ghost btn-sm">
           Prompts
+        </a>
+      </li>
+      <li>
+        <a href={CamelotWeb.Layouts.docs_url()} class="btn btn-ghost btn-sm" target="_blank">
+          Docs
         </a>
       </li>
       <%= if match?(%{role: :admin}, assigns[:current_user]) do %>

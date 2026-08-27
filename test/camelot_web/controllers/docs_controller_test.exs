@@ -42,4 +42,63 @@ defmodule CamelotWeb.DocsControllerTest do
       assert response(conn, 404)
     end
   end
+
+  describe "PostHog" do
+    setup do
+      enable = Application.get_env(:posthog, :enable)
+      api_key = Application.get_env(:posthog, :api_key)
+      api_host = Application.get_env(:posthog, :api_host)
+
+      on_exit(fn ->
+        Application.put_env(:posthog, :enable, enable)
+        Application.put_env(:posthog, :api_key, api_key)
+        Application.put_env(:posthog, :api_host, api_host)
+      end)
+
+      :ok
+    end
+
+    test "index includes the posthog config and docs.js script when enabled", %{conn: conn} do
+      Application.put_env(:posthog, :enable, true)
+      Application.put_env(:posthog, :api_key, "phc_test")
+      Application.put_env(:posthog, :api_host, "https://us.i.posthog.com")
+
+      body = conn |> get("/") |> html_response(200)
+
+      assert body =~ ~s(id="posthog-config")
+      assert body =~ "/assets/js/docs.js"
+    end
+
+    test "show includes the posthog config and docs.js script when enabled", %{conn: conn} do
+      Application.put_env(:posthog, :enable, true)
+      Application.put_env(:posthog, :api_key, "phc_test")
+      Application.put_env(:posthog, :api_host, "https://us.i.posthog.com")
+
+      body = conn |> get("/self-hosting/cluster-runners") |> html_response(200)
+
+      assert body =~ ~s(id="posthog-config")
+      assert body =~ "/assets/js/docs.js"
+    end
+
+    test "index omits the posthog config when disabled", %{conn: conn} do
+      Application.put_env(:posthog, :enable, false)
+
+      body = conn |> get("/") |> html_response(200)
+
+      refute body =~ ~s(id="posthog-config")
+    end
+
+    test "still sets no cookie and a cache-control header when enabled", %{conn: conn} do
+      Application.put_env(:posthog, :enable, true)
+      Application.put_env(:posthog, :api_key, "phc_test")
+      Application.put_env(:posthog, :api_host, "https://us.i.posthog.com")
+
+      conn = get(conn, "/")
+
+      assert ["public, max-age=0, s-maxage=" <> _] =
+               get_resp_header(conn, "cache-control")
+
+      assert get_resp_header(conn, "set-cookie") == []
+    end
+  end
 end

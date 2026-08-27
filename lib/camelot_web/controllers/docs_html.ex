@@ -19,7 +19,7 @@ defmodule CamelotWeb.DocsHTML do
     <div class="min-h-screen flex flex-col md:flex-row bg-base-100 text-base-content">
       <aside class="md:w-72 shrink-0 border-b border-base-300 md:border-b-0 md:border-r bg-base-200">
         <div class="p-4">
-          <a href="/" class="text-xl font-brand text-primary">🏰 Camelot Docs</a>
+          <a href="/" class="text-xl font-brand text-primary">🏰 Camelot AI Docs</a>
         </div>
         <.nav_tree node={@tree} current={@current} />
       </aside>

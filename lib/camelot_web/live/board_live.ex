@@ -8,6 +8,7 @@ defmodule CamelotWeb.BoardLive do
 
   import CamelotWeb.BoardComponents
 
+  alias AshPhoenix.Form
   alias Camelot.Agents.Agent
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
@@ -16,6 +17,7 @@ defmodule CamelotWeb.BoardLive do
   alias Phoenix.LiveView.Socket
 
   require Ash.Query
+  require Logger
 
   @impl true
   @spec mount(map(), map(), Socket.t()) ::
@@ -27,7 +29,7 @@ defmodule CamelotWeb.BoardLive do
 
     socket =
       socket
-      |> assign(see_all: params["scope"] == "all")
+      |> assign(see_all: params["scope"] == "all", new_task_open?: false)
       |> load_board()
       |> allow_upload(:attachment, accept: :any, max_entries: 5, max_file_size: 25_000_000)
 
@@ -47,17 +49,20 @@ defmodule CamelotWeb.BoardLive do
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   @impl true
-  @task_fields ~w(title description priority project_id agent_id)
-
-  def handle_event("validate_task", params, socket) do
-    {:noreply, assign(socket, task_form: to_form(Map.take(params, @task_fields)))}
+  def handle_event("open_new_task", _params, socket) do
+    {:noreply, assign(socket, new_task_open?: true)}
   end
 
-  def handle_event("create_task", params, socket) do
-    user = socket.assigns.current_user
-    task_params = Map.take(params, @task_fields)
+  def handle_event("close_new_task", _params, socket) do
+    {:noreply, assign(socket, new_task_open?: false)}
+  end
 
-    case Ash.create(Task, Map.put(task_params, "creator_id", user.id)) do
+  def handle_event("validate_task", %{"task" => params}, socket) do
+    {:noreply, assign(socket, task_form: Form.validate(socket.assigns.task_form, params))}
+  end
+
+  def handle_event("create_task", %{"task" => params}, socket) do
+    case Form.submit(socket.assigns.task_form, params: params) do
       {:ok, task} ->
         consume_uploaded_entries(socket, :attachment, fn %{path: tmp_path}, entry ->
           {:ok, TaskAttachments.store!(task.id, tmp_path, entry)}
@@ -67,11 +72,20 @@ defmodule CamelotWeb.BoardLive do
 
         {:noreply,
          socket
+         |> assign(
+           new_task_open?: false,
+           task_form: new_task_form(socket.assigns.current_user)
+         )
          |> put_flash(:info, "Task created")
          |> load_board()}
 
-      {:error, _changeset} ->
-        {:noreply, put_flash(socket, :error, "Failed to create task")}
+      {:error, form} ->
+        Logger.warning("Task creation failed: #{inspect(Form.errors(form, format: :simple))}")
+
+        {:noreply,
+         socket
+         |> assign(task_form: form)
+         |> put_flash(:error, "Failed to create task")}
     end
   end
 
@@ -112,7 +126,7 @@ defmodule CamelotWeb.BoardLive do
     tasks =
       Task
       |> Scope.maybe_scope(user, see_all, &Scope.scope_tasks/2)
-      |> Ash.read!(load: [:project, :sessions])
+      |> Ash.read!(load: [:project, :waiting_for_slot?])
 
     projects =
       Project
@@ -129,21 +143,39 @@ defmodule CamelotWeb.BoardLive do
          end)}
       end)
 
-    assign(socket,
+    socket
+    |> assign(
       page_title: "Board",
       columns: columns,
       projects: projects,
-      agents: agents,
-      task_form:
-        to_form(%{
-          "title" => "",
-          "description" => "",
-          "priority" => "0",
-          "project_id" => "",
-          "agent_id" => ""
-        })
+      agents: agents
     )
+    |> assign_new(:task_form, fn -> new_task_form(user) end)
   end
+
+  @spec new_task_form(Camelot.Accounts.User.t()) :: Phoenix.HTML.Form.t()
+  defp new_task_form(user) do
+    Task
+    |> Form.for_create(:create,
+      as: "task",
+      actor: user,
+      forms: [auto?: false],
+      params: %{"priority" => "0"},
+      prepare_params: &drop_blank_priority/2,
+      prepare_source: &Ash.Changeset.set_argument(&1, :creator_id, user.id)
+    )
+    |> to_form()
+  end
+
+  # A cleared number input arrives as "", which would fail the
+  # non-nillable `priority` attribute instead of falling back to
+  # its default.
+  @spec drop_blank_priority(map(), atom()) :: map()
+  defp drop_blank_priority(%{"priority" => ""} = params, _type) do
+    Map.delete(params, "priority")
+  end
+
+  defp drop_blank_priority(params, _type), do: params
 
   defp broadcast_task_event(event, task) do
     Phoenix.PubSub.broadcast(
@@ -169,7 +201,7 @@ defmodule CamelotWeb.BoardLive do
           </button>
           <button
             class="btn btn-primary btn-sm"
-            phx-click={show_modal("new-task-modal")}
+            phx-click={show_modal("new-task-modal") |> JS.push("open_new_task")}
           >
             New Task
           </button>
@@ -190,15 +222,16 @@ defmodule CamelotWeb.BoardLive do
         </.column>
       </div>
 
-      <.modal id="new-task-modal">
+      <.modal
+        id="new-task-modal"
+        show={@new_task_open?}
+        on_cancel={hide_modal("new-task-modal") |> JS.push("close_new_task")}
+      >
         <h3 class="font-bold text-lg mb-4">New Task</h3>
         <.simple_form
           for={@task_form}
           phx-change="validate_task"
-          phx-submit={
-            hide_modal("new-task-modal")
-            |> JS.push("create_task")
-          }
+          phx-submit="create_task"
           id="new-task-form"
         >
           <.input
@@ -218,6 +251,7 @@ defmodule CamelotWeb.BoardLive do
             label="Project"
             prompt="Select project"
             options={Enum.map(@projects, &{&1.name, &1.id})}
+            required
           />
           <.input
             field={@task_form[:agent_id]}
@@ -225,6 +259,7 @@ defmodule CamelotWeb.BoardLive do
             label="CLI Agent"
             prompt="Select agent CLI"
             options={Enum.map(@agents, &{&1.name, &1.id})}
+            required
           />
           <.input
             field={@task_form[:priority]}

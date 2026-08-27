@@ -1,7 +1,7 @@
 defmodule Camelot.Mailer.Layout do
   @moduledoc """
   Shared branded HTML shell for all system emails: dark header with
-  the "Camelot AI" wordmark, white card body, purple CTA button, and
+  the "🏰 Camelot AI" wordmark, white card body, purple CTA button, and
   a gray fallback-link footer.
   """
 
@@ -19,7 +19,7 @@ defmodule Camelot.Mailer.Layout do
         <div style="background: #1a1a2e; padding: 32px 24px; text-align: center;">
           <h1 style="font-family: 'MedievalSharp', cursive; font-weight: 900; \
     letter-spacing: 0.025em; color: #ffffff; font-size: 24px; margin: 0;">
-            Camelot AI
+            🏰 Camelot AI
           </h1>
         </div>
         <div style="padding: 32px 24px;">

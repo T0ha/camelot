@@ -35,7 +35,7 @@ defmodule Camelot.Accounts.User.Changes.SendInvitationEmailTest do
         )
         |> Ash.create()
 
-      assert_email_sent(subject: "You're invited to Camelot AI")
+      assert_email_sent(subject: "You're invited to 🏰 Camelot AI")
       assert_no_email_sent()
     end
 

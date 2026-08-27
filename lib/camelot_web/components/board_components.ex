@@ -66,7 +66,7 @@ defmodule CamelotWeb.BoardComponents do
           {@task.description}
         </p>
         <div class="flex items-center gap-2 mt-1">
-          <.state_badge :if={@task.state} state={@task.state} />
+          <.state_badge :if={@task.state} state={display_state(@task)} />
           <span
             :if={@task.pr_url}
             class="badge badge-xs badge-outline"
@@ -113,12 +113,23 @@ defmodule CamelotWeb.BoardComponents do
     """
   end
 
+  # A task is flipped to :in_progress at dispatch, before its session
+  # is granted a runner slot, so :in_progress alone would report a
+  # task as running while it is still queued in the RunnerPool.
+  defp display_state(%{state: :in_progress, waiting_for_slot?: true}) do
+    :waiting_for_slot
+  end
+
+  defp display_state(%{state: state}), do: state
+
   defp format_stage(stage) do
     stage
     |> Atom.to_string()
     |> String.replace("_", " ")
     |> String.capitalize()
   end
+
+  defp format_state(:waiting_for_slot), do: "Waiting for a runner slot"
 
   defp format_state(state) do
     state
@@ -136,12 +147,14 @@ defmodule CamelotWeb.BoardComponents do
   defp stage_badge_class(_stage), do: "badge-ghost"
 
   defp state_badge_class(:queued), do: "badge-ghost"
+  defp state_badge_class(:waiting_for_slot), do: "badge-ghost"
   defp state_badge_class(:in_progress), do: "badge-primary"
   defp state_badge_class(:waiting_for_input), do: "badge-warning"
   defp state_badge_class(:error), do: "badge-error"
   defp state_badge_class(_state), do: "badge-ghost"
 
   defp state_emoji(:queued), do: "⏳"
+  defp state_emoji(:waiting_for_slot), do: "⏳"
   defp state_emoji(:in_progress), do: "🔃"
   defp state_emoji(:waiting_for_input), do: "💬"
   defp state_emoji(:error), do: "⚠️"

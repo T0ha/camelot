@@ -7,7 +7,7 @@ How the public documentation site is served and how to wire the CDN.
 
 ## How it works
 
-The docs site is **not** a separate app. It is served by the main Camelot
+The docs site is **not** a separate app. It is served by the main 🏰 Camelot AI
 Phoenix app through a dedicated, unauthenticated router scope bound to the
 `docs.` host:
 
@@ -20,7 +20,9 @@ Phoenix app through a dedicated, unauthenticated router scope bound to the
   `CamelotWeb.Plugs.DocsCacheControl`
   (`s-maxage=86400, stale-while-revalidate, stale-if-error`).
 - A minimal root layout (`layouts/docs_root.html.heex`) is used — no
-  LiveSocket / `app.js` — so pages are fully static and fast.
+  LiveSocket / `app.js`, only a small `docs.js` bundle that initializes
+  PostHog pageview tracking (when configured) — so pages are fully
+  static and fast, still with no cookies set server-side.
 
 Because responses carry no cookies and long `s-maxage`, a CDN can cache
 them at the edge and only hit the origin on a miss or revalidation.
