@@ -25,6 +25,12 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   which wedged the auto-fix indefinitely. See git history to restore it
   with a robust identity check.)
 
+  A `CHANGES_REQUESTED` verdict is subject to the same staleness guards
+  as comments: only a reviewer's *current* verdict counts (GitHub keeps
+  every review ever submitted, forever), and it must be newer than the
+  last commit and unseen. Without those guards one undismissed review
+  re-dispatched the agent every two minutes for eight hours.
+
   Those automatic re-dispatches are capped at a configurable number of
   consecutive attempts (see `max_auto_fix_attempts/0`, default 2), so a
   task the agent cannot fix stops looping and is left for human review.
@@ -199,19 +205,21 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   defp apply_waiting_for_input(task, pr, reviews, comments, commits, check_runs) do
     auto_fixable? = merge_conflict?(pr) or ci_failing?(check_runs)
     maybe_log_auto_fix_cap(task, auto_fixable?)
+    commit_date = last_commit_date(commits)
+    seen_at = task.pr_comments_seen_at
 
     cond do
       auto_fixable? and auto_fix_available?(task) ->
-        request_changes(task, comments, task.pr_auto_fix_attempts + 1)
+        request_changes(task, comments, reviews, task.pr_auto_fix_attempts + 1)
 
-      has_review_state?(reviews, "CHANGES_REQUESTED") ->
-        request_changes(task, comments, 0)
+      changes_requested?(reviews, commit_date, seen_at) ->
+        request_changes(task, comments, reviews, 0)
 
-      has_review_state?(reviews, "APPROVED") ->
+      approved?(reviews) ->
         transition(task, :complete)
 
-      has_new_comments?(task, comments, commits) ->
-        request_changes(task, comments, 0)
+      new_comments?(comments, commit_date, seen_at) ->
+        request_changes(task, comments, reviews, 0)
 
       true ->
         :ok
@@ -300,13 +308,65 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
     end)
   end
 
-  defp has_review_state?(reviews, state) do
-    Enum.any?(reviews, &(&1["state"] == state))
+  @review_states ~w(APPROVED CHANGES_REQUESTED DISMISSED)
+
+  @doc """
+  Reduces a PR's review list to each reviewer's current verdict.
+
+  GitHub returns every review ever submitted, forever, so scanning the
+  raw list reports a verdict the reviewer has already superseded. Only
+  the latest state-bearing review per reviewer counts; `COMMENTED` and
+  `PENDING` reviews carry no verdict and never supersede one.
+  """
+  @spec latest_reviews([map()]) :: [map()]
+  def latest_reviews(reviews) do
+    reviews
+    |> Enum.filter(&(&1["state"] in @review_states))
+    |> Enum.group_by(&reviewer_login/1)
+    |> Enum.map(fn {_login, submitted} ->
+      Enum.max_by(submitted, &review_date/1)
+    end)
   end
 
-  defp has_new_comments?(task, comments, commits) do
-    new_comments?(comments, last_commit_date(commits), task.pr_comments_seen_at)
+  @doc """
+  True if a reviewer's current verdict is an unaddressed
+  `CHANGES_REQUESTED`.
+
+  A review never expires, so a bare state check re-fires on every poll
+  forever. The guards the comment path uses apply here too: the verdict
+  must be newer than the last commit — pushing a fix addresses it — and
+  unseen since the last dispatch.
+  """
+  @spec changes_requested?([map()], String.t() | nil, DateTime.t() | nil) ::
+          boolean()
+  def changes_requested?(reviews, last_commit_date, seen_at) do
+    reviews
+    |> latest_reviews()
+    |> Enum.any?(fn review ->
+      review["state"] == "CHANGES_REQUESTED" and
+        unaddressed?(review_date(review), last_commit_date, seen_at)
+    end)
   end
+
+  @doc """
+  True if a reviewer's current verdict is `APPROVED`.
+
+  Checked against current verdicts, so a reviewer who requested changes
+  and later approved completes the task instead of being read as still
+  blocking it.
+  """
+  @spec approved?([map()]) :: boolean()
+  def approved?(reviews) do
+    reviews
+    |> latest_reviews()
+    |> Enum.any?(&(&1["state"] == "APPROVED"))
+  end
+
+  defp reviewer_login(%{"user" => %{"login" => login}}), do: login
+  defp reviewer_login(_review), do: nil
+
+  defp review_date(%{"submitted_at" => submitted_at}), do: submitted_at
+  defp review_date(_review), do: nil
 
   @doc """
   True if any comment is newer than the last commit AND unseen.
@@ -322,9 +382,14 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   @spec new_comments?([map()], String.t() | nil, DateTime.t() | nil) :: boolean()
   def new_comments?(comments, last_commit_date, seen_at) do
     Enum.any?(comments, fn comment ->
-      created = comment["created_at"]
-      newer_than_commit?(created, last_commit_date) and unseen?(created, seen_at)
+      unaddressed?(comment["created_at"], last_commit_date, seen_at)
     end)
+  end
+
+  # Feedback is worth acting on only when the agent has not already
+  # answered it: newer than the last commit, and past the seen marker.
+  defp unaddressed?(created, last_commit_date, seen_at) do
+    newer_than_commit?(created, last_commit_date) and unseen?(created, seen_at)
   end
 
   defp newer_than_commit?(_created, nil), do: true
@@ -342,19 +407,31 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
     end
   end
 
-  defp latest_comment_date(comments) do
-    comments
-    |> Enum.map(& &1["created_at"])
+  @doc """
+  The marker to record as "feedback seen up to here".
+
+  Spans both feedback surfaces — comments and review verdicts — so a
+  body-less `CHANGES_REQUESTED` review is marked seen too. Marking only
+  the latest comment would leave a newer review permanently unseen, and
+  re-dispatch it on every poll.
+  """
+  @spec feedback_seen_at([map()], [map()]) :: DateTime.t()
+  def feedback_seen_at(comments, reviews) do
+    dates =
+      Enum.map(comments, & &1["created_at"]) ++
+        Enum.map(reviews, &review_date/1)
+
+    dates
     |> Enum.reject(&is_nil/1)
     |> Enum.max(fn -> nil end)
+    |> parse_seen_at()
   end
 
-  defp request_changes(task, comments, attempts) do
-    seen_at =
-      case latest_comment_date(comments) do
-        nil -> DateTime.utc_now()
-        iso -> parse_github_datetime(iso)
-      end
+  defp parse_seen_at(nil), do: DateTime.utc_now()
+  defp parse_seen_at(iso), do: parse_github_datetime(iso)
+
+  defp request_changes(task, comments, reviews, attempts) do
+    seen_at = feedback_seen_at(comments, reviews)
 
     case Ash.update(
            task,
