@@ -386,4 +386,99 @@ defmodule CamelotWeb.TaskLiveTest do
       assert kind in [:redirect, :live_redirect]
     end
   end
+
+  describe "provisioning progress" do
+    setup %{task: task} do
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+
+      {:ok, session} =
+        Ash.create(Session, %{agent_id: task.agent_id, task_id: task.id})
+
+      {:ok, session} = Ash.update(session, %{}, action: :mark_running)
+
+      %{task: task, session: session}
+    end
+
+    # The "frozen page" report: a session sits `running` for minutes
+    # while Swarm pulls the image and the entrypoint clones + installs,
+    # and the card said nothing at all.
+    test "a running session with no output yet shows a runner status line",
+         %{conn: conn, task: task} do
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ "Runner status"
+      assert html =~ "Preparing the runner"
+      refute html =~ "Live output"
+    end
+
+    test "a broadcast progress line replaces the generic placeholder",
+         %{conn: conn, task: task, session: session} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      send(
+        view.pid,
+        {:runner_progress, task.id,
+         %{
+           session_id: session.id,
+           phase: :pulling_image,
+           message: "Pulling the runner image…",
+           at: DateTime.utc_now()
+         }}
+      )
+
+      html = render(view)
+
+      assert html =~ "Pulling the runner image"
+      refute html =~ "Preparing the runner"
+    end
+
+    test "progress for another session is ignored", %{conn: conn, task: task} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      send(
+        view.pid,
+        {:runner_progress, task.id,
+         %{
+           session_id: Ash.UUID.generate(),
+           phase: :pulling_image,
+           message: "Pulling the runner image…",
+           at: DateTime.utc_now()
+         }}
+      )
+
+      html = render(view)
+
+      refute html =~ "Pulling the runner image"
+      assert html =~ "Preparing the runner"
+    end
+
+    # A viewer opening the page mid-provisioning gets the last line
+    # from the session row rather than a bare placeholder.
+    test "the persisted progress line renders on mount",
+         %{conn: conn, task: task, session: session} do
+      {:ok, _session} =
+        Ash.update(
+          session,
+          %{progress_phase: :workspace, progress_message: "Setting up the workspace…"},
+          action: :report_progress
+        )
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ "Setting up the workspace"
+    end
+
+    test "the status line gives way to live output once the agent speaks",
+         %{conn: conn, task: task} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      send(view.pid, {:agent_output, task.id, ~s({"type":"result","result":"hello"}\n)})
+
+      html = render(view)
+
+      assert html =~ "Live output"
+      assert html =~ "hello"
+      refute html =~ "Runner status"
+    end
+  end
 end
