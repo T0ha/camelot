@@ -39,6 +39,12 @@ defmodule Camelot.Runtime.Runner.Swarm.ProvisionMonitor do
   # Entrypoint lines are short; a handful covers the tail.
   @log_tail 5
 
+  # The log tail is decoration: it must never keep the monitor alive
+  # past the hand-off. `stop/1` is synchronous, so any request in
+  # flight when `ExecSession` finishes delays the tear-down by at most
+  # this long.
+  @log_timeout_ms 3_000
+
   @entrypoint_prefix "[entrypoint] "
 
   defstruct [:task_id, :session_id, :service_name, :last]
@@ -71,12 +77,21 @@ defmodule Camelot.Runtime.Runner.Swarm.ProvisionMonitor do
     end
   end
 
+  @doc """
+  Stop watching. Synchronous, so once it returns no further
+  progress line can come from this monitor — which is what lets
+  `ExecSession` report "agent started" last, without a probe
+  that was already in flight overwriting it.
+
+  Safe to call twice, or on a monitor that has already died.
+  """
   @spec stop(pid() | nil) :: :ok
   def stop(nil), do: :ok
 
   def stop(pid) when is_pid(pid) do
-    if Process.alive?(pid), do: GenServer.stop(pid, :normal)
-    :ok
+    GenServer.stop(pid, :normal)
+  catch
+    :exit, _reason -> :ok
   end
 
   # --- GenServer ---
@@ -161,8 +176,21 @@ defmodule Camelot.Runtime.Runner.Swarm.ProvisionMonitor do
 
   def describe_tasks(tasks) do
     tasks
-    |> Enum.max_by(&(&1["CreatedAt"] || ""), fn -> nil end)
+    |> Enum.max_by(&created_at/1, DateTime, fn -> nil end)
     |> describe_task()
+  end
+
+  # `CreatedAt` is RFC3339Nano, but Docker is not consistent about
+  # fractional-second precision across daemon versions — and
+  # lexicographic ordering gets that wrong ("…:00Z" sorts after
+  # "…:00.000000000Z"). Compare real timestamps instead. A record
+  # without a parseable stamp sorts oldest, so it can never mask a
+  # live replica.
+  defp created_at(task) do
+    case DateTime.from_iso8601(task["CreatedAt"] || "") do
+      {:ok, datetime, _offset} -> datetime
+      {:error, _reason} -> DateTime.from_unix!(0)
+    end
   end
 
   defp describe_task(nil), do: {:provisioning, "Creating the runner service…"}
@@ -265,7 +293,9 @@ defmodule Camelot.Runtime.Runner.Swarm.ProvisionMonitor do
            Req.get(node_req,
              url: "/containers/#{container_id}/logs",
              params: [stdout: true, stderr: true, tail: @log_tail],
-             decode_body: false
+             decode_body: false,
+             receive_timeout: @log_timeout_ms,
+             retry: false
            ) do
       entrypoint_line(body)
     else

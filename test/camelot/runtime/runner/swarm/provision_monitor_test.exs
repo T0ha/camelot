@@ -93,9 +93,46 @@ defmodule Camelot.Runtime.Runner.Swarm.ProvisionMonitorTest do
       assert {:pulling_image, _} = ProvisionMonitor.describe_tasks([new, old])
     end
 
+    # Docker is inconsistent about fractional-second precision, and
+    # lexicographic ordering gets that wrong: "…:00Z" sorts *after*
+    # "…:00.5Z" even though it is half a second older.
+    test "mixed timestamp precision still picks the newest replica" do
+      old =
+        swarm_task("shutdown",
+          created_at: "2026-08-28T09:20:00Z",
+          desired: "shutdown"
+        )
+
+      new = swarm_task("preparing", created_at: "2026-08-28T09:20:00.500000000Z")
+
+      assert {:pulling_image, _} = ProvisionMonitor.describe_tasks([old, new])
+    end
+
+    test "an unparseable timestamp sorts oldest and cannot mask a live replica" do
+      undated = swarm_task("shutdown", created_at: "not-a-timestamp", desired: "shutdown")
+      current = swarm_task("running")
+
+      assert {:running, "container-a", "node-a"} =
+               ProvisionMonitor.describe_tasks([undated, current])
+    end
+
     test "a running replica without a container id keeps waiting" do
       assert {:starting, _message} =
                ProvisionMonitor.describe_tasks([swarm_task("running", cid: nil)])
+    end
+  end
+
+  describe "stop/1" do
+    # `ExecSession` stops the monitor before reporting its last line,
+    # and again in an `after` block — so a second stop, or a stop of a
+    # monitor that already died, must not raise.
+    test "is a no-op for a dead or absent monitor" do
+      pid = spawn(fn -> :ok end)
+      ref = Process.monitor(pid)
+      assert_receive {:DOWN, ^ref, :process, ^pid, _reason}
+
+      assert ProvisionMonitor.stop(pid) == :ok
+      assert ProvisionMonitor.stop(nil) == :ok
     end
   end
 

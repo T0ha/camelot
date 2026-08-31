@@ -38,8 +38,11 @@ Phases, in the order a session normally passes through them:
 | `:workspace` | `ProvisionMonitor` | Setting up the workspace: asdf install (from .tool-versions) |
 | `:running` | `ExecSession` | Agent started — waiting for its first output… |
 
-Only the pool phases are backend-agnostic; the middle four come from
-the Swarm backend, which is where the long waits actually happen.
+The queue phases are backend-agnostic. `:pulling_image` is reported by
+both backends — `ProvisionMonitor` for the Swarm one and
+`DockerEngine.TaskContainer` when a local pull is needed. The
+remaining lines come from the Swarm backend, which is where the long
+waits actually happen.
 
 ## ProvisionMonitor
 

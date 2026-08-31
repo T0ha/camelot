@@ -62,9 +62,16 @@ defmodule Camelot.Runtime.ProgressTest do
       assert :ok = Progress.report(task.id, Ash.UUID.generate(), :starting, "Starting…")
     end
 
-    test "a session without a task still persists", %{session: session} do
+    test "a session without a task persists but broadcasts nowhere", %{
+      task: task,
+      session: session
+    } do
+      Phoenix.PubSub.subscribe(Camelot.PubSub, "task:#{task.id}")
+
       assert :ok = Progress.report(nil, session.id, :queued, "Queued for a runner slot")
+
       assert Ash.get!(Session, session.id).progress_message == "Queued for a runner slot"
+      refute_receive {:runner_progress, _task_id, _payload}, 100
     end
   end
 end

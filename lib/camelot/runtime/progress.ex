@@ -19,7 +19,10 @@ defmodule Camelot.Runtime.Progress do
 
   Best-effort by design: a progress line is never worth
   failing a run over, so persistence errors are logged and
-  swallowed.
+  swallowed. The broadcast still goes out when the write
+  fails — an open page showing the current line beats an
+  open page showing nothing, and the only cost is that a
+  reload falls back to the last line that did persist.
   """
 
   alias Camelot.Agents.Session

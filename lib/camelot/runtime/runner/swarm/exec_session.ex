@@ -200,6 +200,11 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
             exec_id: exec_id
         }
 
+        # Stop before the last line, not after: `stop/1` is synchronous,
+        # so a probe already in flight finishes (and reports) first and
+        # cannot overwrite "agent started". The `after` below then only
+        # covers the error paths.
+        ProvisionMonitor.stop(monitor)
         report_progress(state, :running, "Agent started — waiting for its first output…")
 
         {:ok, kick_off_streams(state)}
