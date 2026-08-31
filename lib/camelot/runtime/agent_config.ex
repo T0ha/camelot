@@ -12,7 +12,13 @@ defmodule Camelot.Runtime.AgentConfig do
   """
 
   alias Camelot.Agents.Agent
+  alias Camelot.Agents.ClaudeCodeDefaults
   alias Camelot.Projects.Project
+  alias Camelot.Prompts.Renderer
+
+  require Logger
+
+  @placeholder ~r/^\{\{prompt:(.+)\}\}$/
 
   @enforce_keys [:parser, :executable]
   defstruct command_prefix: nil,
@@ -81,6 +87,28 @@ defmodule Camelot.Runtime.AgentConfig do
     }
   end
 
+  @doc """
+  Resolves `{{prompt:<slug>}}` placeholders inside
+  `config.permission_args_by_stage` against the `PromptTemplate`
+  project → user → system-global resolution (see
+  `Camelot.Prompts.Renderer.render/4`).
+
+  Only touches `permission_args_by_stage` — never the task prompt or
+  allowed-tools list, so a task's title/description text is never
+  misinterpreted as a placeholder. Kept separate from `resolve/2` (DB-
+  free) and `build_cli_args/4` (whose structural-equality regression
+  tests must keep passing unmodified against the raw placeholder).
+  """
+  @spec render_permission_args(t(), String.t() | nil, String.t() | nil) :: t()
+  def render_permission_args(%__MODULE__{} = config, project_id, user_id) do
+    rendered =
+      Map.new(config.permission_args_by_stage, fn {stage, args} ->
+        {stage, Enum.map(args, &render_arg(&1, project_id, user_id))}
+      end)
+
+    %{config | permission_args_by_stage: rendered}
+  end
+
   @spec prefix_tokens(t(), String.t()) :: [String.t()]
   def prefix_tokens(%__MODULE__{command_prefix: nil}, _project_path), do: []
 
@@ -117,6 +145,34 @@ defmodule Camelot.Runtime.AgentConfig do
 
   defp stage_args(config, task_stage) do
     Map.get(config.permission_args_by_stage, to_string(task_stage), [])
+  end
+
+  defp render_arg(arg, project_id, user_id) do
+    case Regex.run(@placeholder, arg) do
+      [_, slug] -> render_prompt(slug, project_id, user_id)
+      nil -> arg
+    end
+  end
+
+  defp render_prompt(slug, project_id, user_id) do
+    case Renderer.render(slug, project_id, user_id, %{}) do
+      {:ok, body} -> body
+      {:error, :template_not_found} -> fallback_for(slug)
+    end
+  end
+
+  # A deleted/missing row must never blank out the system prompt (that
+  # would silently strip e.g. "always open a PR" from every run) —
+  # fall back to the built-in default and log loudly instead.
+  defp fallback_for(slug) do
+    Logger.warning("Missing PromptTemplate #{slug}; using built-in default")
+
+    case slug do
+      "claude_planning_system_prompt" -> ClaudeCodeDefaults.planning_system_prompt()
+      "claude_execution_system_prompt" -> ClaudeCodeDefaults.execution_system_prompt()
+      "claude_pr_system_prompt" -> ClaudeCodeDefaults.pr_system_prompt()
+      _ -> ""
+    end
   end
 
   defp tools_args(%__MODULE__{tools_flag: nil}, _tools), do: []

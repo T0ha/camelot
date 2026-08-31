@@ -7,9 +7,14 @@ defmodule Camelot.Runtime.AgentConfigTest do
   """
   use Camelot.DataCase, async: true
 
+  import ExUnit.CaptureLog
+
   alias Camelot.Agents.ClaudeCodeDefaults
   alias Camelot.Projects.Project
+  alias Camelot.Prompts.PromptTemplate
   alias Camelot.Runtime.AgentConfig
+
+  require Ash.Query
 
   setup do
     %{
@@ -113,6 +118,95 @@ defmodule Camelot.Runtime.AgentConfigTest do
         )
 
       assert args == ["--quiet", "hello"]
+    end
+  end
+
+  describe "render_permission_args/3" do
+    test "substitutes all three stages' placeholders with the seeded body text", ctx do
+      rendered = AgentConfig.render_permission_args(ctx.claude, nil, nil)
+
+      assert ClaudeCodeDefaults.planning_system_prompt() in rendered.permission_args_by_stage["planning"]
+      assert ClaudeCodeDefaults.execution_system_prompt() in rendered.permission_args_by_stage["executing"]
+
+      assert rendered.permission_args_by_stage["pr"] ==
+               ["--append-system-prompt", ""]
+    end
+
+    test "a project-scoped PromptTemplate with the same slug wins over the system-global one",
+         ctx do
+      {:ok, project} =
+        Ash.create(Project, %{
+          name: "arp-proj-#{System.unique_integer()}",
+          path: "/tmp/arp"
+        })
+
+      {:ok, _override} =
+        Ash.create(PromptTemplate, %{
+          slug: "claude_planning_system_prompt",
+          name: "Project Planning Override",
+          body: "CUSTOM PROJECT PLANNING PROMPT",
+          project_id: project.id
+        })
+
+      rendered = AgentConfig.render_permission_args(ctx.claude, project.id, nil)
+
+      assert "CUSTOM PROJECT PLANNING PROMPT" in rendered.permission_args_by_stage["planning"]
+    end
+
+    test "missing template falls back to the literal ClaudeCodeDefaults text and logs a warning",
+         ctx do
+      Enum.each(
+        ~w(claude_planning_system_prompt claude_execution_system_prompt claude_pr_system_prompt),
+        fn slug ->
+          PromptTemplate
+          |> Ash.Query.filter(slug == ^slug and is_nil(project_id) and is_nil(user_id))
+          |> Ash.read_one!()
+          |> Ash.destroy!()
+        end
+      )
+
+      {rendered, log} =
+        with_log(fn -> AgentConfig.render_permission_args(ctx.claude, nil, nil) end)
+
+      assert ClaudeCodeDefaults.planning_system_prompt() in rendered.permission_args_by_stage["planning"]
+      assert ClaudeCodeDefaults.execution_system_prompt() in rendered.permission_args_by_stage["executing"]
+      assert rendered.permission_args_by_stage["pr"] == ["--append-system-prompt", ""]
+      assert log =~ "Missing PromptTemplate"
+    end
+
+    test "non-placeholder strings pass through unchanged", ctx do
+      rendered = AgentConfig.render_permission_args(ctx.claude, nil, nil)
+
+      assert "--permission-mode" in rendered.permission_args_by_stage["planning"]
+      assert "plan" in rendered.permission_args_by_stage["planning"]
+      assert "--permission-mode" in rendered.permission_args_by_stage["executing"]
+      assert "acceptEdits" in rendered.permission_args_by_stage["executing"]
+    end
+
+    test "a permission_args_by_stage_override with literal text (no placeholder) passes through untouched" do
+      agent = agent_struct()
+
+      project = %Project{
+        path: "/p",
+        permission_args_by_stage_override: %{
+          "executing" => [
+            "--permission-mode",
+            "acceptEdits",
+            "--append-system-prompt",
+            "Old literal text"
+          ]
+        }
+      }
+
+      config = AgentConfig.resolve(agent, project)
+      rendered = AgentConfig.render_permission_args(config, nil, nil)
+
+      assert rendered.permission_args_by_stage["executing"] == [
+               "--permission-mode",
+               "acceptEdits",
+               "--append-system-prompt",
+               "Old literal text"
+             ]
     end
   end
 

@@ -596,7 +596,10 @@ defmodule Camelot.Runtime.TaskRunner do
         authorize?: false
       )
 
-    config = AgentConfig.resolve(task.agent, task.project)
+    config =
+      task.agent
+      |> AgentConfig.resolve(task.project)
+      |> AgentConfig.render_permission_args(task.project_id, task.creator_id)
 
     cli_args =
       AgentConfig.build_cli_args(
