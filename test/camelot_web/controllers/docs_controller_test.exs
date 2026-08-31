@@ -13,6 +13,7 @@ defmodule CamelotWeb.DocsControllerTest do
 
       assert body =~ "Self Hosting"
       assert body =~ "GitHub App"
+      assert body =~ "Cloud"
       # internal (unpublished) docs never appear
       refute body =~ "Session adoption"
     end
@@ -40,6 +41,14 @@ defmodule CamelotWeb.DocsControllerTest do
     test "returns 404 for an unknown slug", %{conn: conn} do
       conn = get(conn, "/self-hosting/does-not-exist")
       assert response(conn, 404)
+    end
+
+    test "renders the cloud get-started page", %{conn: conn} do
+      conn = get(conn, "/cloud/get-started")
+      body = html_response(conn, 200)
+
+      assert body =~ "Get Started"
+      assert body =~ "<h1>"
     end
   end
 
