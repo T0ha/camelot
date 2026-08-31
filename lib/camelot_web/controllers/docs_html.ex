@@ -16,22 +16,48 @@ defmodule CamelotWeb.DocsHTML do
 
   def shell(assigns) do
     ~H"""
-    <div class="min-h-screen flex flex-col md:flex-row bg-base-100 text-base-content">
-      <aside class="md:w-72 shrink-0 border-b border-base-300 md:border-b-0 md:border-r bg-base-200">
-        <div class="p-4">
-          <a href="/" class="text-xl font-brand text-primary">🏰 Camelot AI Docs</a>
+    <div class="min-h-screen flex flex-col bg-base-100 text-base-content">
+      <header class="navbar px-4 sm:px-6 lg:px-8 bg-base-200 border-b border-base-300">
+        <div class="flex-1">
+          <a href="/" class="text-xl font-brand text-primary">
+            🏰 Camelot AI Docs
+          </a>
         </div>
-        <.nav_tree node={@tree} current={@current} />
-      </aside>
+        <div class="flex-none">
+          <ul class="flex px-1 space-x-2 items-center">
+            <li>
+              <a href={sign_in_url()} class="btn btn-ghost btn-sm">
+                Sign In
+              </a>
+            </li>
+            <li>
+              <a href={sign_in_url()} class="btn btn-primary btn-sm">
+                Sign Up
+              </a>
+            </li>
+          </ul>
+        </div>
+      </header>
 
-      <main class="flex-1 min-w-0 px-6 py-8">
-        <article class="prose max-w-3xl mx-auto">
-          {render_slot(@inner_block)}
-        </article>
-      </main>
+      <div class="flex-1 flex flex-col md:flex-row">
+        <aside class="md:w-72 shrink-0 border-b border-base-300 md:border-b-0 md:border-r bg-base-200">
+          <div class="p-4">
+            <.nav_tree node={@tree} current={@current} />
+          </div>
+        </aside>
+
+        <main class="flex-1 min-w-0 px-6 py-8">
+          <article class="prose max-w-3xl mx-auto">
+            {render_slot(@inner_block)}
+          </article>
+        </main>
+      </div>
     </div>
     """
   end
+
+  @spec sign_in_url() :: String.t()
+  defp sign_in_url, do: CamelotWeb.Endpoint.url() <> "/sign-in"
 
   @doc """
   Recursively render a `Camelot.Docs.tree/0` node as a nested daisyUI
