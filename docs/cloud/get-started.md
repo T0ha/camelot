@@ -1,14 +1,20 @@
+%{
+  title: "Get Started",
+  description: "Sign in, connect GitHub, and ship your first AI-driven task on Camelot Cloud.",
+  order: 1,
+  published: true
+}
+---
 # Get Started
 
-This is a task-by-task walkthrough of Camelot's core loop: sign in, wire up
-a project and an agent, create a task, and follow it all the way to a
-merged pull request.
+This is a task-by-task walkthrough of Camelot's core loop: sign in,
+connect GitHub, create a project, and create a task, then follow it
+all the way to a merged pull request.
 
 ## Prerequisites
 
-You need an email address that's already been granted access to your
-team's Camelot workspace — someone on your team invites you before you
-can sign in. This guide uses Camelot Cloud at
+All you need is an email address — Camelot Cloud is open for anyone to
+register, no invite required. This guide uses Camelot Cloud at
 [app.camelotai.tech](https://app.camelotai.tech); everything below
 assumes you're signed in there.
 
@@ -26,24 +32,26 @@ keypair for you automatically (more on that in
 
 Visit `/profile` to finish your personal setup:
 
-- **SSH key** — Camelot already generated an Ed25519 keypair for you on
-  first sign-in. Copy the public key shown here and add it to
-  [github.com/settings/keys](https://github.com/settings/keys) (or any
-  other git host) so runners can clone your private repos. If you ever
-  need to replace it, "Generate new key" rotates it — remember to update
-  it everywhere the old key was installed.
+- **SSH key** — Camelot already generated an Ed25519 keypair for you
+  on first sign-in and mounts it into every runner automatically —
+  there's nothing you need to do with it. It's only relevant if you
+  want a runner to reach a repo that isn't covered by the GitHub App
+  below (e.g. a private repo on another git host); in that case, copy
+  the public key shown here and add it to that host.
 - **GitHub App** — if your workspace has a GitHub App configured,
-  **Connect GitHub App** sends you to GitHub's installation flow; once
-  installed, runners push over HTTPS using your installation instead of
-  your SSH key, and Camelot can poll PR/issue status for tasks you
-  create. **Disconnect** removes it any time — runners fall back to your
-  SSH key.
-- **Credentials** — add any API keys your agents need: a Claude, OpenAI,
-  or Codex API key, or a generic secret. Pick a **Kind**, give it a
-  **Name**, and paste the **Value**. These are encrypted at rest and
-  shipped securely to runner containers. Pasted GitHub personal access
-  tokens or OAuth tokens aren't supported — use the GitHub App above for
-  git/GitHub access instead.
+  **Connect GitHub App** sends you to GitHub's installation flow;
+  once installed, runners push over HTTPS using your installation
+  and Camelot can poll PR/issue status for tasks you create. This is
+  the recommended way to connect GitHub — most users don't need to
+  touch the SSH key at all. **Disconnect** removes it any time.
+- **Credentials** — add any API keys your agents need: a Claude,
+  OpenAI, or Codex API key, or a generic secret. Pick a **Kind**, give
+  it a **Name**, and paste the **Value**. These are encrypted at rest
+  and shipped securely to runner containers. Pasted GitHub personal
+  access tokens or OAuth tokens aren't supported — use the GitHub App
+  above for git/GitHub access instead. Right now, **Claude Code is the
+  only Agent CLI that's fully integrated and tested** — start with a
+  Claude API key unless you know you need another provider.
 
 ## 3. Create a project
 
@@ -64,34 +72,23 @@ local path under `~/projects/<slug>` if you don't pick one with the
 
 Click **Save**.
 
-## 4. Add an agent
-
-Go to `/agents/new` and fill in:
-
-- **Name** — anything memorable
-- **Template** — the agent template to run; Claude Code is currently the
-  supported option
-- **Project** — the project this agent works on
-- **Max retries** — how many times it retries a failed run
-
-Click **Create Agent**. An agent is just a worker tied to one project — a
-project can have several.
-
-## 5. (Optional) Customize prompts
+## 4. (Optional) Customize prompts
 
 At `/prompts` you can define system/user prompt templates, scoped
 globally or to a specific project, with `{{title}}`, `{{description}}`,
 and `{{plan}}` placeholders. Skip this to start — Camelot ships with
 sensible defaults.
 
-## 6. Create your first task
+## 5. Create your first task
 
 On the board (`/`), click **New Task** and fill in **Title**,
-**Description**, **Project**, and **Priority**, then **Create Task**.
-You don't pick an agent here — Camelot dispatches the task to an
-available agent for that project automatically.
+**Description**, **Project**, **CLI Agent**, **Priority**, and
+**Attachments**, then **Create Task**. **CLI Agent** picks which Agent
+CLI template (e.g. Claude Code, Codex) runs the task; a workspace admin
+configures the available templates once under `/agents` — there's
+nothing to set up per-project.
 
-## 7. Review and approve the plan
+## 6. Review and approve the plan
 
 Once an agent picks up the task, it moves to `planning` and the agent
 writes a plan before touching any code. Open the task (`/tasks/:id`) to
@@ -102,13 +99,13 @@ read it under **Plan**, then either:
 
 Nothing gets implemented until you approve.
 
-## 8. Watch it execute
+## 7. Watch it execute
 
 After approval the task moves to `executing`, and the task page streams
 the agent's live output in real time under **Live output** — assistant
 messages, tool calls, and the final result, as they happen.
 
-## 9. Review and merge the PR
+## 8. Review and merge the PR
 
 When the agent finishes, it opens a pull request and the task moves to
 `pr`. The task page shows a **PR #&lt;number&gt;** link straight to
@@ -132,5 +129,6 @@ your first task shipped end-to-end.
 
 From here, tasks can also come to you instead of you creating them:
 Camelot syncs GitHub issues labeled `camelot` in as board tasks every 5
-minutes. See the README's [Roadmap](../README.md#roadmap) for what's
-coming next.
+minutes. See the README's
+[Roadmap](https://github.com/T0ha/camelot#roadmap) for what's coming
+next.

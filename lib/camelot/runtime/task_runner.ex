@@ -39,6 +39,7 @@ defmodule Camelot.Runtime.TaskRunner do
   alias Camelot.Runtime.AgentConfig
   alias Camelot.Runtime.EnvVarResolver
   alias Camelot.Runtime.OutputParser
+  alias Camelot.Runtime.Progress
   alias Camelot.Runtime.Runner
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.LocalPort
@@ -212,6 +213,8 @@ defmodule Camelot.Runtime.TaskRunner do
   @impl true
   def handle_info({:runner_slot, session_id}, state) do
     if state.current_session_id == session_id do
+      Progress.report(state.task_id, session_id, :provisioning, "Starting the runner…")
+
       case start_runner(state) do
         {:ok, runner_pid, config} ->
           mark_session_running(session_id, runner_pid)
@@ -515,7 +518,9 @@ defmodule Camelot.Runtime.TaskRunner do
         retry_number: retry_number
       })
 
-    {:ok, _} = RunnerPool.enqueue(task.creator_id, session.id, self())
+    {:ok, %{position: position}} = RunnerPool.enqueue(task.creator_id, session.id, self())
+
+    report_queued(state.task_id, session.id, position)
 
     {:ok,
      %{
@@ -533,6 +538,24 @@ defmodule Camelot.Runtime.TaskRunner do
     e ->
       Logger.error("TaskRunner enqueue failed: #{inspect(e)}")
       {:error, e}
+  end
+
+  # Position 0 means the pool dispatched the session immediately —
+  # the slot grant is already in our mailbox, so saying "queued"
+  # would only flicker. Anything else is a real wait worth showing.
+  defp report_queued(_task_id, _session_id, 0), do: :ok
+
+  defp report_queued(task_id, session_id, 1) do
+    Progress.report(task_id, session_id, :queued, "Queued — next in line for a runner slot")
+  end
+
+  defp report_queued(task_id, session_id, position) do
+    Progress.report(
+      task_id,
+      session_id,
+      :queued,
+      "Queued — #{position - 1} session(s) ahead in the queue"
+    )
   end
 
   # Re-attach to an already-running session after a restart. Rebuilds

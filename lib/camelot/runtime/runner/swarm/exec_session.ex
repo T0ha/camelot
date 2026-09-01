@@ -16,11 +16,13 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   """
   use GenServer, restart: :temporary
 
+  alias Camelot.Runtime.Progress
   alias Camelot.Runtime.Runner.AdoptMarker
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.DockerStreamDemux
   alias Camelot.Runtime.Runner.SecretEnv
   alias Camelot.Runtime.Runner.Spec
+  alias Camelot.Runtime.Runner.Swarm.ProvisionMonitor
   alias Camelot.Runtime.Runner.Swarm.ProxyRouter
   alias Camelot.Runtime.Runner.Swarm.TaskService
 
@@ -173,25 +175,47 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
 
   # --- Wiring ---
 
+  # Every step below can block for minutes (scheduling, image pull,
+  # in-container clone + toolchain install) and this process is busy
+  # polling throughout — so a `ProvisionMonitor` runs alongside and
+  # narrates the wait to the user. It is torn down whichever way the
+  # hand-off ends.
   defp start_exec(%__MODULE__{spec: spec} = state) do
-    with {:ok, ts_pid} <- TaskService.ensure_started(spec),
-         {:ok, service_id} <- TaskService.get_service_id(ts_pid),
-         {:ok, container_id, node_id} <-
-           resolve_container(service_id, @transport_budget_ms),
-         :ok <- wait_for_ready(node_id, container_id, @transport_budget_ms),
-         {:ok, exec_id} <- create_exec(node_id, container_id, spec, @transport_budget_ms),
-         {:ok, node_req} <- ProxyRouter.request_for_node(node_id) do
-      state = %{
-        state
-        | service_id: service_id,
-          container_id: container_id,
-          node_id: node_id,
-          node_req: node_req,
-          exec_id: exec_id
-      }
+    monitor = ProvisionMonitor.start(spec.task_id, spec.session_id)
 
-      {:ok, kick_off_streams(state)}
+    try do
+      with {:ok, ts_pid} <- TaskService.ensure_started(spec),
+           {:ok, service_id} <- TaskService.get_service_id(ts_pid),
+           {:ok, container_id, node_id} <-
+             resolve_container(service_id, @transport_budget_ms),
+           :ok <- wait_for_ready(node_id, container_id, @transport_budget_ms),
+           {:ok, exec_id} <- create_exec(node_id, container_id, spec, @transport_budget_ms),
+           {:ok, node_req} <- ProxyRouter.request_for_node(node_id) do
+        state = %{
+          state
+          | service_id: service_id,
+            container_id: container_id,
+            node_id: node_id,
+            node_req: node_req,
+            exec_id: exec_id
+        }
+
+        # Stop before the last line, not after: `stop/1` is synchronous,
+        # so a probe already in flight finishes (and reports) first and
+        # cannot overwrite "agent started". The `after` below then only
+        # covers the error paths.
+        ProvisionMonitor.stop(monitor)
+        report_progress(state, :running, "Agent started — waiting for its first output…")
+
+        {:ok, kick_off_streams(state)}
+      end
+    after
+      ProvisionMonitor.stop(monitor)
     end
+  end
+
+  defp report_progress(%__MODULE__{spec: spec}, phase, message) do
+    Progress.report(spec.task_id, spec.session_id, phase, message)
   end
 
   # Adoption: the runner container/service is already up and the agent
@@ -200,6 +224,8 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   # then reuse the {:exit_code, _} path to read the tee'd output and
   # finalise exactly as a live run would.
   defp start_adopt(%__MODULE__{spec: spec} = state) do
+    report_progress(state, :running, "Re-attaching to the running agent…")
+
     with {:ok, ts_pid} <- TaskService.ensure_started(spec),
          {:ok, service_id} <- TaskService.get_service_id(ts_pid),
          {:ok, container_id, node_id} <-

@@ -21,12 +21,17 @@ defmodule CamelotWeb.TaskLive do
 
   @task_load [:project, :agent, :creator, :sessions, :messages, :attachments]
 
+  # Drives the "runner status" elapsed counter. Only re-assigns while a
+  # session is provisioning, so an idle page produces no diffs.
+  @tick_ms 1_000
+
   @impl true
   def mount(%{"id" => id}, _session, socket) do
     case load_or_forbid(id, socket.assigns.current_user) do
       {:ok, task} ->
         if connected?(socket) do
           Phoenix.PubSub.subscribe(Camelot.PubSub, "task:#{id}")
+          Process.send_after(self(), :tick, @tick_ms)
         end
 
         socket =
@@ -36,6 +41,8 @@ defmodule CamelotWeb.TaskLive do
             task: task,
             message_input: "",
             live_output: "",
+            progress: nil,
+            now: DateTime.utc_now(),
             focused_column: :none
           )
           |> allow_upload(:attachment, accept: :any, max_entries: 5, max_file_size: 25_000_000)
@@ -79,8 +86,36 @@ defmodule CamelotWeb.TaskLive do
     {:noreply, assign(socket, live_output: cap_tail(combined, 20_000))}
   end
 
+  # Provisioning progress for a session that has not produced agent
+  # output yet — the pool queue, image pull, container start and
+  # workspace setup that used to happen in total silence.
+  def handle_info({:runner_progress, _task_id, progress}, socket) do
+    {:noreply, assign(socket, progress: progress, now: DateTime.utc_now())}
+  end
+
+  def handle_info(:tick, socket) do
+    Process.send_after(self(), :tick, @tick_ms)
+    {:noreply, refresh_elapsed(socket)}
+  end
+
   # Never crash the card on an unexpected PubSub message.
   def handle_info(_msg, socket), do: {:noreply, socket}
+
+  # Only the provisioning counter needs a ticking clock; everything
+  # else on the page is event-driven.
+  defp refresh_elapsed(socket) do
+    if provisioning?(socket.assigns.task, socket.assigns.live_output) do
+      assign(socket, now: DateTime.utc_now())
+    else
+      socket
+    end
+  end
+
+  defp provisioning?(%Task{} = task, "") do
+    task |> sorted_sessions() |> Enum.any?(&(&1.status == :running))
+  end
+
+  defp provisioning?(_task, _live_output), do: false
 
   @impl true
   def handle_event("transition", %{"action" => action}, socket) do
@@ -764,6 +799,17 @@ defmodule CamelotWeb.TaskLive do
                 </h4>
                 <pre class="text-xs overflow-auto max-h-40 bg-base-300 p-2 rounded whitespace-pre-wrap">{humanize_stream(@live_output)}</pre>
               </div>
+              <div
+                :if={session.status == :running && @live_output == ""}
+                class="mt-2 flex flex-wrap items-center gap-2 text-xs text-base-content/70"
+              >
+                <span class="loading loading-spinner loading-xs"></span>
+                <span class="font-semibold">Runner status:</span>
+                <span>{runner_status_message(@progress, session)}</span>
+                <span :if={provisioning_elapsed(session, @now)} class="text-base-content/50">
+                  ({provisioning_elapsed(session, @now)})
+                </span>
+              </div>
               <pre
                 :if={session.output_log && session.status != :completed}
                 class="mt-2 text-xs overflow-auto max-h-40 bg-base-300 p-2 rounded"
@@ -804,7 +850,10 @@ defmodule CamelotWeb.TaskLive do
   # running; once the task leaves :in_progress the persisted
   # output_log takes over, so drop the buffer.
   defp reset_live_output_unless_running(socket, %Task{state: :in_progress}), do: socket
-  defp reset_live_output_unless_running(socket, _task), do: assign(socket, live_output: "")
+
+  defp reset_live_output_unless_running(socket, _task) do
+    assign(socket, live_output: "", progress: nil)
+  end
 
   defp cap_tail(str, max) do
     if String.length(str) > max do
@@ -902,6 +951,30 @@ defmodule CamelotWeb.TaskLive do
   defp human_size(bytes), do: "#{Float.round(bytes / (1024 * 1024), 1)} MB"
 
   @spec format_timestamp(DateTime.t() | nil) :: String.t()
+  # The live broadcast wins, but only for the session it describes;
+  # otherwise fall back to the line persisted on the row (a page
+  # loaded mid-provisioning), then to a generic placeholder.
+  @spec runner_status_message(map() | nil, Session.t()) :: String.t()
+  defp runner_status_message(%{session_id: id, message: message}, %Session{id: id}) do
+    message
+  end
+
+  defp runner_status_message(_progress, %Session{progress_message: nil}) do
+    "Preparing the runner…"
+  end
+
+  defp runner_status_message(_progress, %Session{progress_message: message}), do: message
+
+  # How long this session has been waiting to produce output. Shown so
+  # a silent hand-off visibly advances even between progress lines.
+  @spec provisioning_elapsed(Session.t(), DateTime.t()) :: String.t() | nil
+  defp provisioning_elapsed(%Session{started_at: nil, queued_at: nil}, _now), do: nil
+
+  defp provisioning_elapsed(%Session{} = session, now) do
+    since = session.started_at || session.queued_at
+    format_duration(DateTime.diff(now, since, :millisecond))
+  end
+
   defp format_timestamp(nil), do: ""
   defp format_timestamp(%DateTime{} = dt), do: Calendar.strftime(dt, "%Y-%m-%d %H:%M")
 
