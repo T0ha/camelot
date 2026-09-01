@@ -418,6 +418,18 @@ defmodule CamelotWeb.TaskLive do
         </div>
       </div>
 
+      <div
+        :if={@task.state == :error && @task.last_error}
+        class="alert alert-error text-sm items-start"
+        role="alert"
+      >
+        <.icon name="hero-exclamation-triangle" class="size-5 shrink-0" />
+        <div>
+          <p class="font-semibold">This task stopped with an error</p>
+          <p class="whitespace-pre-line">{@task.last_error}</p>
+        </div>
+      </div>
+
       <div class={grid_class(@focused_column)}>
         <div class={[
           "space-y-4",

@@ -62,7 +62,10 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskServiceTest do
       template = payload["TaskTemplate"]
 
       assert payload["Name"] == "camelot-task-task-1"
-      assert template["RestartPolicy"] == %{"Condition" => "none"}
+      # Bounded retries, not "none": a single failed start must not
+      # strand the service at zero replicas with nothing to revive it.
+      assert template["RestartPolicy"]["Condition"] == "on-failure"
+      assert template["RestartPolicy"]["MaxAttempts"] == 3
       assert template["ContainerSpec"]["Image"] == "ghcr.io/example/runner"
     end
 

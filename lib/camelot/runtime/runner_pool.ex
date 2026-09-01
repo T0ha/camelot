@@ -8,11 +8,13 @@ defmodule Camelot.Runtime.RunnerPool do
   Wait time is a UX signal (and a future monetisation
   lever via `per_user_max_overrides`).
 
-  The authoritative queue is the set of
-  `Camelot.Agents.Session{status: :queued}` rows in
-  the DB. The GenServer state is just a fast index
-  over those rows, rebuilt on boot by
-  `Camelot.Runtime.Reconciler` calling `tick/0`.
+  `Camelot.Agents.Session{status: :queued}` rows record
+  which sessions are waiting, but the queue this process
+  serves is held **in memory only** and starts empty on
+  boot — `tick/0` drains that in-memory queue, it does not
+  read the DB. A row left `:queued` by a restart therefore
+  has no owner to grant it a slot; recovering those is
+  `Camelot.Runtime.Reconciler`'s job, not this module's.
 
   Each waiter registers a `from_pid` to receive the
   slot grant message `{:runner_slot, session_id}` and
@@ -111,6 +113,20 @@ defmodule Camelot.Runtime.RunnerPool do
   @spec tick() :: :ok
   def tick, do: GenServer.cast(@name, :tick)
 
+  @doc """
+  Whether this pool still knows about `session_id` — it is queued, has a
+  live waiter, or is holding a granted slot.
+
+  A session row can read `:queued` for two very different reasons: it is
+  genuinely queued behind the per-user cap, or waiting for the owner that
+  was just granted a slot to mark it running (both `true`); or a restart
+  wiped the in-memory queue and left the row with nobody to dispatch it
+  (`false`). `Camelot.Runtime.Reconciler` needs to tell them apart before
+  recovering anything.
+  """
+  @spec tracking?(String.t()) :: boolean()
+  def tracking?(session_id), do: GenServer.call(@name, {:tracking?, session_id})
+
   # --- GenServer ---
 
   @impl GenServer
@@ -136,6 +152,14 @@ defmodule Camelot.Runtime.RunnerPool do
 
     position = queue_position(state, user_id, session_id)
     {:reply, {:ok, %{position: position}}, state}
+  end
+
+  def handle_call({:tracking?, session_id}, _from, state) do
+    tracked =
+      Map.has_key?(state.waiters, session_id) or
+        active?(state, session_id) or queued?(state, session_id)
+
+    {:reply, tracked, state}
   end
 
   def handle_call(:snapshot, _from, state) do
@@ -214,6 +238,14 @@ defmodule Camelot.Runtime.RunnerPool do
   def handle_info(_msg, state), do: {:noreply, state}
 
   # --- Internals ---
+
+  defp active?(state, session_id) do
+    Enum.any?(state.active, fn {_user, set} -> MapSet.member?(set, session_id) end)
+  end
+
+  defp queued?(state, session_id) do
+    Enum.any?(state.queue, fn {_user, q} -> session_id in :queue.to_list(q) end)
+  end
 
   defp add_waiter(state, session_id, pid) do
     %{state | waiters: Map.put(state.waiters, session_id, pid)}
