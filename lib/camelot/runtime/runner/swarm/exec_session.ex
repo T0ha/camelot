@@ -18,6 +18,7 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
 
   alias Camelot.Runtime.Progress
   alias Camelot.Runtime.Runner.AdoptMarker
+  alias Camelot.Runtime.Runner.AdoptPolicy
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.DockerStreamDemux
   alias Camelot.Runtime.Runner.SecretEnv
@@ -45,19 +46,9 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   @adopt_poll_ms 2_000
   @transport_budget_ms 60_000
 
-  # Unlike the live-run loops above, adoption polling MUST be bounded:
-  # it waits for a completion marker written by the exec-wrapper, and if
-  # the runner container was replaced (Swarm reschedule / OOM) after the
-  # session's exec began, that marker lived in the prior container's
-  # /tmp and can never appear. An unbounded poll strands the session as
-  # `:running` and the task in `executing` forever. 15 min comfortably
-  # exceeds any real re-attach settle time.
-  @adopt_budget_ms 900_000
-
-  # Non-zero exit reported to the owner when an adoption is abandoned, so
-  # `TaskRunner` finalises the session as failed (recoverable) instead
-  # of leaving it stranded `:running`.
-  @adopt_giveup_exit_code 1
+  # Adoption polling is bounded by `AdoptPolicy` — see that module for
+  # why an unbounded poll can never terminate once the container has
+  # been replaced.
 
   defstruct [
     :owner,
@@ -154,18 +145,19 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
     {:stop, :normal, state}
   end
 
-  # Adoption gave up (container replaced or budget exhausted): tell the
-  # owner the run is over with a non-zero code so it finalises the
-  # session, then stop. Normal stop so the owner's monitor DOWN is a
-  # no-op after the reset that {:runner_exit, ...} triggers.
+  # Adoption gave up (container replaced or budget exhausted). This is an
+  # infrastructure interruption, not a run that failed — the run's result
+  # is simply unrecoverable — so it gets its own message rather than a
+  # synthetic non-zero exit, which the owner would otherwise take for the
+  # agent failing and then parse a stale buffer looking for a reason.
   def handle_info({:adopt_give_up, reason}, %__MODULE__{} = state) do
     Logger.warning(
       "Swarm.ExecSession: abandoning adoption of session " <>
-        "#{state.session_id} (#{reason}); finalising as failed so it " <>
-        "can be recovered"
+        "#{state.session_id} (#{reason}); reporting it as interrupted so " <>
+        "the task can be re-queued"
     )
 
-    send(state.owner, {:runner_exit, self(), @adopt_giveup_exit_code})
+    send(state.owner, {:runner_interrupted, self(), reason})
     {:stop, :normal, state}
   end
 
@@ -240,27 +232,28 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
       }
 
       parent = self()
-      container_started = container_started_at(state)
       session_started = spec.adopt_since
       started_mono = System.monotonic_time(:millisecond)
 
       poll_task =
         Task.async(fn ->
-          poll_adopt_exit(state, parent, started_mono, container_started, session_started)
+          poll_adopt_exit(state, parent, started_mono, session_started)
         end)
 
       {:ok, %{state | poll_task: poll_task}}
     end
   end
 
-  # Poll the wrapper's completion marker, but bounded: give up (and let
-  # the owner finalise the session as failed, so it can recover) once the
-  # runner container is known to have been replaced after the session's
-  # exec — its marker is gone — or the wall-clock budget is exhausted.
-  defp poll_adopt_exit(%__MODULE__{} = state, parent, started_mono, container_started, session_started) do
+  # Poll the wrapper's completion marker, bounded by `AdoptPolicy`. The
+  # container's start time is re-read on every iteration rather than
+  # sampled once: the boot sweep can roll the service onto a new image
+  # moments after the adoption began, and a sample taken before that roll
+  # would keep the poll running for the whole budget.
+  defp poll_adopt_exit(%__MODULE__{} = state, parent, started_mono, session_started) do
     elapsed = System.monotonic_time(:millisecond) - started_mono
+    container_started = container_started_at(state)
 
-    case adopt_action(container_started, session_started, elapsed, @adopt_budget_ms) do
+    case AdoptPolicy.decide(container_started, session_started, elapsed, AdoptPolicy.budget_ms()) do
       {:give_up, reason} ->
         send(parent, {:adopt_give_up, reason})
 
@@ -271,7 +264,7 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
 
           :none ->
             Process.sleep(@adopt_poll_ms)
-            poll_adopt_exit(state, parent, started_mono, container_started, session_started)
+            poll_adopt_exit(state, parent, started_mono, session_started)
         end
     end
   end
@@ -356,45 +349,11 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   end
 
   @doc """
-  Decides whether an adoption should keep polling for the exec-wrapper's
-  completion marker or give up.
-
-  Gives up when the runner container was (re)started *after* the
-  session's exec began — the marker that exec would have written lived in
-  the prior container's `/tmp` and is unrecoverable, so polling can never
-  terminate. Also gives up once the wall-clock budget is exhausted, a
-  backstop for missing/skewed timestamps. Otherwise keeps polling.
-  """
-  @spec adopt_action(
-          DateTime.t() | nil,
-          DateTime.t() | nil,
-          non_neg_integer(),
-          non_neg_integer()
-        ) :: :poll | {:give_up, :container_replaced | :timeout}
-  def adopt_action(container_started_at, session_started_at, elapsed_ms, budget_ms) do
-    cond do
-      container_replaced?(container_started_at, session_started_at) ->
-        {:give_up, :container_replaced}
-
-      elapsed_ms >= budget_ms ->
-        {:give_up, :timeout}
-
-      true ->
-        :poll
-    end
-  end
-
-  @doc """
-  True when the runner container started strictly after the session's
-  exec did — proof that the completion marker (and tee'd output) the exec
-  wrote no longer exist, so an adoption polling for them would hang.
+  Delegates to `Camelot.Runtime.Runner.AdoptPolicy.container_replaced?/2`;
+  `Reconciler` reaches for the check through this backend.
   """
   @spec container_replaced?(DateTime.t() | nil, DateTime.t() | nil) :: boolean()
-  def container_replaced?(%DateTime{} = container_started, %DateTime{} = session_started) do
-    DateTime.after?(container_started, session_started)
-  end
-
-  def container_replaced?(_container_started, _session_started), do: false
+  defdelegate container_replaced?(container_started_at, session_started_at), to: AdoptPolicy
 
   @doc """
   Selects the container id + node id of the service's live

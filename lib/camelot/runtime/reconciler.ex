@@ -4,9 +4,17 @@ defmodule Camelot.Runtime.Reconciler do
   with the live Docker/Swarm reality, both at boot and
   periodically (every minute).
 
-  On boot:
+  On boot, in this order:
 
-    1. Recovers any `Session{status: :running}` rows whose
+    1. Re-resolves every floating-tag runner image to the
+       newest published digest. This runs **before**
+       anything else, because it *replaces containers*: a
+       task whose container was rolled has its in-flight
+       sessions failed and is re-queued immediately, rather
+       than being handed to an adoption that would poll for
+       a completion marker the new container can never
+       write.
+    2. Recovers any `Session{status: :running}` rows whose
        owning TaskRunner is gone (e.g. after a redeploy).
        If the session's task runner container is still
        alive, it is **adopted** — a fresh TaskRunner
@@ -21,14 +29,14 @@ defmodule Camelot.Runtime.Reconciler do
        re-attach to (bootstrap sessions, the LocalPort
        backend, or a truly gone runner) the session is
        likewise marked failed for the user to retry.
-    2. Queued sessions are *not* touched — their DB rows
-       survive untouched, and the next call to
-       `RunnerPool.tick/0` (after TaskRunner
-       processes restart and re-enqueue) drains them
-       normally.
-    3. Sweeps orphan `camelot-runner-*` services that no
+    3. Recovers `Session{status: :queued}` rows orphaned by
+       the restart. `RunnerPool` rebuilds its queue purely
+       in memory, so such a row has no owner left to grant
+       it a slot and would otherwise sit queued forever with
+       its task stuck `:in_progress`.
+    4. Sweeps orphan `camelot-runner-*` services that no
        longer have a `:queued` or `:running` session row.
-    4. Sweeps tasks whose `runner_handle` points to a
+    5. Sweeps tasks whose `runner_handle` points to a
        stale backend service (node partition, manual
        `docker service rm`, swarm reschedule failure).
        For Swarm services that still exist but have zero
@@ -36,11 +44,19 @@ defmodule Camelot.Runtime.Reconciler do
        `Spec.TaskTemplate.ForceUpdate`) so the swarm
        reschedules without losing the service identity.
        Only after the redeploy fails to yield a runnable
-       task within `@redeploy_wait_ms`, or when the service
-       is genuinely 404, the task is marked
-       `state: :error` and `runner_handle` cleared so the
-       user can retry. A 15-minute grace on `updated_at`
-       keeps in-flight dispatches from being false-positives.
+       task within `redeploy_wait_ms` — measured across
+       ticks, never by sleeping in this process — or when
+       the service is genuinely 404, is the runner treated
+       as lost. A 15-minute grace on `updated_at` keeps
+       in-flight dispatches from being false-positives.
+
+  Every recovery above goes through
+  `Camelot.Board.Interruption`, which **re-queues** the task
+  rather than erroring it: the work was cut short by
+  infrastructure, not by the agent, so the dispatcher simply
+  runs it again. Only a task that keeps being interrupted
+  without ever completing a run exhausts the re-queue cap and
+  lands in `state: :error`.
 
   In steady state, the same sweep runs every 60s to
   catch any drift Camelot didn't notice (manual
@@ -50,6 +66,7 @@ defmodule Camelot.Runtime.Reconciler do
   use GenServer
 
   alias Camelot.Agents.Session
+  alias Camelot.Board.Interruption
   alias Camelot.Board.Task
   alias Camelot.Runtime.Runner
   alias Camelot.Runtime.Runner.DockerApi
@@ -70,8 +87,11 @@ defmodule Camelot.Runtime.Reconciler do
   @tick_ms 60_000
   @log_retention_ms 300_000
   @stale_runner_grace_ms 900_000
-  @redeploy_wait_ms 15_000
-  @redeploy_poll_ms 1_000
+  # Covers the gap between a session row being created and its owner
+  # enqueueing it in `RunnerPool`, so the sweep can't race a dispatch
+  # that is only milliseconds old.
+  @queued_grace_ms 60_000
+  @default_redeploy_wait_ms 60_000
   @name __MODULE__
 
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -89,18 +109,21 @@ defmodule Camelot.Runtime.Reconciler do
   @impl GenServer
   def init(_opts) do
     if !skip_initial_tick?(), do: schedule_boot_work(self())
-    {:ok, %{}}
+    {:ok, %{redeploys: %{}}}
   end
 
   # Boot work fires once, `initial_delay_ms` after start (which, in a
   # release, is after `Camelot.Release.migrate` has run — see
-  # `rel/overlays/bin/server`): the recurring reconcile tick plus a
-  # one-shot pass that re-resolves floating-tag runner images so a
-  # redeploy picks up freshly-published runner images.
+  # `rel/overlays/bin/server`).
+  #
+  # A single message, not two: the image re-pin and the reconcile pass
+  # must run in a fixed order. The re-pin *replaces containers*, and the
+  # reconcile pass decides which sessions are safe to re-attach to — so
+  # re-pinning second would roll containers out from under adoptions
+  # that had just been declared healthy, leaving them polling for a
+  # completion marker in a container that no longer exists.
   defp schedule_boot_work(pid) do
-    delay = initial_delay_ms()
-    Process.send_after(pid, :tick, delay)
-    Process.send_after(pid, :autoupdate_runner_images, delay)
+    Process.send_after(pid, :boot, initial_delay_ms())
   end
 
   defp skip_initial_tick? do
@@ -118,22 +141,29 @@ defmodule Camelot.Runtime.Reconciler do
     |> Keyword.get(:initial_delay_ms, 1_000)
   end
 
+  # How long a force-redeployed service gets to produce a runnable task
+  # before its runner is treated as lost. Configurable because it has to
+  # cover a cold image pull, which varies wildly with runner image size.
+  defp redeploy_wait_ms do
+    :camelot
+    |> Application.get_env(:runner, [])
+    |> Keyword.get(:redeploy_wait_ms, @default_redeploy_wait_ms)
+  end
+
   @impl GenServer
   def handle_call(:reconcile_now, _from, state) do
-    do_reconcile()
-    {:reply, :ok, state}
+    {:reply, :ok, do_reconcile(state)}
   end
 
   @impl GenServer
-  def handle_info(:tick, state) do
-    do_reconcile()
-    Process.send_after(self(), :tick, @tick_ms)
-    {:noreply, state}
+  def handle_info(:boot, state) do
+    Enum.each(autoupdate_runner_images(), &interrupt_rolled_task/1)
+    handle_info(:tick, state)
   end
 
-  # One-shot on boot only (never rescheduled).
-  def handle_info(:autoupdate_runner_images, state) do
-    autoupdate_runner_images()
+  def handle_info(:tick, state) do
+    state = do_reconcile(state)
+    Process.send_after(self(), :tick, @tick_ms)
     {:noreply, state}
   end
 
@@ -141,28 +171,38 @@ defmodule Camelot.Runtime.Reconciler do
 
   # --- Reconciliation pass ---
 
-  defp do_reconcile do
+  defp do_reconcile(state) do
     fail_stale_running_sessions()
+    recover_stale_queued_sessions()
 
     if backend_available?() do
-      live_sessions = list_runner_services()
-      sweep_orphan_services(live_sessions)
-
-      live_tasks = list_task_runners()
-      sweep_orphan_task_runners(live_tasks)
-      sweep_stale_task_runner_handles()
-
-      if Runner.backend() == Swarm, do: sweep_orphan_github_app_secrets()
-
-      RunnerPool.tick()
+      sweep_backend(state)
     else
-      Logger.debug("Reconciler: backend unavailable, skipping sweep")
-      :ok
+      skip_sweep(state)
     end
   rescue
     e ->
       Logger.warning("Reconciler pass failed: #{Exception.message(e)}")
-      :ok
+      state
+  end
+
+  defp skip_sweep(state) do
+    Logger.debug("Reconciler: backend unavailable, skipping sweep")
+    state
+  end
+
+  defp sweep_backend(state) do
+    live_sessions = list_runner_services()
+    sweep_orphan_services(live_sessions)
+
+    live_tasks = list_task_runners()
+    sweep_orphan_task_runners(live_tasks)
+    state = sweep_stale_task_runner_handles(state)
+
+    if Runner.backend() == Swarm, do: sweep_orphan_github_app_secrets()
+
+    RunnerPool.tick()
+    state
   end
 
   # One-shot boot sweep: re-resolve every Swarm task service whose
@@ -170,16 +210,97 @@ defmodule Camelot.Runtime.Reconciler do
   # published digest, in place. Idempotent — a service already on the
   # current digest is not rolled. Swarm-only; best-effort so a Docker
   # hiccup can't crash the reconciler.
+  #
+  # Returns the ids of the tasks whose container was actually replaced,
+  # so the caller can recover their in-flight sessions before anything
+  # tries to adopt them.
   defp autoupdate_runner_images do
     if Runner.backend() == Swarm and backend_available?() do
-      ids = list_task_runners()
-      Enum.each(ids, &Swarm.TaskService.autoupdate_image(Spec.task_runner_name(&1)))
-      Logger.info("Reconciler: autoupdate swept #{length(ids)} task runner image(s)")
+      sweep_runner_images()
+    else
+      []
     end
   rescue
     e ->
       Logger.warning("Reconciler autoupdate pass failed: #{Exception.message(e)}")
+      []
+  end
+
+  defp sweep_runner_images do
+    ids = list_task_runners()
+
+    rolled =
+      Enum.filter(ids, fn id ->
+        Swarm.TaskService.autoupdate_image(Spec.task_runner_name(id)) == :rolled
+      end)
+
+    Logger.info(
+      "Reconciler: autoupdate swept #{length(ids)} task runner image(s); " <>
+        "#{length(rolled)} rolled"
+    )
+
+    rolled
+  end
+
+  @rolled_reason "the runner container was replaced by a deploy (new runner image)"
+
+  defp interrupt_rolled_task(task_id) do
+    # The service is alive and now runs the new image — only its
+    # container was replaced — so its handle stays valid.
+    recover_interrupted_task(task_id, @rolled_reason, keep_runner_handle: true)
+  end
+
+  @doc """
+  Recover a task whose in-flight run was cut short by infrastructure.
+
+  A replaced container is a brand new container: the exec-wrapper's
+  tee'd output and completion marker lived in the previous one's `/tmp`
+  and are gone, so whatever was running can never report its result.
+  Its `:queued`/`:running` sessions are failed with `reason` — which
+  must happen *before* `fail_stale_running_sessions/0` runs, or one of
+  them gets handed to an adoption that polls for 15 minutes — and the
+  task is put back in the queue for the dispatcher to run again.
+
+  Best-effort: never raises, so one unrecoverable task can't abort the
+  boot sweep.
+  """
+  @spec recover_interrupted_task(String.t(), String.t(), keyword()) :: :ok
+  def recover_interrupted_task(task_id, reason, opts \\ []) do
+    task_id
+    |> live_sessions_for_task()
+    |> Enum.each(&fail_interrupted_session(&1, reason))
+
+    Interruption.requeue_or_error_by_id(task_id, reason, opts)
+    :ok
+  rescue
+    e ->
+      Logger.warning(
+        "Reconciler: could not recover interrupted task #{task_id}: " <>
+          "#{Exception.message(e)}"
+      )
+
       :ok
+  end
+
+  defp live_sessions_for_task(task_id) do
+    Session
+    |> Ash.Query.filter(task_id == ^task_id and status in [:queued, :running])
+    |> Ash.read!()
+  end
+
+  defp fail_interrupted_session(%Session{} = session, reason) do
+    Logger.info("Reconciler: failing session #{session.id} — #{reason}")
+
+    Ash.update!(
+      session,
+      %{
+        error_message:
+          "This run was interrupted because #{reason}. " <>
+            "The task has been re-queued and will run again.",
+        exit_code: 1
+      },
+      action: :fail
+    )
   end
 
   defp fail_stale_running_sessions do
@@ -536,7 +657,7 @@ defmodule Camelot.Runtime.Reconciler do
 
   # Probe per-task (not via bulk list) so a transient Docker API
   # hiccup can't false-positive every in-flight task at once.
-  defp sweep_stale_task_runner_handles do
+  defp sweep_stale_task_runner_handles(state) do
     cutoff =
       DateTime.add(DateTime.utc_now(), -@stale_runner_grace_ms, :millisecond)
 
@@ -548,19 +669,51 @@ defmodule Camelot.Runtime.Reconciler do
         updated_at < ^cutoff
     )
     |> Ash.read!()
-    |> Enum.each(&maybe_mark_runner_lost/1)
+    |> Enum.reduce(state, &probe_and_recover/2)
   end
 
-  defp maybe_mark_runner_lost(%Task{} = task) do
+  defp probe_and_recover(%Task{} = task, state) do
     case probe_runner(task.runner_handle) do
-      :present -> :ok
-      :gone -> mark_runner_lost(task, "service returned 404")
-      :no_tasks -> attempt_force_redeploy(task)
-      :unknown -> :ok
+      :present -> forget_redeploy(state, task)
+      :gone -> mark_runner_lost(state, task, "service returned 404")
+      :no_tasks -> await_or_force_redeploy(state, task)
+      :unknown -> state
     end
   end
 
-  defp attempt_force_redeploy(%Task{} = task) do
+  # A service with zero runnable tasks gets one force-redeploy and then
+  # `redeploy_wait_ms` of *wall clock across ticks* to produce a replica.
+  # The wait deliberately does not block here: the reconciler is a single
+  # GenServer, and sleeping in it stalls every other task's sweep — and a
+  # cold image pull can easily outlast any sleep short enough to be safe.
+  defp await_or_force_redeploy(state, %Task{} = task) do
+    case Map.fetch(state.redeploys, task.id) do
+      :error -> force_redeploy(state, task)
+      {:ok, issued_at} -> check_redeploy_deadline(state, task, issued_at)
+    end
+  end
+
+  defp check_redeploy_deadline(state, %Task{} = task, issued_at) do
+    elapsed = System.monotonic_time(:millisecond) - issued_at
+
+    if elapsed >= redeploy_wait_ms() do
+      mark_runner_lost(
+        state,
+        task,
+        "force-redeploy did not yield a runnable task within " <>
+          "#{redeploy_wait_ms()}ms (constraint likely unsatisfiable)"
+      )
+    else
+      Logger.debug(
+        "Reconciler: task #{task.id} still has no runnable task " <>
+          "#{elapsed}ms after force-redeploy; waiting"
+      )
+
+      state
+    end
+  end
+
+  defp force_redeploy(state, %Task{} = task) do
     Logger.info(
       "Reconciler: task #{task.id} service #{task.runner_handle} " <>
         "has zero runnable tasks; attempting force-redeploy"
@@ -568,68 +721,83 @@ defmodule Camelot.Runtime.Reconciler do
 
     case Swarm.TaskService.force_redeploy(task.runner_handle) do
       :ok ->
-        if wait_for_runnable(task.runner_handle, @redeploy_wait_ms) do
-          Logger.info(
-            "Reconciler: task #{task.id} service #{task.runner_handle} " <>
-              "rescheduled by force-redeploy"
-          )
-        else
-          mark_runner_lost(
-            task,
-            "force-redeploy did not yield a runnable task within " <>
-              "#{@redeploy_wait_ms}ms (constraint likely unsatisfiable)"
-          )
-        end
+        put_in(state.redeploys[task.id], System.monotonic_time(:millisecond))
 
       {:error, :not_found} ->
-        mark_runner_lost(task, "service returned 404 to force-redeploy")
+        mark_runner_lost(state, task, "service returned 404 to force-redeploy")
 
       {:error, reason} ->
         Logger.warning(
           "Reconciler: force-redeploy failed for task #{task.id}: " <>
             "#{inspect(reason)}; will retry next tick"
         )
+
+        state
     end
   end
 
-  defp wait_for_runnable(_service_id, remaining_ms) when remaining_ms <= 0, do: false
-
-  defp wait_for_runnable(service_id, remaining_ms) do
-    case list_runnable_swarm_tasks(service_id) do
-      {:ok, [_ | _]} ->
-        true
-
-      _ ->
-        step = min(@redeploy_poll_ms, remaining_ms)
-        Process.sleep(step)
-        wait_for_runnable(service_id, remaining_ms - step)
-    end
+  defp forget_redeploy(state, %Task{id: id}) do
+    update_in(state.redeploys, &Map.delete(&1, id))
   end
 
-  defp mark_runner_lost(%Task{} = task, reason) do
+  # The runner is unusable and cannot be revived. Recover rather than
+  # error: the task itself is fine, so re-queue it and let the dispatcher
+  # build a fresh runner. `Interruption` errors it only once the re-queue
+  # cap shows the task can never actually run.
+  defp mark_runner_lost(state, %Task{} = task, reason) do
     Logger.warning(
       "Reconciler: task #{task.id} runner_handle " <>
         "#{task.runner_handle} treated as lost (#{reason}); " <>
-        "marking task as error and clearing runner_handle"
+        "re-queueing the task with a fresh runner"
     )
 
-    updated =
-      Ash.update!(task, %{last_error: "runner lost: #{reason}"}, action: :mark_runner_lost)
-
-    broadcast_task_update(updated)
+    recover_interrupted_task(task.id, "the runner was lost (#{reason})")
+    forget_redeploy(state, task)
   end
 
-  defp broadcast_task_update(%Task{id: id} = task) do
-    Phoenix.PubSub.broadcast(
-      Camelot.PubSub,
-      "task:#{id}",
-      {:task_updated, task}
+  @doc """
+  Recover sessions left `:queued` with nobody to dispatch them.
+
+  Such a row is never adopted (adoption only looks at `:running`) and
+  never drained: `RunnerPool` rebuilds its queue purely in memory, so
+  after a restart the row has no owner to grant it a slot and its task
+  sits `:in_progress` forever.
+
+  A session queued *legitimately* — waiting its turn behind the per-user
+  cap — looks identical in the DB, so it is excluded on liveness, not on
+  age: the pool is still tracking it (and there is no `SessionRegistry`
+  entry, which is only written once a slot is granted *and* the runner
+  has started). The `queued_at` grace covers the gap between creating the
+  row and enqueueing it.
+  """
+  @spec recover_stale_queued_sessions() :: :ok
+  def recover_stale_queued_sessions do
+    cutoff = DateTime.add(DateTime.utc_now(), -@queued_grace_ms, :millisecond)
+
+    Session
+    |> Ash.Query.filter(
+      status == :queued and not is_nil(task_id) and
+        (is_nil(queued_at) or queued_at < ^cutoff)
+    )
+    |> Ash.read!()
+    |> Enum.reject(&owned_queued_session?/1)
+    |> Enum.each(&recover_orphan_queued_session/1)
+  end
+
+  defp owned_queued_session?(%Session{id: id} = session) do
+    alive_owner?(session) or RunnerPool.tracking?(id)
+  end
+
+  defp recover_orphan_queued_session(%Session{} = session) do
+    Logger.info(
+      "Reconciler: session #{session.id} was left queued by a restart " <>
+        "with no owner to dispatch it; re-queueing its task"
     )
 
-    Phoenix.PubSub.broadcast(
-      Camelot.PubSub,
-      "board",
-      {:task_updated, task}
+    recover_interrupted_task(
+      session.task_id,
+      "Camelot restarted before this run was dispatched",
+      keep_runner_handle: true
     )
   end
 

@@ -128,6 +128,17 @@ started or adopted from that point forward.
 Sessions never get refused — they queue. Wait time surfaces in the UI;
 a future paid tier will let users buy higher per-user caps.
 
+## Recovering interrupted runs
+
+A run cut short by infrastructure — a deploy replacing the runner
+container, a Swarm service that vanished — is **re-queued**, not errored:
+the every-minute dispatcher runs the task again from its current stage.
+
+| Env var | Default | What it controls |
+|---|---|---|
+| `RUNNER_MAX_INTERRUPT_REQUEUES` | 3 | Consecutive automatic re-queues before a task is errored instead. Reset on any forward progress, so only a task that can *never* run exhausts it. |
+| `RUNNER_REDEPLOY_WAIT_MS` | 60000 | How long a force-redeployed service has to produce a runnable replica before its runner is treated as lost. Raise it if your runner images are large and cold pulls are slow. |
+
 ## Runner networking
 
 A task-runner container joins the Swarm bridge network for outbound
