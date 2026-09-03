@@ -853,7 +853,7 @@ defmodule Camelot.Runtime.TaskRunner do
     case InstallationTokenCache.refresh(installation_id) do
       {:ok, token} ->
         name = github_app_token_secret_name(task_id)
-        publish_swarm_secret(name, token)
+        publish_swarm_secret(name, token, task_id)
         secrets ++ [%{kind: :github_app_token, name: name, value: token}]
 
       {:error, reason} ->
@@ -870,9 +870,21 @@ defmodule Camelot.Runtime.TaskRunner do
   defp github_app_token_secret_name(nil), do: "camelot_github_app_token"
   defp github_app_token_secret_name(task_id), do: SecretSync.task_secret_name(task_id, :github_app_token)
 
-  defp publish_swarm_secret(name, value) do
-    if Runner.backend() == Swarm, do: SecretSync.put_secret(name, value)
+  # On the Swarm backend a task's secret is published by
+  # `Swarm.TaskService`, which must do it *after* removing any stale
+  # service left under the task's name — Docker will not delete (and so
+  # cannot rotate) a secret a service still references. Publishing here
+  # too would just fail against that same stale service and log a
+  # misleading `AlreadyExists`. Sessions with no task id never reach
+  # TaskService, so they still publish from here.
+  defp publish_swarm_secret(name, value, nil) do
+    case Runner.backend() do
+      Swarm -> SecretSync.put_secret(name, value)
+      _ -> :ok
+    end
   end
+
+  defp publish_swarm_secret(_name, _value, _task_id), do: :ok
 
   defp fetch_credential(user_id, kind_atom, name \\ nil)
 
