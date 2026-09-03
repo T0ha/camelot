@@ -139,6 +139,16 @@ the every-minute dispatcher runs the task again from its current stage.
 | `RUNNER_MAX_INTERRUPT_REQUEUES` | 3 | Consecutive automatic re-queues before a task is errored instead. Reset on any forward progress, so only a task that can *never* run exhausts it. |
 | `RUNNER_REDEPLOY_WAIT_MS` | 60000 | How long a force-redeployed service has to produce a runnable replica before its runner is treated as lost. Raise it if your runner images are large and cold pulls are slow. |
 
+Re-running a task reuses its service name, and Swarm will not delete a
+secret that any service still references. Because a secret can only be
+rotated by deleting and recreating it, 🏰 Camelot AI removes the previous
+run's service *before* refreshing the task's secrets — otherwise the new
+runner would mount the old GitHub App installation token, which expires
+an hour after it is minted and shows up as
+`remote: Invalid username or token` from `git clone` at container boot.
+If you delete runner services by hand, delete the matching
+`camelot_task_<task-id>_gh_token` secret too.
+
 ## Runner networking
 
 A task-runner container joins the Swarm bridge network for outbound

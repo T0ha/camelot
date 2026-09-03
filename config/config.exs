@@ -37,6 +37,10 @@ config :camelot, Oban,
   queues: [default: 10, tasks: 5, github: 3, notifications: 5],
   plugins: [{Oban.Plugins.Cron, crontab: []}]
 
+# Ahrefs Web Analytics is production-only — the snippet is rendered only
+# when AHREFS_ANALYTICS_KEY is supplied at runtime (see config/runtime.exs).
+config :camelot, :ahrefs, key: nil
+
 # Attachment store for task file uploads. Overridden in
 # config/runtime.exs alongside the runner backend. Dev/test default
 # to Local (a temp directory), matching the LocalPort runner default.
