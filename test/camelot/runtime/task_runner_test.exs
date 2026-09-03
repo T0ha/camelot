@@ -629,4 +629,53 @@ defmodule Camelot.Runtime.TaskRunnerTest do
       assert {:ok, _} = Ash.get(TaskAttachment, attachment.id)
     end
   end
+
+  describe "handle_info({:runner_interrupted, ...})" do
+    test "re-queues the task instead of erroring it", %{task: task, user: user} do
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+      {:ok, task} = Ash.update(task, %{runner_handle: "svc-1"}, action: :set_runner_handle)
+
+      {:ok, session} =
+        Ash.create(Session, %{agent_id: task.agent_id, task_id: task.id, user_id: user.id})
+
+      runner = self()
+
+      state = %TaskRunner{
+        task_id: task.id,
+        current_session_id: session.id,
+        runner: runner,
+        # The buffer an adoption reloads is the *previous* run's output.
+        # It must not be parsed and re-applied as a result.
+        output_buffer: ~s({"type":"result","result":"a plan"})
+      }
+
+      assert {:noreply, reset} =
+               TaskRunner.handle_info({:runner_interrupted, runner, :container_replaced}, state)
+
+      assert reset.runner == nil
+      assert reset.current_session_id == nil
+
+      reloaded = Ash.get!(Task, task.id)
+      assert reloaded.state == :queued
+      assert reloaded.stage == :planning
+      assert reloaded.interrupt_requeues == 1
+      # The healthy service is reused rather than rebuilt.
+      assert reloaded.runner_handle == "svc-1"
+
+      failed = Ash.get!(Session, session.id)
+      assert failed.status == :failed
+      assert failed.error_message =~ "interrupted"
+    end
+
+    test "ignores a message from a stale runner", %{task: task} do
+      state = %TaskRunner{task_id: task.id, runner: self()}
+      other = spawn(fn -> :ok end)
+
+      assert {:noreply, ^state} =
+               TaskRunner.handle_info({:runner_interrupted, other, :timeout}, state)
+
+      assert Ash.get!(Task, task.id).state == :queued
+      assert Ash.get!(Task, task.id).interrupt_requeues == 0
+    end
+  end
 end

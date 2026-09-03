@@ -61,7 +61,9 @@ config :camelot, :runner,
   docker_host: "unix:///var/run/docker.sock",
   global_max: 20,
   per_user_max: 2,
-  networks: ["auto"]
+  networks: ["auto"],
+  max_interrupt_requeues: 3,
+  redeploy_wait_ms: 60_000
 
 config :camelot, :token_signing_secret, "dev-only-signing-secret-change-in-prod"
 

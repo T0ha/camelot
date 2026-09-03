@@ -12,6 +12,7 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
   use GenServer, restart: :temporary
 
   alias Camelot.Runtime.Runner.AdoptMarker
+  alias Camelot.Runtime.Runner.AdoptPolicy
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.DockerEngine.TaskContainer
   alias Camelot.Runtime.Runner.DockerStreamDemux
@@ -25,6 +26,10 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
   # legitimately take many minutes; bounding either with a timeout
   # would just convert a slow-but-correct dispatch into a spurious
   # failure. Real upstream failures break the loop via {:error, _}.
+  #
+  # Adoption is the one exception: it polls for a marker that a replaced
+  # container can never write, so it is bounded by `AdoptPolicy` exactly
+  # as the Swarm backend is.
   @ready_poll_ms 500
   @exit_poll_ms 1_000
   @adopt_poll_ms 2_000
@@ -110,6 +115,20 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
     {:stop, :normal, state}
   end
 
+  # Adoption gave up: the run's result is unrecoverable, but the task
+  # itself did not fail. Reported as an interruption so the owner
+  # re-queues it instead of erroring the card. Mirrors the Swarm backend.
+  def handle_info({:adopt_give_up, reason}, %__MODULE__{} = state) do
+    Logger.warning(
+      "DockerEngine.ExecSession: abandoning adoption of session " <>
+        "#{state.session_id} (#{reason}); reporting it as interrupted so " <>
+        "the task can be re-queued"
+    )
+
+    send(state.owner, {:runner_interrupted, self(), reason})
+    {:stop, :normal, state}
+  end
+
   def handle_info({ref, _}, state) when is_reference(ref), do: {:noreply, state}
   def handle_info({:DOWN, _, _, _, _}, state), do: {:noreply, state}
   def handle_info(_msg, state), do: {:noreply, state}
@@ -133,20 +152,52 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
          {:ok, container_id} <- TaskContainer.get_container_id(tc_pid) do
       state = %{state | container_id: container_id}
       parent = self()
-      poll_task = Task.async(fn -> poll_adopt_exit(state, parent) end)
+      started_mono = System.monotonic_time(:millisecond)
+
+      poll_task =
+        Task.async(fn ->
+          poll_adopt_exit(state, parent, started_mono, spec.adopt_since)
+        end)
+
       {:ok, %{state | poll_task: poll_task}}
     end
   end
 
-  defp poll_adopt_exit(%__MODULE__{} = state, parent) do
-    case read_marker(state) do
-      {:ok, code} ->
-        send(parent, {:exit_code, code})
+  defp poll_adopt_exit(%__MODULE__{} = state, parent, started_mono, session_started) do
+    elapsed = System.monotonic_time(:millisecond) - started_mono
+    container_started = container_started_at(state)
 
-      :none ->
-        Process.sleep(@adopt_poll_ms)
-        poll_adopt_exit(state, parent)
+    case AdoptPolicy.decide(container_started, session_started, elapsed, AdoptPolicy.budget_ms()) do
+      {:give_up, reason} ->
+        send(parent, {:adopt_give_up, reason})
+
+      :poll ->
+        case read_marker(state) do
+          {:ok, code} ->
+            send(parent, {:exit_code, code})
+
+          :none ->
+            Process.sleep(@adopt_poll_ms)
+            poll_adopt_exit(state, parent, started_mono, session_started)
+        end
     end
+  end
+
+  # StartedAt of the runner container, so adoption can tell whether it
+  # was replaced since the session's exec began. `nil` on any missing
+  # field or Docker error — the caller then relies on the wall-clock
+  # budget alone.
+  defp container_started_at(%__MODULE__{container_id: cid}) when is_binary(cid) do
+    with {:ok, %Req.Response{status: 200, body: %{"State" => %{"StartedAt" => started}}}} <-
+           Req.get(DockerApi.request(), url: "/containers/#{cid}/json"),
+         true <- is_binary(started),
+         {:ok, dt, _offset} <- DateTime.from_iso8601(started) do
+      dt
+    else
+      _ -> nil
+    end
+  rescue
+    _ -> nil
   end
 
   defp read_marker(%__MODULE__{session_id: sid, container_id: cid}) when is_binary(sid) and is_binary(cid) do

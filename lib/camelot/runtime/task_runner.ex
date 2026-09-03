@@ -30,6 +30,8 @@ defmodule Camelot.Runtime.TaskRunner do
 
   alias Camelot.Accounts.Credential
   alias Camelot.Agents.Session
+  alias Camelot.Board.Interruption
+  alias Camelot.Board.PromptBuilder
   alias Camelot.Board.Task
   alias Camelot.Board.TaskMessage
   alias Camelot.Github.AppConfig
@@ -41,6 +43,7 @@ defmodule Camelot.Runtime.TaskRunner do
   alias Camelot.Runtime.OutputParser
   alias Camelot.Runtime.Progress
   alias Camelot.Runtime.Runner
+  alias Camelot.Runtime.Runner.AdoptPolicy
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.LocalPort
   alias Camelot.Runtime.Runner.Spec
@@ -52,6 +55,10 @@ defmodule Camelot.Runtime.TaskRunner do
 
   require Ash.Query
   require Logger
+
+  # Fallback reason when a runner exits non-zero but its output carries
+  # no error the parser can surface.
+  @unexplained_failure "The runner exited with a non-zero status without reporting a reason."
 
   defstruct [
     :task_id,
@@ -280,6 +287,27 @@ defmodule Camelot.Runtime.TaskRunner do
   def handle_info({:runner_exit, handle, exit_code}, %{runner: handle} = state) do
     Logger.info("Task #{state.task_id} runner exited with code #{exit_code}")
     finalize_runner_exit(state, exit_code, nil)
+  end
+
+  # The run was cut short by infrastructure — the runner container was
+  # replaced (a deploy rolling the image, a Swarm reschedule) so its
+  # result can never be recovered. Deliberately NOT routed through
+  # `finalize_runner_exit/3`: there is no result to parse, and the
+  # buffer here is the *previous* run's output reloaded for adoption, so
+  # parsing it would either re-apply a stage transition that already
+  # happened or error the card with a meaningless reason. The task is
+  # simply put back in the queue and run again.
+  def handle_info({:runner_interrupted, handle, reason}, %{runner: handle} = state) do
+    message = AdoptPolicy.reason_message(reason)
+
+    Logger.info("Task #{state.task_id} run interrupted: #{message}")
+
+    fail_session_for(state, "This run was interrupted because #{message}.")
+    if state.current_session_id, do: SessionRegistry.unregister(state.current_session_id)
+    release_pool_slot(state)
+    Interruption.requeue_or_error_by_id(state.task_id, message, keep_runner_handle: true)
+
+    {:noreply, reset_runner(state)}
   end
 
   # Runner GenServer died without sending us :runner_exit (e.g. a
@@ -566,7 +594,13 @@ defmodule Camelot.Runtime.TaskRunner do
 
     task =
       Ash.get!(Task, state.task_id,
-        load: [:agent, :project, :attachments, creator: [:github_installations]],
+        load: [
+          :agent,
+          :project,
+          :attachments,
+          :messages,
+          creator: [:github_installations]
+        ],
         authorize?: false
       )
 
@@ -575,7 +609,11 @@ defmodule Camelot.Runtime.TaskRunner do
     state = %{
       state
       | current_session_id: session.id,
-        current_prompt: "",
+        # Rebuilt rather than left blank: the prompt the adopted session
+        # was originally dispatched with died with the previous process,
+        # and an empty one would make any later retry run the agent with
+        # no instructions at all.
+        current_prompt: PromptBuilder.build(task),
         allowed_tools: task.allowed_tools || [],
         config: config,
         user_id: task.creator_id,
@@ -894,7 +932,7 @@ defmodule Camelot.Runtime.TaskRunner do
 
   defp mark_task_error(task_id, reason) do
     task = Ash.get!(Task, task_id)
-    transition(task, :mark_error, %{last_error: reason})
+    transition(task, :mark_error, %{last_error: reason || @unexplained_failure})
   end
 
   # Variant used by paths where the CLI exited cleanly but the
@@ -1395,7 +1433,10 @@ defmodule Camelot.Runtime.TaskRunner do
   defp session_action(_exit_code, false), do: :fail
 
   defp parsed_error({:error, msg}), do: msg
-  defp parsed_error(_parsed), do: nil
+
+  # Never nil: a non-zero exit with a parsable-but-resultless buffer
+  # would otherwise produce an error card with no explanation at all.
+  defp parsed_error(_parsed), do: @unexplained_failure
 
   defp parsed_field({:ok, parsed}, key), do: Map.get(parsed, key)
   defp parsed_field(_parsed, _key), do: nil

@@ -29,6 +29,20 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
 
   require Logger
 
+  # The runner container is a long-lived `sleep infinity` host that
+  # sessions exec into, so a replica that dies has taken the whole task
+  # runner with it. `none` used to be the policy, which meant a single
+  # failed start — a node briefly out of memory, a pull that timed out —
+  # left the service alive at zero replicas with nothing to bring it
+  # back, and the reconciler eventually gave up on the task. A bounded
+  # `on-failure` lets Swarm retry a few times on its own; the reconciler
+  # still catches the case where every attempt fails.
+  @restart_policy %{
+    "Condition" => "on-failure",
+    "MaxAttempts" => 3,
+    "Delay" => 5_000_000_000
+  }
+
   defstruct task_id: nil,
             spec: nil,
             service_id: nil,
@@ -132,11 +146,17 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
       the digest the service already runs, the spec is POSTed back
       with a fully digest-pinned image so Swarm rolls the container.
 
-  Called by the Reconciler's boot sweep. Never raises; logs the
-  outcome and always returns `:ok` so one bad service can't abort
-  the sweep.
+  Called by the Reconciler's boot sweep. Never raises, so one bad
+  service can't abort the sweep.
+
+  Returns `:rolled` when Swarm was actually asked to replace the
+  container — the caller needs to know, because that destroys the
+  container's `/tmp` and with it the tee'd output and completion
+  marker any in-flight session depends on. `:unchanged` means the
+  service was already on the current digest (or is deliberately
+  pinned) and nothing moved.
   """
-  @spec autoupdate_image(String.t()) :: :ok
+  @spec autoupdate_image(String.t()) :: :rolled | :unchanged | {:error, term()}
   def autoupdate_image(service_ref) when is_binary(service_ref) do
     with {:ok, %{"Version" => %{"Index" => version}, "Spec" => spec}} <-
            fetch_service(service_ref),
@@ -148,10 +168,10 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
       {:error, reason} ->
         Logger.warning("Swarm.TaskService autoupdate_image #{service_ref}: #{inspect(reason)}")
 
-        :ok
+        {:error, reason}
 
       _pinned_or_missing ->
-        :ok
+        :unchanged
     end
   end
 
@@ -159,11 +179,11 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
     log_autoupdate(service_ref, post_service_update(service_ref, version, new_spec))
   end
 
-  defp apply_image_update(_service_ref, _version, :unchanged), do: :ok
+  defp apply_image_update(_service_ref, _version, :unchanged), do: :unchanged
 
   defp log_autoupdate(service_ref, :ok) do
     Logger.info("Swarm.TaskService autoupdate_image #{service_ref}: pinned newest digest")
-    :ok
+    :rolled
   end
 
   defp log_autoupdate(service_ref, {:error, reason}) do
@@ -172,7 +192,7 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
         "update failed: #{inspect(reason)}"
     )
 
-    :ok
+    {:error, reason}
   end
 
   # --- GenServer plumbing ---
@@ -293,9 +313,15 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
     end
   end
 
+  # The image is resolved to an explicit digest here rather than left as
+  # a bare tag: the Docker API stores whatever string it is given, so a
+  # service created with `:latest` looks "unpinned" to the boot sweep,
+  # which then rolls its container on the next redeploy even when the
+  # image never moved. Resolving up front makes that sweep a genuine
+  # no-op unless a newer image really was published.
   defp create_service(task_id, %Spec{} = spec) do
     name = Spec.task_runner_name(task_id)
-    payload = service_create_payload(spec, name)
+    payload = service_create_payload(pin_image(spec), name)
 
     case post_create(payload) do
       {:ok, id} ->
@@ -314,6 +340,10 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
       {:error, _} = err ->
         err
     end
+  end
+
+  defp pin_image(%Spec{image: image} = spec) do
+    %{spec | image: RegistryClient.pinned_ref(image)}
   end
 
   defp post_create(payload) do
@@ -490,7 +520,7 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
           "Networks" => task_networks(),
           "Placement" => placement(spec),
           "Resources" => resources(spec),
-          "RestartPolicy" => %{"Condition" => "none"}
+          "RestartPolicy" => @restart_policy
         }),
       "Mode" => %{"Replicated" => %{"Replicas" => 1}}
     })

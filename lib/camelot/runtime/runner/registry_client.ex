@@ -25,6 +25,8 @@ defmodule Camelot.Runtime.Runner.RegistryClient do
 
   alias Camelot.Runtime.Runner.ImageRef
 
+  require Logger
+
   @default_registry "registry-1.docker.io"
 
   # Accept both OCI and Docker media types, indexes and single
@@ -53,6 +55,50 @@ defmodule Camelot.Runtime.Runner.RegistryClient do
     {host, repo} = split_host_repo(name)
     url = "https://#{host}/v2/#{repo}/manifests/#{tag || "latest"}"
     fetch_digest(url)
+  end
+
+  @doc """
+  The image reference to actually run: a floating tag (`latest` or no
+  tag) resolved to `name:tag@sha256:…`, anything already pinned left
+  untouched.
+
+  Used both when a task service is created and by the boot sweep, so a
+  service starts life on an explicit digest — otherwise the daemon
+  stores the bare tag verbatim, the sweep sees "no digest" on the next
+  boot, and the container is rolled even though the image never moved.
+
+  Best-effort: a registry that is unreachable or answers with an error
+  yields the original reference, exactly as before this resolution
+  existed. `resolver` exists so the decision can be tested without a
+  registry.
+  """
+  @spec pinned_ref(String.t() | nil, (String.t() -> {:ok, String.t()} | {:error, term()})) ::
+          String.t() | nil
+  def pinned_ref(image, resolver \\ &current_digest/1)
+
+  def pinned_ref(nil, _resolver), do: nil
+
+  def pinned_ref(image, resolver) when is_binary(image) do
+    if ImageRef.floating?(image) do
+      resolve_or_keep(image, resolver)
+    else
+      image
+    end
+  end
+
+  defp resolve_or_keep(image, resolver) do
+    case resolver.(image) do
+      {:ok, digest} ->
+        ImageRef.pin(image, digest)
+
+      {:error, reason} ->
+        Logger.warning(
+          "RegistryClient: could not resolve #{image} to a digest " <>
+            "(#{inspect(reason)}); using the floating tag"
+        )
+
+        image
+    end
   end
 
   defp fetch_digest(url) do

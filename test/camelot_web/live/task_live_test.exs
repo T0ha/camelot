@@ -95,6 +95,30 @@ defmodule CamelotWeb.TaskLiveTest do
     end
   end
 
+  describe "error reason" do
+    test "shows last_error when the task is in error", %{conn: conn, task: task} do
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+
+      {:ok, task} =
+        Ash.update(
+          task,
+          %{last_error: "runner lost: service returned 404"},
+          action: :mark_error
+        )
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ "This task stopped with an error"
+      assert html =~ "runner lost: service returned 404"
+    end
+
+    test "shows nothing for a healthy task", %{conn: conn, task: task} do
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      refute html =~ "This task stopped with an error"
+    end
+  end
+
   describe "cancel" do
     test "cancels a task", %{conn: conn, task: task} do
       {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")

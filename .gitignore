@@ -40,3 +40,4 @@ npm-debug.log
 
 # Private keys / certs (e.g. GitHub App keys) — never commit.
 *.pem
+/priv/static
