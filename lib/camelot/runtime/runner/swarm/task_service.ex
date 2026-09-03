@@ -365,10 +365,7 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
   # rotate, then build the payload that resolves the SecretIDs.
   defp clear_stale_service(task_id, name) do
     case fetch_service(name) do
-      {:error, :not_found} ->
-        :ok
-
-      _ ->
+      {:ok, _service} ->
         Logger.info(
           "Swarm.TaskService #{task_id}: removing stale service " <>
             "#{name} so its secrets can be rotated"
@@ -376,6 +373,13 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
 
         delete_service_by_name(name)
         await_service_gone(name, @stale_service_attempts)
+
+      # Absent, or a read we could not complete. Never delete a service
+      # we failed to look up: if one really is there, the create below
+      # still 409s onto the delete-and-retry path, and the rotation
+      # aborts loudly rather than us guessing against a blind Docker.
+      _ ->
+        :ok
     end
   end
 

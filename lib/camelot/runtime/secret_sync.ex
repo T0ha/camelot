@@ -260,15 +260,27 @@ defmodule Camelot.Runtime.SecretSync do
     }
 
     case Req.post(DockerApi.request(), url: "/secrets/create", json: payload) do
-      {:ok, %Req.Response{status: status, body: %{"ID" => id}}}
-      when status in 200..299 ->
-        {:ok, id}
+      {:ok, %Req.Response{status: status, body: body}} when status in 200..299 ->
+        created_id(name, body)
 
       {:ok, resp} ->
         {:error, {:create_failed, resp.status, resp.body}}
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  # Docker answers a create with `201 {"ID" => …}`. Read the id back by
+  # name if the body ever arrives without one — a proxy that strips it
+  # must not turn a secret we did create into a rotation failure, which
+  # now aborts the runner that was waiting on it.
+  defp created_id(_name, %{"ID" => id}), do: {:ok, id}
+
+  defp created_id(name, body) do
+    case fetch_secret_by_name(name) do
+      {:ok, id} -> {:ok, id}
+      :error -> {:error, {:create_failed, :no_id_in_response, body}}
     end
   end
 
