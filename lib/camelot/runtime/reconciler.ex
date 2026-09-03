@@ -616,10 +616,29 @@ defmodule Camelot.Runtime.Reconciler do
 
     list_github_app_secret_task_ids()
     |> Enum.reject(&MapSet.member?(valid, &1))
-    |> Enum.each(fn task_id ->
-      Logger.info("Reconciler: removing orphan github_app_token secret for task #{task_id}")
-      delete_by_name(SecretSync.task_secret_name(task_id, :github_app_token))
-    end)
+    |> Enum.each(&delete_orphan_github_app_secret/1)
+  end
+
+  # `delete_by_name/1` speaks to `/services` — pointing it at a secret
+  # name deleted nothing and re-logged the same "removing orphan" line
+  # every tick, forever, while the secrets piled up. Secrets have their
+  # own endpoint, and their own reasons to refuse.
+  defp delete_orphan_github_app_secret(task_id) do
+    name = SecretSync.task_secret_name(task_id, :github_app_token)
+
+    case SecretSync.delete_secret_by_name(name) do
+      :ok ->
+        Logger.info(
+          "Reconciler: removed orphan github_app_token secret " <>
+            "for task #{task_id}"
+        )
+
+      {:error, reason} ->
+        Logger.warning(
+          "Reconciler: could not remove orphan github_app_token " <>
+            "secret for task #{task_id}: #{inspect(reason)}"
+        )
+    end
   end
 
   @github_app_secret_prefix "camelot_task_"

@@ -7,10 +7,19 @@ defmodule Camelot.Runtime.SecretSync do
   can mount it at `/run/secrets/<kind>`.
 
   Swarm secrets are immutable, so "update" means
-  create-new / rotate-service-references / delete-old.
-  This GenServer owns that dance. For the LocalPort and
-  DockerEngine backends it's effectively a no-op —
-  those modes pass credentials via env vars.
+  delete-then-create under the same name. This GenServer
+  owns that dance. For the LocalPort and DockerEngine
+  backends it's effectively a no-op — those modes pass
+  credentials via env vars.
+
+  The delete half only succeeds while no service
+  references the secret, so a rotation can fail for
+  reasons that have nothing to do with the new value.
+  Every entry point therefore reports that failure
+  rather than returning a bare `:ok`: a caller that
+  assumes success would hand a runner the *previous*
+  value, which for a GitHub App installation token means
+  an hour-old, dead credential.
   """
   use GenServer
 
@@ -69,9 +78,38 @@ defmodule Camelot.Runtime.SecretSync do
   isn't tied to a `Credential` row, so callers minting a
   transient token (e.g. a GitHub App installation token)
   can publish it directly.
+
+  Returns the new secret's id, or `{:error, reason}` when the
+  rotation could not be completed. Callers must not treat an
+  error as harmless: Swarm secrets are immutable, so "replace"
+  is delete-then-create, and a rotation that fails leaves the
+  *previous* value in place for every service that mounts it.
   """
-  @spec put_secret(String.t(), String.t()) :: :ok
+  @spec put_secret(String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, term()}
   def put_secret(name, value), do: upsert_secret(name, value)
+
+  @doc """
+  Removes the Swarm secret with the given name. Already-absent
+  counts as success; a Docker refusal (most often "secret is in
+  use by the following service") comes back as `{:error, _}`.
+  """
+  @spec delete_secret_by_name(String.t()) :: :ok | {:error, term()}
+  def delete_secret_by_name(name), do: delete_secret(name)
+
+  @doc false
+  # Classifies a Docker `DELETE /secrets/<id>` response. 404 counts as
+  # success — the secret is gone, which is all the caller wanted.
+  # Everything else non-2xx is a real failure, most importantly the 400
+  # Docker returns while a service still references the secret: that
+  # case used to be swallowed, so the create below failed with
+  # `AlreadyExists` and the runner mounted the previous, expired token.
+  # Public (with `@doc false`) so the rule is unit-testable without a
+  # Docker API.
+  @spec delete_result(pos_integer(), term()) :: :ok | {:error, term()}
+  def delete_result(status, _body) when status in 200..299, do: :ok
+  def delete_result(404, _body), do: :ok
+  def delete_result(status, body), do: {:error, {:delete_failed, status, body}}
 
   defp kind_suffix(:ssh_private_key), do: "ssh_pk"
   defp kind_suffix(:github_app_token), do: "gh_token"
@@ -162,12 +200,14 @@ defmodule Camelot.Runtime.SecretSync do
       |> Ash.Query.load(:value)
       |> Ash.read_first()
 
+    name = secret_name(user_id, kind)
+
     case cred do
       {:ok, nil} ->
-        delete_secret(secret_name(user_id, kind))
+        warn_on_failure(name, delete_secret(name))
 
       {:ok, %Credential{value: value}} when is_binary(value) ->
-        upsert_secret(secret_name(user_id, kind), value)
+        warn_on_failure(name, upsert_secret(name, value))
 
       {:ok, %Credential{value: nil}} ->
         Logger.warning(
@@ -184,14 +224,25 @@ defmodule Camelot.Runtime.SecretSync do
       :ok
   end
 
-  defp upsert_secret(name, value) do
-    case fetch_secret_by_name(name) do
-      {:ok, old_id} ->
-        delete_secret_by_id(old_id)
-        create_secret(name, value)
+  # A per-user credential rarely changes value, so a failed rotation
+  # here is worth a warning rather than a crash — but never silence.
+  # The fatal case is the per-task GitHub App token, whose caller
+  # (`Swarm.TaskService`) treats the same error as terminal.
+  defp warn_on_failure(_name, :ok), do: :ok
+  defp warn_on_failure(_name, {:ok, _id}), do: :ok
 
-      _ ->
-        create_secret(name, value)
+  defp warn_on_failure(name, {:error, reason}) do
+    Logger.warning(
+      "SecretSync: rotating #{name} failed (#{inspect(reason)}); " <>
+        "services mounting it keep the previous value"
+    )
+
+    :ok
+  end
+
+  defp upsert_secret(name, value) do
+    with :ok <- delete_secret(name) do
+      create_secret(name, value)
     end
   end
 
@@ -209,16 +260,15 @@ defmodule Camelot.Runtime.SecretSync do
     }
 
     case Req.post(DockerApi.request(), url: "/secrets/create", json: payload) do
-      {:ok, %Req.Response{status: status}} when status in 200..299 ->
-        :ok
+      {:ok, %Req.Response{status: status, body: %{"ID" => id}}}
+      when status in 200..299 ->
+        {:ok, id}
 
       {:ok, resp} ->
-        Logger.warning("SecretSync create #{name} failed: #{inspect(resp.body)}")
-        :ok
+        {:error, {:create_failed, resp.status, resp.body}}
 
       {:error, reason} ->
-        Logger.warning("SecretSync create #{name} failed: #{inspect(reason)}")
-        :ok
+        {:error, reason}
     end
   end
 
@@ -230,9 +280,14 @@ defmodule Camelot.Runtime.SecretSync do
   end
 
   defp delete_secret_by_id(id) do
-    Req.delete(DockerApi.request(), url: "/secrets/#{id}")
-    :ok
+    case Req.delete(DockerApi.request(), url: "/secrets/#{id}") do
+      {:ok, %Req.Response{status: status, body: body}} ->
+        delete_result(status, body)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   rescue
-    _ -> :ok
+    e -> {:error, Exception.message(e)}
   end
 end

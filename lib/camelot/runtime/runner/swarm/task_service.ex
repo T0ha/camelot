@@ -43,6 +43,11 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
     "Delay" => 5_000_000_000
   }
 
+  # Bounded wait for Swarm to finish tearing a stale service down
+  # before its secrets can be rotated (~2s worst case).
+  @stale_service_attempts 8
+  @stale_service_poll_ms 250
+
   defstruct task_id: nil,
             spec: nil,
             service_id: nil,
@@ -321,6 +326,14 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
   # no-op unless a newer image really was published.
   defp create_service(task_id, %Spec{} = spec) do
     name = Spec.task_runner_name(task_id)
+
+    with :ok <- clear_stale_service(task_id, name),
+         :ok <- rotate_task_secrets(task_id, spec) do
+      post_create_named(task_id, name, spec)
+    end
+  end
+
+  defp post_create_named(task_id, name, spec) do
     payload = service_create_payload(pin_image(spec), name)
 
     case post_create(payload) do
@@ -340,6 +353,90 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskService do
       {:error, _} = err ->
         err
     end
+  end
+
+  # Docker refuses to delete a secret while any service still
+  # references it, and a Swarm secret can only be rotated by
+  # delete-then-create. So a re-dispatch that finds the previous run's
+  # service still registered under this name cannot refresh the task's
+  # secrets — and a GitHub App installation token is dead an hour after
+  # it was minted, which the runner only discovers as a `git clone`
+  # 401 that kills the container at boot. Sweep the corpse first, then
+  # rotate, then build the payload that resolves the SecretIDs.
+  defp clear_stale_service(task_id, name) do
+    case fetch_service(name) do
+      {:error, :not_found} ->
+        :ok
+
+      _ ->
+        Logger.info(
+          "Swarm.TaskService #{task_id}: removing stale service " <>
+            "#{name} so its secrets can be rotated"
+        )
+
+        delete_service_by_name(name)
+        await_service_gone(name, @stale_service_attempts)
+    end
+  end
+
+  # `DELETE /services` returns before Swarm has released the service's
+  # hold on its secrets, so poll until the service is really gone.
+  # Bounded — give up and report rather than block the create forever.
+  defp await_service_gone(name, 0), do: {:error, {:stale_service_present, name}}
+
+  defp await_service_gone(name, attempts) do
+    case fetch_service(name) do
+      {:error, :not_found} ->
+        :ok
+
+      _ ->
+        Process.sleep(@stale_service_poll_ms)
+        await_service_gone(name, attempts - 1)
+    end
+  end
+
+  # Only the task's own secrets are rotated here. Per-user secrets are
+  # owned by `SecretSync.reconcile/2` and may legitimately be pinned by
+  # another task's live runner — not this task's problem, and unlike an
+  # installation token they do not expire on their own.
+  defp rotate_task_secrets(task_id, %Spec{} = spec) do
+    spec
+    |> task_scoped_secrets(task_id)
+    |> Enum.reduce_while(:ok, fn secret, _acc ->
+      case rotate_secret(secret) do
+        :ok -> {:cont, :ok}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+  end
+
+  defp rotate_secret(%{kind: kind, name: name, value: value}) do
+    case SecretSync.put_secret(name, value) do
+      {:ok, _id} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "Swarm.TaskService: rotating #{name} failed " <>
+            "(#{inspect(reason)}); refusing to start a runner that " <>
+            "would mount a stale #{kind}"
+        )
+
+        {:error, {:secret_rotation_failed, name, reason}}
+    end
+  end
+
+  @doc false
+  # The secrets this task owns — the ones named after the task rather
+  # than after its user. Public (with `@doc false`) so the ownership
+  # rule is unit-testable without a Docker API.
+  @spec task_scoped_secrets(Spec.t(), String.t()) :: [Spec.secret()]
+  def task_scoped_secrets(%Spec{secrets: secrets}, task_id) do
+    Enum.filter(secrets, &task_scoped?(&1, task_id))
+  end
+
+  defp task_scoped?(%{kind: kind, name: name}, task_id) do
+    name == SecretSync.task_secret_name(task_id, kind)
   end
 
   defp pin_image(%Spec{image: image} = spec) do
