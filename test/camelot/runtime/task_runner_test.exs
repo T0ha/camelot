@@ -566,6 +566,67 @@ defmodule Camelot.Runtime.TaskRunnerTest do
       assert reloaded.duration_api_ms == 5000
       assert reloaded.num_turns == 7
       assert reloaded.usage == %{"input_tokens" => 200, "output_tokens" => 80}
+      assert is_nil(reloaded.error_message)
+    end
+
+    test "leaves no error message on a clean exit with an unparsable buffer", ctx do
+      {:ok, session} =
+        Ash.create(Session, %{
+          agent_id: ctx.task.agent_id,
+          task_id: ctx.task.id
+        })
+
+      state = %TaskRunner{
+        task_id: ctx.task.id,
+        current_session_id: session.id,
+        output_buffer: ""
+      }
+
+      assert :ok = TaskRunner.finish_session(state, 0, {:error, "empty output"}, [])
+
+      reloaded = Ash.get!(Session, session.id)
+      assert reloaded.status == :completed
+      assert is_nil(reloaded.error_message)
+    end
+
+    test "records the parsed reason on a non-zero exit", ctx do
+      {:ok, session} =
+        Ash.create(Session, %{
+          agent_id: ctx.task.agent_id,
+          task_id: ctx.task.id
+        })
+
+      state = %TaskRunner{
+        task_id: ctx.task.id,
+        current_session_id: session.id,
+        output_buffer: "boom"
+      }
+
+      assert :ok = TaskRunner.finish_session(state, 1, {:error, "runner died"}, [])
+
+      reloaded = Ash.get!(Session, session.id)
+      assert reloaded.status == :failed
+      assert reloaded.error_message == "runner died"
+    end
+
+    test "falls back to a generic reason on a non-zero exit with no parsed error", ctx do
+      {:ok, session} =
+        Ash.create(Session, %{
+          agent_id: ctx.task.agent_id,
+          task_id: ctx.task.id
+        })
+
+      state = %TaskRunner{
+        task_id: ctx.task.id,
+        current_session_id: session.id,
+        output_buffer: "partial"
+      }
+
+      assert :ok = TaskRunner.finish_session(state, 1, nil, [])
+
+      reloaded = Ash.get!(Session, session.id)
+      assert reloaded.status == :failed
+      assert reloaded.error_message =~ "non-zero status"
     end
   end
 
