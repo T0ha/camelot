@@ -942,9 +942,12 @@ defmodule Camelot.Runtime.TaskRunner do
     end
   end
 
+  # `reason` is never nil: both callers pass a built message, and
+  # `parsed_error/1` falls back to `@unexplained_failure` rather than
+  # returning nil, so an error card always carries an explanation.
   defp mark_task_error(task_id, reason) do
     task = Ash.get!(Task, task_id)
-    transition(task, :mark_error, %{last_error: reason || @unexplained_failure})
+    transition(task, :mark_error, %{last_error: reason})
   end
 
   # Variant used by paths where the CLI exited cleanly but the
@@ -1411,7 +1414,7 @@ defmodule Camelot.Runtime.TaskRunner do
            %{
              output_log: state.output_buffer,
              exit_code: exit_code,
-             error_message: parsed_error(parsed),
+             error_message: session_error(exit_code, parsed),
              permission_denials: denials,
              cost_usd: parsed_field(parsed, :cost_usd),
              duration_ms: parsed_field(parsed, :duration_ms),
@@ -1449,6 +1452,17 @@ defmodule Camelot.Runtime.TaskRunner do
   # Never nil: a non-zero exit with a parsable-but-resultless buffer
   # would otherwise produce an error card with no explanation at all.
   defp parsed_error(_parsed), do: @unexplained_failure
+
+  # Session-level variant of `parsed_error/1`. The fallback above is a
+  # statement about the *exit status*, so it must never be written for a
+  # clean exit — doing so stamped every successful session with a
+  # "non-zero status" error the task page then rendered. A clean exit
+  # whose buffer would not parse still reaches the card through
+  # `mark_task_error/2`, so nothing is lost by leaving the row nil.
+  @spec session_error(integer(), term()) :: String.t() | nil
+  defp session_error(0, _parsed), do: nil
+  defp session_error(_exit_code, {:error, msg}), do: msg
+  defp session_error(_exit_code, _parsed), do: @unexplained_failure
 
   defp parsed_field({:ok, parsed}, key), do: Map.get(parsed, key)
   defp parsed_field(_parsed, _key), do: nil
