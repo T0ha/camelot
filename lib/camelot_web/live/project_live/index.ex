@@ -6,6 +6,8 @@ defmodule CamelotWeb.ProjectLive.Index do
 
   alias Camelot.Projects.Project
   alias CamelotWeb.Components.FolderPicker
+  alias CamelotWeb.Components.GithubRepoPicker
+  alias CamelotWeb.Components.RunnerImagePicker
   alias CamelotWeb.Scope
   alias Phoenix.LiveView.Socket
 
@@ -96,6 +98,22 @@ defmodule CamelotWeb.ProjectLive.Index do
       socket.assigns.form.params
       |> Map.put("path", path)
       |> detect_github_from_git(path)
+
+    {:noreply, assign(socket, form: to_form(form_params))}
+  end
+
+  def handle_info({:github_repo_selected, repo}, socket) do
+    form_params =
+      socket.assigns.form.params
+      |> Map.put("github_owner", repo.owner)
+      |> Map.put("github_repo", repo.repo)
+      |> Map.put("github_repo_url", repo.html_url)
+
+    {:noreply, assign(socket, form: to_form(form_params))}
+  end
+
+  def handle_info({:runner_image_selected, image}, socket) do
+    form_params = Map.put(socket.assigns.form.params, "runner_image_override", image)
 
     {:noreply, assign(socket, form: to_form(form_params))}
   end
@@ -449,19 +467,24 @@ defmodule CamelotWeb.ProjectLive.Index do
               type="text"
               label="GitHub URL"
             />
-            <.input
-              field={@form[:github_owner]}
-              type="text"
+            <.live_component
+              module={GithubRepoPicker}
+              id="github-repo-picker"
+              name={@form[:github_owner].name}
+              value={@form[:github_owner].value}
               label="GitHub Owner"
+              current_user={@current_user}
             />
             <.input
               field={@form[:github_repo]}
               type="text"
               label="GitHub Repo"
             />
-            <.input
-              field={@form[:runner_image_override]}
-              type="text"
+            <.live_component
+              module={RunnerImagePicker}
+              id="runner-image-picker"
+              name={@form[:runner_image_override].name}
+              value={@form[:runner_image_override].value}
               label="Runner Image Override"
             />
 

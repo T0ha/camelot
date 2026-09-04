@@ -125,6 +125,39 @@ defmodule Camelot.Github.Client do
     end
   end
 
+  @doc """
+  Lists repositories accessible to a GitHub App
+  installation, for autocomplete-style pickers.
+
+  A single page is enough — App installations are
+  typically small — so this doesn't chase pagination.
+  """
+  @spec list_installation_repositories(integer(), keyword()) ::
+          {:ok, [map()]} | {:error, term()}
+  def list_installation_repositories(installation_id, opts \\ []) do
+    opts = Keyword.put(opts, :installation_id, installation_id)
+
+    case request(:get, "/installation/repositories?per_page=100", opts) do
+      {:ok, %{"repositories" => repos}} when is_list(repos) ->
+        {:ok, Enum.map(repos, &normalize_repository/1)}
+
+      {:ok, _other} ->
+        {:ok, []}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp normalize_repository(repo) do
+    %{
+      owner: get_in(repo, ["owner", "login"]),
+      repo: repo["name"],
+      full_name: repo["full_name"],
+      html_url: repo["html_url"]
+    }
+  end
+
   defp request(method, path, opts) do
     url = @base_url <> path
 
