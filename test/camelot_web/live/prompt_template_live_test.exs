@@ -144,5 +144,39 @@ defmodule CamelotWeb.PromptTemplateLiveTest do
       {:ok, _view, html} = live(conn, ~p"/prompts/#{theirs.id}/edit")
       assert html =~ "Edit Template"
     end
+
+    test "lists and edits the seeded claude system-prompt templates", %{conn: conn} do
+      require Ash.Query
+
+      [planning, executing, pr] =
+        Enum.map(
+          ~w(claude_planning_system_prompt claude_execution_system_prompt claude_pr_system_prompt),
+          fn slug ->
+            PromptTemplate
+            |> Ash.Query.filter(slug == ^slug and is_nil(project_id) and is_nil(user_id))
+            |> Ash.read_one!()
+          end
+        )
+
+      {:ok, _view, html} = live(conn, ~p"/prompts")
+      assert html =~ planning.name
+      assert html =~ executing.name
+      assert html =~ pr.name
+
+      {:ok, view, html} = live(conn, ~p"/prompts/#{planning.id}/edit")
+      assert html =~ "Edit Template"
+      assert html =~ "no"
+      assert html =~ "placeholders are"
+
+      view
+      |> form("#template-form", %{
+        "name" => planning.name,
+        "body" => "edited body",
+        "description" => planning.description || ""
+      })
+      |> render_submit()
+
+      assert %{body: "edited body"} = Ash.get!(PromptTemplate, planning.id)
+    end
   end
 end
