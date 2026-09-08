@@ -232,4 +232,18 @@ defmodule Camelot.Projects.Project do
       run(Camelot.Projects.Changes.SyncGithubIssues)
     end
   end
+
+  @doc """
+  True when the project has not been archived.
+
+  Archiving is the switch that takes a project out of every background
+  loop — issue sync, task dispatch and PR polling all consult this.
+
+  Matching the bare map rather than `%__MODULE__{}` is deliberate: Ash
+  defines the struct in a transformer that has not run yet at this
+  point in the module body.
+  """
+  @spec active?(t() | nil) :: boolean()
+  def active?(%{status: :active}), do: true
+  def active?(_project), do: false
 end

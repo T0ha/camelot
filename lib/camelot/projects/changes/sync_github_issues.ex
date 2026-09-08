@@ -24,17 +24,26 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
           Ash.Resource.Actions.Implementation.Context.t()
         ) :: :ok
   def run(_input, _opts, _context) do
-    Enum.each(projects_with_github(), &sync_project_issues/1)
+    Enum.each(syncable_projects(), &sync_project_issues/1)
     :ok
   end
 
-  defp projects_with_github do
+  defp syncable_projects do
     Project
     |> Ash.read!(load: [owner_membership: [user: [:github_installations]]], authorize?: false)
-    |> Enum.filter(fn p ->
-      p.github_owner && p.github_repo && p.owner_membership
-    end)
+    |> Enum.filter(&syncable?/1)
   end
+
+  @doc """
+  True when `project` should have its GitHub issues imported: it is
+  active, points at a repository, and has an owner whose installation
+  can be used to talk to GitHub.
+  """
+  @spec syncable?(Project.t()) :: boolean()
+  def syncable?(%Project{github_owner: nil}), do: false
+  def syncable?(%Project{github_repo: nil}), do: false
+  def syncable?(%Project{owner_membership: nil}), do: false
+  def syncable?(%Project{} = project), do: Project.active?(project)
 
   defp sync_project_issues(project) do
     case Client.list_issues(
