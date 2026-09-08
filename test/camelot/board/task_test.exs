@@ -726,4 +726,44 @@ defmodule Camelot.Board.TaskTest do
       )
     end
   end
+
+  describe "check_pr_status trigger scope" do
+    # The trigger's `where` is what AshOban runs to decide which tasks
+    # to poll, so the test applies that same expression rather than
+    # restating the filter.
+    defp pr_stage_tasks do
+      require Ash.Query
+
+      trigger = AshOban.Info.oban_trigger(Task, :check_pr_status)
+
+      Task
+      |> Ash.Query.do_filter(trigger.where)
+      |> Ash.read!()
+    end
+
+    defp seed_pr_task(project, user) do
+      Ash.Seed.seed!(Task, %{
+        title: "pr task",
+        stage: :pr,
+        state: :waiting_for_input,
+        pr_number: 7,
+        project_id: project.id,
+        creator_id: user.id,
+        agent_id: agent!("claude_code").id
+      })
+    end
+
+    test "polls a PR-stage task in an active project", ctx do
+      task = seed_pr_task(ctx.project, ctx.user)
+
+      assert Enum.map(pr_stage_tasks(), & &1.id) == [task.id]
+    end
+
+    test "skips a PR-stage task in an archived project", ctx do
+      seed_pr_task(ctx.project, ctx.user)
+      {:ok, _} = Ash.update(ctx.project, %{}, action: :archive)
+
+      assert pr_stage_tasks() == []
+    end
+  end
 end

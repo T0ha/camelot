@@ -12,6 +12,7 @@ defmodule Camelot.Board.Changes.DispatchTasks do
 
   alias Camelot.Board.PromptBuilder
   alias Camelot.Board.Task
+  alias Camelot.Projects.Project
   alias Camelot.Runtime.TaskRegistry
   alias Camelot.Runtime.TaskRunner
   alias Camelot.Runtime.TaskRunnerSupervisor
@@ -40,10 +41,24 @@ defmodule Camelot.Board.Changes.DispatchTasks do
       load: [:messages, :attachments, :project, creator: [:github_installations]],
       authorize?: false
     )
-    |> Enum.filter(fn task ->
-      task.state == :queued and task.stage in @dispatchable_stages
-    end)
+    |> Enum.filter(&dispatchable?/1)
   end
+
+  @doc """
+  True when `task` is waiting for an agent and its project is still
+  active.
+
+  `:project` must be loaded. An `%Ash.NotLoaded{}` project reads as
+  inactive and the task is skipped rather than dispatched blind, so a
+  dropped preload would show up as tasks sitting queued — check the
+  load list in `dispatchable_tasks/0` before suspecting the gate.
+  """
+  @spec dispatchable?(Task.t()) :: boolean()
+  def dispatchable?(%Task{state: :queued, stage: stage, project: project}) when stage in @dispatchable_stages do
+    Project.active?(project)
+  end
+
+  def dispatchable?(%Task{}), do: false
 
   defp dispatch_task(task) do
     case Ash.update(task, %{}, action: :begin_work) do
