@@ -242,6 +242,12 @@ defmodule Camelot.Projects.Project do
   Matching the bare map rather than `%__MODULE__{}` is deliberate: Ash
   defines the struct in a transformer that has not run yet at this
   point in the module body.
+
+  Anything that is not a project carrying `status: :active` — `nil`, an
+  unloaded relationship, a record read with `status` deselected — is
+  reported as inactive. Failing closed is the safe direction here: the
+  cost is a background loop skipping a project, not one running against
+  an archived board.
   """
   @spec active?(t() | nil) :: boolean()
   def active?(%{status: :active}), do: true

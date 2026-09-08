@@ -43,7 +43,14 @@ config :camelot, CamelotWeb.Endpoint,
 # 30 minutes is far above any job's real runtime — every Oban job here
 # returns promptly (dispatch hands off to a `TaskRunner` process, the
 # rest are single HTTP round trips), so Lifeline can only ever catch a
-# genuine orphan.
+# genuine orphan. Keep it that way: a job that can legitimately run
+# past `rescue_after` will be rescued out from under itself, so put
+# long work in a supervised process and raise this window if that ever
+# stops being true.
+#
+# Pruner's `max_age` is in SECONDS, unlike Lifeline's `rescue_after`,
+# which is milliseconds — hence the bare arithmetic rather than
+# `to_timeout/1`.
 config :camelot, Oban,
   repo: Camelot.Repo,
   queues: [default: 10, tasks: 5, github: 3, notifications: 5],

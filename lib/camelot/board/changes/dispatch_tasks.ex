@@ -46,7 +46,12 @@ defmodule Camelot.Board.Changes.DispatchTasks do
 
   @doc """
   True when `task` is waiting for an agent and its project is still
-  active. Requires `:project` to be loaded.
+  active.
+
+  `:project` must be loaded. An `%Ash.NotLoaded{}` project reads as
+  inactive and the task is skipped rather than dispatched blind, so a
+  dropped preload would show up as tasks sitting queued — check the
+  load list in `dispatchable_tasks/0` before suspecting the gate.
   """
   @spec dispatchable?(Task.t()) :: boolean()
   def dispatchable?(%Task{state: :queued, stage: stage, project: project}) when stage in @dispatchable_stages do
