@@ -3,6 +3,7 @@ defmodule Camelot.Board.TaskTest do
 
   alias Camelot.Accounts.User
   alias Camelot.Board.Task
+  alias Camelot.Board.TaskLink
   alias Camelot.Board.Workers.SendTaskStateEmail
   alias Camelot.Projects.Project
 
@@ -764,6 +765,136 @@ defmodule Camelot.Board.TaskTest do
       {:ok, _} = Ash.update(ctx.project, %{}, action: :archive)
 
       assert pr_stage_tasks() == []
+    end
+  end
+
+  describe "blocked?" do
+    defp create_link(source, target, link_type) do
+      {:ok, link} =
+        Ash.create(TaskLink, %{
+          source_task_id: source.id,
+          target_task_id: target.id,
+          link_type: link_type
+        })
+
+      link
+    end
+
+    defp with_stage(task, stage) do
+      Ash.Seed.update!(task, %{stage: stage})
+    end
+
+    defp blocked?(task) do
+      task |> Ash.load!(:blocked?) |> Map.fetch!(:blocked?)
+    end
+
+    test "false when unlinked", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+      refute blocked?(task)
+    end
+
+    test "true while a :blocks blocker is pre-pr", ctx do
+      {:ok, blocker} = create_task(ctx.project, ctx.user)
+      {:ok, dependent} = create_task(ctx.project, ctx.user)
+      create_link(blocker, dependent, :blocks)
+
+      with_stage(blocker, :executing)
+
+      assert blocked?(dependent)
+    end
+
+    test "false once the blocker reaches :pr", ctx do
+      {:ok, blocker} = create_task(ctx.project, ctx.user)
+      {:ok, dependent} = create_task(ctx.project, ctx.user)
+      create_link(blocker, dependent, :blocks)
+
+      with_stage(blocker, :pr)
+
+      refute blocked?(dependent)
+    end
+
+    test "false once the blocker reaches :done", ctx do
+      {:ok, blocker} = create_task(ctx.project, ctx.user)
+      {:ok, dependent} = create_task(ctx.project, ctx.user)
+      create_link(blocker, dependent, :blocks)
+
+      with_stage(blocker, :done)
+
+      refute blocked?(dependent)
+    end
+
+    test "false once the blocker is :cancelled", ctx do
+      {:ok, blocker} = create_task(ctx.project, ctx.user)
+      {:ok, dependent} = create_task(ctx.project, ctx.user)
+      create_link(blocker, dependent, :blocks)
+
+      with_stage(blocker, :cancelled)
+
+      refute blocked?(dependent)
+    end
+
+    test "a parent is blocked while any subtask is pre-pr", ctx do
+      {:ok, parent} = create_task(ctx.project, ctx.user)
+      {:ok, subtask} = create_task(ctx.project, ctx.user)
+      create_link(parent, subtask, :parent_of)
+
+      with_stage(subtask, :planning)
+
+      assert blocked?(parent)
+    end
+
+    test "a parent is unblocked once every subtask reaches :pr", ctx do
+      {:ok, parent} = create_task(ctx.project, ctx.user)
+      {:ok, subtask} = create_task(ctx.project, ctx.user)
+      create_link(parent, subtask, :parent_of)
+
+      with_stage(subtask, :pr)
+
+      refute blocked?(parent)
+    end
+
+    test ":relates_to never blocks", ctx do
+      {:ok, a} = create_task(ctx.project, ctx.user)
+      {:ok, b} = create_task(ctx.project, ctx.user)
+      create_link(a, b, :relates_to)
+
+      with_stage(b, :todo)
+
+      refute blocked?(a)
+      refute blocked?(b)
+    end
+  end
+
+  describe "begin_work with a blocked task" do
+    test "refuses to start a task blocked by a pre-pr blocker", ctx do
+      {:ok, blocker} = create_task(ctx.project, ctx.user)
+      {:ok, dependent} = create_task(ctx.project, ctx.user)
+
+      {:ok, _link} =
+        Ash.create(TaskLink, %{
+          source_task_id: blocker.id,
+          target_task_id: dependent.id,
+          link_type: :blocks
+        })
+
+      assert {:error, _error} = Ash.update(dependent, %{}, action: :begin_work)
+    end
+
+    test "starts once the blocker reaches :pr", ctx do
+      {:ok, blocker} = create_task(ctx.project, ctx.user)
+      {:ok, dependent} = create_task(ctx.project, ctx.user)
+
+      {:ok, _link} =
+        Ash.create(TaskLink, %{
+          source_task_id: blocker.id,
+          target_task_id: dependent.id,
+          link_type: :blocks
+        })
+
+      Ash.Seed.update!(blocker, %{stage: :pr})
+
+      assert {:ok, updated} = Ash.update(dependent, %{}, action: :begin_work)
+      assert updated.state == :in_progress
     end
   end
 end

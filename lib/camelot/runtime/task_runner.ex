@@ -594,13 +594,9 @@ defmodule Camelot.Runtime.TaskRunner do
 
     task =
       Ash.get!(Task, state.task_id,
-        load: [
-          :agent,
-          :project,
-          :attachments,
-          :messages,
-          creator: [:github_installations]
-        ],
+        load:
+          [:agent, :project, :attachments, :messages] ++
+            Task.link_load() ++ [creator: [:github_installations]],
         authorize?: false
       )
 

@@ -53,6 +53,7 @@ defmodule Camelot.Board.PromptBuilder do
     base
     |> append_branch_directive(task, slug)
     |> append_conflict_directive(task)
+    |> append_related_context(task)
     |> append_conversation(task.messages)
   end
 
@@ -111,12 +112,61 @@ defmodule Camelot.Board.PromptBuilder do
   # PR that the agent opens can be recovered from GitHub even when its
   # URL is missing from the final output (see TaskRunner fallback).
   defp append_branch_directive(prompt, task, "execution") do
-    prompt <>
-      "\n\nWork on a git branch named exactly `camelot/task-#{task.id}` " <>
-      "and open the pull request from that branch."
+    prompt <> branch_directive(task)
   end
 
   defp append_branch_directive(prompt, _task, _slug), do: prompt
+
+  @doc """
+  Renders the branch-stacking directive appended to an execution-stage
+  prompt.
+
+  Wording is chosen from the task's same-repo `:blocks` blockers that
+  have already reached stage `:pr` (so they have a pushed branch to
+  stack on):
+
+    * none — the original single-branch instruction.
+    * one — branch from that blocker's branch and target it as the PR
+      base (stacked branches, see the moduledoc).
+    * more than one — branch from the default branch and `git merge`
+      each blocker branch in before starting.
+
+  A cross-repo blocker never appears here: cross-repo links still gate
+  dispatch and inject context (`related_context_block/1`), but there
+  is no git branch to share across repositories.
+  """
+  @spec branch_directive(Task.t()) :: String.t()
+  def branch_directive(task) do
+    task
+    |> stacked_blockers()
+    |> branch_directive_for(task)
+  end
+
+  defp branch_directive_for([], task) do
+    "\n\nWork on a git branch named exactly `camelot/task-#{task.id}` " <>
+      "and open the pull request from that branch."
+  end
+
+  defp branch_directive_for([blocker], task) do
+    "\n\nCreate a git branch named exactly `camelot/task-#{task.id}` " <>
+      "from `camelot/task-#{blocker.id}` (already pushed) and open the " <>
+      "pull request with `camelot/task-#{blocker.id}` as its base branch."
+  end
+
+  defp branch_directive_for(blockers, task) do
+    names = Enum.map_join(blockers, ", ", &"`camelot/task-#{&1.id}`")
+
+    "\n\nCreate a git branch named exactly `camelot/task-#{task.id}` " <>
+      "from the default branch, then `git merge` each of #{names} into " <>
+      "it before starting, and open the pull request against the " <>
+      "default branch."
+  end
+
+  defp stacked_blockers(%{blockers: blockers, project: project}) when is_list(blockers) do
+    Enum.filter(blockers, &(&1.stage == :pr and Resolver.same_repo?(project, &1.project)))
+  end
+
+  defp stacked_blockers(_task), do: []
 
   defp prompt_slug(%{stage: :pr}), do: "pr_review"
 
@@ -205,6 +255,118 @@ defmodule Camelot.Board.PromptBuilder do
   def comment_location(%{"path" => path, "line" => nil}), do: " (#{path})"
   def comment_location(%{"path" => path, "line" => line}), do: " (#{path}:#{line})"
   def comment_location(_comment), do: ""
+
+  defp append_related_context(prompt, task) do
+    case related_context_block(task) do
+      "" -> prompt
+      block -> prompt <> "\n\n" <> block
+    end
+  end
+
+  @doc """
+  Renders the "Related Tasks" block appended to every prompt: `:blocks`
+  blockers (with a plan summary, PR link, and same-repo branch note),
+  the parent task, subtasks and `:relates_to` cross-references. Empty
+  string when the task has no links (built with no leading blank line,
+  matching `attachments_block/1`), so nothing changes for an unlinked
+  task; `append_related_context/2` adds the separating blank line only
+  when there is something to show — this fires unconditionally in the
+  `build/1` pipeline, unlike `attachments` which only reaches the
+  prompt through a template variable, so it still applies context even
+  when a project or user has overridden the template row.
+
+  Requires `:blockers`, `[parent_link: :source_task]`, `:subtasks`,
+  `:related_out_tasks` and `:related_in_tasks` to be loaded — see
+  `Task.link_load/0`.
+  """
+  @spec related_context_block(Task.t()) :: String.t()
+  def related_context_block(task) do
+    lines = blocker_lines(task) ++ parent_lines(task) ++ subtask_lines(task) ++ related_lines(task)
+
+    case lines do
+      [] -> ""
+      lines -> "--- Related Tasks ---\n" <> Enum.join(lines, "\n")
+    end
+  end
+
+  defp blocker_lines(%{blockers: blockers} = task) when is_list(blockers) do
+    Enum.map(blockers, &blocker_line(&1, task))
+  end
+
+  defp blocker_lines(_task), do: []
+
+  defp blocker_line(blocker, task) do
+    [
+      "Depends on: #{title_and_project(blocker)} — stage: #{blocker.stage}",
+      summary_line(blocker),
+      pr_line(blocker, task),
+      branch_line(blocker, task)
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join("\n")
+  end
+
+  defp parent_lines(task) do
+    case Task.parent(task) do
+      nil -> []
+      parent -> ["Parent task: #{title_and_project(parent)}"]
+    end
+  end
+
+  defp subtask_lines(%{subtasks: subtasks}) when is_list(subtasks) do
+    Enum.map(subtasks, &"Subtask: #{title_and_project(&1)} — stage: #{&1.stage}")
+  end
+
+  defp subtask_lines(_task), do: []
+
+  defp related_lines(task) do
+    task
+    |> Task.related_tasks()
+    |> Enum.map(&"Related: #{title_and_project(&1)} — #{task_url(&1)}")
+  end
+
+  defp title_and_project(task), do: "\"#{task.title}\" [#{project_name(task)}]"
+
+  defp project_name(%{project: %{name: name}}), do: name
+  defp project_name(_task), do: "?"
+
+  @related_summary_limit 300
+
+  defp summary_line(%{full_plan: full_plan}) when is_binary(full_plan) and full_plan != "" do
+    "  Summary: #{truncate(full_plan)}"
+  end
+
+  defp summary_line(%{plan: plan}) when is_binary(plan) and plan != "" do
+    "  Summary: #{truncate(plan)}"
+  end
+
+  defp summary_line(_blocker), do: nil
+
+  defp truncate(text) when byte_size(text) <= @related_summary_limit, do: text
+
+  defp truncate(text) do
+    String.slice(text, 0, @related_summary_limit) <> "…"
+  end
+
+  defp pr_line(%{pr_url: pr_url} = blocker, task) when is_binary(pr_url) and pr_url != "" do
+    if Resolver.same_repo?(task.project, blocker.project) do
+      "  PR: #{pr_url}"
+    else
+      "  PR: #{pr_url}   (different repo — no branch sharing)"
+    end
+  end
+
+  defp pr_line(_blocker, _task), do: nil
+
+  defp branch_line(%{stage: :pr} = blocker, task) do
+    if Resolver.same_repo?(task.project, blocker.project) do
+      "  Branch: camelot/task-#{blocker.id} (same repo — your base branch)"
+    end
+  end
+
+  defp branch_line(_blocker, _task), do: nil
+
+  defp task_url(task), do: CamelotWeb.Endpoint.url() <> "/tasks/#{task.id}"
 
   defp append_conversation(prompt, messages) when is_list(messages) and messages != [] do
     sorted = Enum.sort_by(messages, & &1.inserted_at)

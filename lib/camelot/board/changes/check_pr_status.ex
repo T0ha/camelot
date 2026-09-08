@@ -41,9 +41,12 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   use Ash.Resource.Change
 
   alias Camelot.Board.Task
+  alias Camelot.Board.TaskLink
+  alias Camelot.Board.TaskMessage
   alias Camelot.Github.Client
   alias Camelot.Github.Resolver
 
+  require Ash.Query
   require Logger
 
   # Default cap on consecutive automatic PR fix re-dispatches (merge
@@ -199,6 +202,137 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
 
       true ->
         :ok
+    end
+
+    propagate_to_dependents(task, pr)
+  end
+
+  @doc """
+  Notifies every same-repo `:blocks` dependent of `task` that the
+  blocker's branch moved, so it can rebase, or that the blocker merged,
+  so it can retarget its PR onto the default branch.
+
+  Reuses the existing `check_pr_status` poll (every 2 minutes, only for
+  `stage == :pr` tasks) rather than adding a new cron: this already
+  reads `pr["head"]["sha"]`, so there is no new GitHub call either.
+  Cross-repo dependents are skipped — cross-repo links still gate
+  dispatch and inject context (`PromptBuilder.related_context_block/1`),
+  but there is no git branch to share across repositories.
+
+  Per same-repo dependent:
+
+    * not yet `:executing`/`:pr` — no branch exists yet, so only the
+      synced sha is recorded (nothing to rebase).
+    * already synced to this sha — no-op.
+    * `:in_progress` — message only; a live agent must not be clobbered,
+      the message lands in conversation history for its next run.
+    * `:waiting_for_input`/`:error` — message, then `Ash.update(dep, %{},
+      action: :reset)` to re-queue (`:reset` already validates
+      `stage in @resumable_stages`, sets `state: :queued` and clears
+      `last_error` — exactly what's needed here).
+    * `:queued` — message only; the pending dispatch tick picks it up.
+
+  Always fires (bypassing the synced-sha no-op) when `task`'s PR just
+  merged, since retargeting is needed regardless of whether the
+  dependent already saw this sha.
+  """
+  @spec propagate_to_dependents(Task.t(), map()) :: :ok
+  def propagate_to_dependents(task, pr) do
+    task
+    |> dependent_links()
+    |> Enum.each(&sync_dependent(&1, task, pr))
+
+    :ok
+  end
+
+  defp dependent_links(task) do
+    TaskLink
+    |> Ash.Query.filter(link_type == :blocks and source_task_id == ^task.id)
+    |> Ash.Query.load(target_task: [:project])
+    |> Ash.read!(authorize?: false)
+  end
+
+  defp sync_dependent(link, blocker, pr) do
+    dependent = link.target_task
+
+    if Resolver.same_repo?(blocker.project, dependent.project) do
+      sync_same_repo_dependent(link, blocker, dependent, pr)
+    else
+      :ok
+    end
+  end
+
+  @dependent_gated_stages [:executing, :pr]
+
+  defp sync_same_repo_dependent(link, blocker, dependent, pr) do
+    head_sha = get_in(pr, ["head", "sha"])
+    merged? = pr["merged"] == true
+
+    cond do
+      not merged? and head_sha == link.base_synced_sha ->
+        :ok
+
+      dependent.stage not in @dependent_gated_stages ->
+        stamp_sync(link, head_sha)
+
+      true ->
+        notify_dependent(blocker, dependent, pr, merged?)
+        stamp_sync(link, head_sha)
+    end
+  end
+
+  defp notify_dependent(blocker, dependent, pr, merged?) do
+    Ash.create!(TaskMessage, %{
+      role: :user,
+      content: rebase_message(blocker, pr, merged?),
+      task_id: dependent.id
+    })
+
+    maybe_requeue(dependent)
+  end
+
+  defp rebase_message(blocker, pr, true) do
+    default_branch = get_in(pr, ["base", "ref"]) || "the default branch"
+
+    "The task you depend on (`#{blocker.title}`) merged its pull " <>
+      "request. Rebase onto the default branch: run `git fetch origin " <>
+      "&& git rebase origin/#{default_branch}` on your branch, retarget " <>
+      "your pull request's base to `#{default_branch}`, and `git push " <>
+      "--force-with-lease`. Resolve any conflicts in favour of the " <>
+      "newer base."
+  end
+
+  defp rebase_message(blocker, _pr, false) do
+    "The task you depend on (`#{blocker.title}`) pushed new commits to " <>
+      "its branch `camelot/task-#{blocker.id}`. Run `git fetch origin " <>
+      "&& git rebase origin/camelot/task-#{blocker.id}` on your branch " <>
+      "and `git push --force-with-lease`. Resolve any conflicts in " <>
+      "favour of the newer base."
+  end
+
+  defp maybe_requeue(%{state: state} = dependent) when state in [:waiting_for_input, :error] do
+    case Ash.update(dependent, %{}, action: :reset) do
+      {:ok, updated} ->
+        broadcast(updated)
+        Logger.info("Task #{dependent.id} → reset (dependency rebase)")
+
+      {:error, error} ->
+        Logger.warning(
+          "Failed to reset dependent task #{dependent.id} after a " <>
+            "dependency rebase notice: #{inspect(error)}"
+        )
+    end
+  end
+
+  defp maybe_requeue(_dependent), do: :ok
+
+  defp stamp_sync(link, head_sha) do
+    case Ash.update(link, %{base_synced_sha: head_sha, base_synced_at: DateTime.utc_now()}, action: :sync_base) do
+      {:ok, _link} ->
+        :ok
+
+      {:error, error} ->
+        Logger.warning("Failed to sync task link #{link.id}: #{inspect(error)}")
     end
   end
 

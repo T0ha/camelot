@@ -1,9 +1,10 @@
 defmodule Camelot.Board.Changes.CheckPrStatusTest do
-  use ExUnit.Case, async: true
+  use Camelot.DataCase, async: true
 
   alias Camelot.Accounts.User
   alias Camelot.Board.Changes.CheckPrStatus
   alias Camelot.Board.Task
+  alias Camelot.Board.TaskLink
   alias Camelot.Github.Installation
   alias Camelot.Projects.Project
 
@@ -427,6 +428,174 @@ defmodule Camelot.Board.Changes.CheckPrStatusTest do
       }
 
       assert CheckPrStatus.installation_id(task) == 2
+    end
+  end
+
+  describe "propagate_to_dependents/2" do
+    setup do
+      {:ok, project} =
+        Ash.create(Project, %{
+          name: "propagate-proj-#{System.unique_integer()}",
+          path: "/tmp/propagate-proj-#{System.unique_integer()}",
+          github_owner: "acme",
+          github_repo: "core"
+        })
+
+      {:ok, other_project} =
+        Ash.create(Project, %{
+          name: "propagate-other-#{System.unique_integer()}",
+          path: "/tmp/propagate-other-#{System.unique_integer()}",
+          github_owner: "acme",
+          github_repo: "other"
+        })
+
+      {:ok, hashed} = AshAuthentication.BcryptProvider.hash("Hello world!123")
+
+      user =
+        Ash.Seed.seed!(User, %{
+          email: "propagate-#{System.unique_integer()}@example.com",
+          hashed_password: hashed
+        })
+
+      %{project: project, other_project: other_project, user: user}
+    end
+
+    defp create_task(project, ctx, attrs \\ %{}) do
+      defaults = %{
+        title: "task-#{System.unique_integer([:positive])}",
+        project_id: project.id,
+        creator_id: ctx.user.id,
+        agent_id: agent!("claude_code").id
+      }
+
+      {:ok, task} = Ash.create(Task, Map.merge(defaults, attrs))
+      Ash.load!(task, :project)
+    end
+
+    defp link!(blocker, dependent) do
+      {:ok, link} =
+        Ash.create(TaskLink, %{
+          source_task_id: blocker.id,
+          target_task_id: dependent.id,
+          link_type: :blocks
+        })
+
+      link
+    end
+
+    defp pr(sha, opts \\ []) do
+      %{
+        "head" => %{"sha" => sha},
+        "base" => %{"ref" => "main"},
+        "merged" => Keyword.get(opts, :merged, false)
+      }
+    end
+
+    defp messages(task) do
+      task |> Ash.load!(:messages) |> Map.fetch!(:messages)
+    end
+
+    test "a dependent not yet branched only records the synced sha", ctx do
+      blocker = create_task(ctx.project, ctx)
+      dependent = create_task(ctx.project, ctx)
+      link = link!(blocker, dependent)
+
+      CheckPrStatus.propagate_to_dependents(blocker, pr("sha1"))
+
+      assert messages(dependent) == []
+      assert Ash.get!(TaskLink, link.id).base_synced_sha == "sha1"
+    end
+
+    test "an unchanged sha is a no-op", ctx do
+      blocker = create_task(ctx.project, ctx)
+      dependent = ctx.project |> create_task(ctx) |> Ash.Seed.update!(%{stage: :executing})
+      link = link!(blocker, dependent)
+      Ash.update!(link, %{base_synced_sha: "sha1", base_synced_at: DateTime.utc_now()}, action: :sync_base)
+
+      CheckPrStatus.propagate_to_dependents(blocker, pr("sha1"))
+
+      assert messages(dependent) == []
+    end
+
+    test "a moved sha posts a rebase message and re-queues a :waiting_for_input dependent", ctx do
+      blocker = create_task(ctx.project, ctx)
+
+      dependent =
+        ctx.project
+        |> create_task(ctx)
+        |> Ash.Seed.update!(%{stage: :executing, state: :waiting_for_input})
+
+      link = link!(blocker, dependent)
+      Ash.update!(link, %{base_synced_sha: "old-sha", base_synced_at: DateTime.utc_now()}, action: :sync_base)
+
+      CheckPrStatus.propagate_to_dependents(blocker, pr("new-sha"))
+
+      [message] = messages(dependent)
+      assert message.role == :user
+      assert message.content =~ "camelot/task-#{blocker.id}"
+      assert message.content =~ "rebase"
+
+      reloaded = Ash.get!(Task, dependent.id)
+      assert reloaded.state == :queued
+      assert Ash.get!(TaskLink, link.id).base_synced_sha == "new-sha"
+    end
+
+    test "re-queues an :error dependent the same way", ctx do
+      blocker = create_task(ctx.project, ctx)
+      dependent = ctx.project |> create_task(ctx) |> Ash.Seed.update!(%{stage: :pr, state: :error})
+      link!(blocker, dependent)
+
+      CheckPrStatus.propagate_to_dependents(blocker, pr("new-sha"))
+
+      assert Ash.get!(Task, dependent.id).state == :queued
+      assert [_message] = messages(dependent)
+    end
+
+    test "an :in_progress dependent is messaged but not reset", ctx do
+      blocker = create_task(ctx.project, ctx)
+      dependent = ctx.project |> create_task(ctx) |> Ash.Seed.update!(%{stage: :executing, state: :in_progress})
+      link!(blocker, dependent)
+
+      CheckPrStatus.propagate_to_dependents(blocker, pr("new-sha"))
+
+      assert Ash.get!(Task, dependent.id).state == :in_progress
+      assert [_message] = messages(dependent)
+    end
+
+    test "a :queued dependent is messaged and left queued", ctx do
+      blocker = create_task(ctx.project, ctx)
+      dependent = ctx.project |> create_task(ctx) |> Ash.Seed.update!(%{stage: :executing, state: :queued})
+      link!(blocker, dependent)
+
+      CheckPrStatus.propagate_to_dependents(blocker, pr("new-sha"))
+
+      assert Ash.get!(Task, dependent.id).state == :queued
+      assert [_message] = messages(dependent)
+    end
+
+    test "a merged blocker messages dependents to retarget, bypassing the synced-sha no-op", ctx do
+      blocker = create_task(ctx.project, ctx)
+      dependent = ctx.project |> create_task(ctx) |> Ash.Seed.update!(%{stage: :pr, state: :waiting_for_input})
+      link = link!(blocker, dependent)
+      Ash.update!(link, %{base_synced_sha: "sha1", base_synced_at: DateTime.utc_now()}, action: :sync_base)
+
+      CheckPrStatus.propagate_to_dependents(blocker, pr("sha1", merged: true))
+
+      [message] = messages(dependent)
+      assert message.content =~ "merged"
+      assert message.content =~ "main"
+      assert Ash.get!(Task, dependent.id).state == :queued
+    end
+
+    test "a cross-repo dependent is skipped entirely", ctx do
+      blocker = create_task(ctx.project, ctx)
+      dependent = ctx.other_project |> create_task(ctx) |> Ash.Seed.update!(%{stage: :executing})
+      link = link!(blocker, dependent)
+
+      CheckPrStatus.propagate_to_dependents(blocker, pr("new-sha"))
+
+      assert messages(dependent) == []
+      assert Ash.get!(TaskLink, link.id).base_synced_sha == nil
     end
   end
 end
