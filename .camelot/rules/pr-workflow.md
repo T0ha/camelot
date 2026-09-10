@@ -1,6 +1,6 @@
 # PR Issues Fixing Flow
 
-**Never fix files in `.claude` directory! **
+**Never fix files in `.claude` or `.camelot` directory! **
 
 - Checkout the branch related to the PR
 - Fix critical issues from the comments and review in the PR
