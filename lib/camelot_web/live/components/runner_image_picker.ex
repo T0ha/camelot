@@ -8,7 +8,11 @@ defmodule CamelotWeb.Components.RunnerImagePicker do
   Modeled on `CamelotWeb.Components.FolderPicker`: only
   needs `name`/`value`/`label`/`id` assigns, and hands a
   selection back to its parent as a raw message
-  (`{:runner_image_selected, image}`).
+  (`{:runner_image_selected, image}`) rather than
+  pubsub/notify_parent — like `FolderPicker`, this couples
+  the component to being mounted directly in a LiveView
+  (not nested inside another LiveComponent, where `self/0`
+  would resolve to the wrong process).
   """
   use CamelotWeb, :live_component
 

@@ -462,18 +462,18 @@ defmodule CamelotWeb.ProjectLive.Index do
               type="textarea"
               label="Description"
             />
-            <.input
-              field={@form[:github_repo_url]}
-              type="text"
-              label="GitHub URL"
-            />
             <.live_component
               module={GithubRepoPicker}
               id="github-repo-picker"
-              name={@form[:github_owner].name}
-              value={@form[:github_owner].value}
-              label="GitHub Owner"
+              name={@form[:github_repo_url].name}
+              value={@form[:github_repo_url].value}
+              label="GitHub Repository"
               current_user={@current_user}
+            />
+            <.input
+              field={@form[:github_owner]}
+              type="text"
+              label="GitHub Owner"
             />
             <.input
               field={@form[:github_repo]}

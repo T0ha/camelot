@@ -6,10 +6,18 @@ defmodule CamelotWeb.Components.GithubRepoPicker do
 
   Modeled on `CamelotWeb.Components.FolderPicker`: it only
   needs `name`/`value`/`label`/`id`/`current_user` assigns,
-  re-fetches on every `toggle_browser`, and hands the
-  selection back to its parent as a raw message
-  (`{:github_repo_selected, repo}`) rather than
-  pubsub/notify_parent.
+  and hands the selection back to its parent as a raw
+  message (`{:github_repo_selected, repo}`) rather than
+  pubsub/notify_parent — like `FolderPicker`, this couples
+  the component to being mounted directly in a LiveView
+  (not nested inside another LiveComponent, where `self/0`
+  would resolve to the wrong process).
+
+  The repository catalog is fetched once, on the first
+  `toggle_browser` open, and cached in this component's own
+  assigns for the rest of the LiveView's lifetime — closing
+  and reopening the popup reuses the cached list instead of
+  re-hitting the GitHub API on every toggle.
   """
   use CamelotWeb, :live_component
 
@@ -17,7 +25,7 @@ defmodule CamelotWeb.Components.GithubRepoPicker do
 
   @impl true
   def mount(socket) do
-    {:ok, assign(socket, browsing?: false, repos: [], filter: "")}
+    {:ok, assign(socket, browsing?: false, loaded?: false, repos: [], filter: "")}
   end
 
   @impl true
@@ -28,10 +36,10 @@ defmodule CamelotWeb.Components.GithubRepoPicker do
   @impl true
   def handle_event("toggle_browser", _params, socket) do
     socket =
-      if socket.assigns.browsing? do
-        assign(socket, browsing?: false)
-      else
-        load_repos(socket)
+      case {socket.assigns.browsing?, socket.assigns.loaded?} do
+        {true, _} -> assign(socket, browsing?: false)
+        {false, true} -> assign(socket, browsing?: true)
+        {false, false} -> load_repos(socket)
       end
 
     {:noreply, socket}
@@ -53,8 +61,8 @@ defmodule CamelotWeb.Components.GithubRepoPicker do
 
   defp load_repos(socket) do
     case RepositoryCatalog.list_for_user(socket.assigns.current_user) do
-      {:ok, repos} -> assign(socket, browsing?: true, repos: repos, filter: "")
-      {:error, _reason} -> assign(socket, browsing?: true, repos: [], filter: "")
+      {:ok, repos} -> assign(socket, browsing?: true, loaded?: true, repos: repos, filter: "")
+      {:error, _reason} -> assign(socket, browsing?: true, loaded?: true, repos: [], filter: "")
     end
   end
 

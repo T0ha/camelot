@@ -27,4 +27,28 @@ defmodule Camelot.RunnerImagesTest do
       end
     end
   end
+
+  describe "sync with .github/workflows/runner-images.yml" do
+    test "stack list matches the workflow's build matrix" do
+      workflow_path =
+        Path.join([File.cwd!(), ".github", "workflows", "runner-images.yml"])
+
+      {:ok, workflow} = YamlElixir.read_from_file(workflow_path)
+      jobs = workflow["jobs"]
+
+      agent_cli_variants =
+        get_in(jobs, ["agent_cli_variants", "strategy", "matrix", "variant"]) || []
+
+      language_variants =
+        get_in(jobs, ["language_variants", "strategy", "matrix", "variant"]) || []
+
+      workflow_stacks = ["base" | agent_cli_variants ++ language_variants]
+      catalog_stacks = Enum.map(RunnerImages.list(), & &1.stack)
+
+      assert Enum.sort(catalog_stacks) == Enum.sort(workflow_stacks),
+             "Camelot.RunnerImages has drifted from the " <>
+               "runner-images.yml build matrix — update the " <>
+               "hand-maintained @stacks list to match"
+    end
+  end
 end

@@ -16,6 +16,7 @@ defmodule Camelot.Github.Client do
   require Logger
 
   @base_url "https://api.github.com"
+  @max_pages 20
 
   @spec get_pull_request(String.t(), String.t(), integer(), keyword()) ::
           {:ok, map()} | {:error, term()}
@@ -129,24 +130,62 @@ defmodule Camelot.Github.Client do
   Lists repositories accessible to a GitHub App
   installation, for autocomplete-style pickers.
 
-  A single page is enough — App installations are
-  typically small — so this doesn't chase pagination.
+  Follows the `Link: rel="next"` pagination header until
+  exhausted (capped at `@max_pages` to bound worst-case
+  latency/memory for a pathologically large installation),
+  so large orgs aren't silently truncated to the first page.
   """
   @spec list_installation_repositories(integer(), keyword()) ::
           {:ok, [map()]} | {:error, term()}
   def list_installation_repositories(installation_id, opts \\ []) do
     opts = Keyword.put(opts, :installation_id, installation_id)
 
-    case request(:get, "/installation/repositories?per_page=100", opts) do
-      {:ok, %{"repositories" => repos}} when is_list(repos) ->
-        {:ok, Enum.map(repos, &normalize_repository/1)}
+    fetch_installation_repositories_page(
+      "/installation/repositories?per_page=100",
+      opts,
+      [],
+      @max_pages
+    )
+  end
 
-      {:ok, _other} ->
-        {:ok, []}
+  defp fetch_installation_repositories_page(_url, _opts, acc, 0), do: {:ok, acc}
+
+  defp fetch_installation_repositories_page(url, opts, acc, pages_left) do
+    case request_with_headers(:get, url, opts) do
+      {:ok, %{"repositories" => repos}, headers} when is_list(repos) ->
+        acc = acc ++ Enum.map(repos, &normalize_repository/1)
+
+        case next_link(headers) do
+          nil -> {:ok, acc}
+          next_url -> fetch_installation_repositories_page(next_url, opts, acc, pages_left - 1)
+        end
+
+      {:ok, _other, _headers} ->
+        {:ok, acc}
 
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  defp next_link(headers) do
+    headers
+    |> Map.get("link", [])
+    |> List.first()
+    |> parse_next_link()
+  end
+
+  defp parse_next_link(nil), do: nil
+
+  defp parse_next_link(link_header) do
+    link_header
+    |> String.split(",")
+    |> Enum.find_value(fn part ->
+      case Regex.run(~r/<([^>]+)>;\s*rel="next"/, part) do
+        [_, url] -> url
+        nil -> nil
+      end
+    end)
   end
 
   defp normalize_repository(repo) do
@@ -159,14 +198,21 @@ defmodule Camelot.Github.Client do
   end
 
   defp request(method, path, opts) do
-    url = @base_url <> path
+    case request_with_headers(method, path, opts) do
+      {:ok, body, _headers} -> {:ok, body}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp request_with_headers(method, url_or_path, opts) do
+    url = full_url(url_or_path)
 
     req_opts = maybe_add_auth([method: method, url: url], Keyword.get(opts, :installation_id))
 
     case Req.request(req_opts) do
-      {:ok, %Req.Response{status: status, body: body}}
+      {:ok, %Req.Response{status: status, body: body, headers: headers}}
       when status in 200..299 ->
-        {:ok, body}
+        {:ok, body, headers}
 
       {:ok, %Req.Response{status: status, body: body}} ->
         Logger.warning("GitHub API #{status}: #{inspect(body)}")
@@ -179,6 +225,9 @@ defmodule Camelot.Github.Client do
         {:error, reason}
     end
   end
+
+  defp full_url("https://" <> _rest = url), do: url
+  defp full_url(path), do: @base_url <> path
 
   defp maybe_add_auth(req_opts, nil), do: req_opts
 

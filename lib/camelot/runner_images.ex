@@ -9,7 +9,9 @@ defmodule Camelot.RunnerImages do
   no filesystem scan at runtime, since a release build
   doesn't ship the `runner-images/` source tree. Keep the
   two in sync by hand whenever a stack is added, renamed,
-  or removed.
+  or removed; `Camelot.RunnerImagesTest` parses the workflow
+  file at test time and fails CI if the stack lists drift
+  apart.
 
   This is suggestions only: `Agent.runner_image` and
   `Project.runner_image_override` remain plain unconstrained
