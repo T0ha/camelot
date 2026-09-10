@@ -261,11 +261,6 @@ defmodule CamelotWeb.BoardLive do
             options={Enum.map(@agents, &{&1.name, &1.id})}
             required
           />
-          <.input
-            field={@task_form[:priority]}
-            type="number"
-            label="Priority"
-          />
           <fieldset class="fieldset">
             <label class="label" for={@uploads.attachment.ref}>
               Attachments

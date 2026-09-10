@@ -47,8 +47,7 @@ defmodule CamelotWeb.BoardLiveTest do
           "title" => "Write the plan",
           "description" => "some details",
           "project_id" => project.id,
-          "agent_id" => agent!("claude_code").id,
-          "priority" => "2"
+          "agent_id" => agent!("claude_code").id
         }
       })
 
@@ -74,8 +73,7 @@ defmodule CamelotWeb.BoardLiveTest do
           "title" => title,
           "description" => "some details",
           "project_id" => "",
-          "agent_id" => "",
-          "priority" => "2"
+          "agent_id" => ""
         }
       })
       |> render_submit()
@@ -85,11 +83,11 @@ defmodule CamelotWeb.BoardLiveTest do
     refute Task |> Ash.Query.filter(title == ^title) |> Ash.read_one!()
   end
 
-  test "New Task form falls back to the default priority when it is cleared", %{
+  test "New Task form defaults priority since the field is hidden", %{
     conn: conn,
     user: user
   } do
-    title = "blank-priority-#{System.unique_integer()}"
+    title = "hidden-priority-#{System.unique_integer()}"
 
     {:ok, project} =
       Ash.create(
@@ -108,8 +106,7 @@ defmodule CamelotWeb.BoardLiveTest do
         "title" => title,
         "description" => "some details",
         "project_id" => project.id,
-        "agent_id" => agent!("claude_code").id,
-        "priority" => ""
+        "agent_id" => agent!("claude_code").id
       }
     })
     |> render_submit()
@@ -180,8 +177,7 @@ defmodule CamelotWeb.BoardLiveTest do
             "title" => title,
             "description" => "some details",
             "project_id" => project.id,
-            "agent_id" => agent!("claude_code").id,
-            "priority" => "2"
+            "agent_id" => agent!("claude_code").id
           }
         })
 
@@ -212,8 +208,7 @@ defmodule CamelotWeb.BoardLiveTest do
             "title" => title,
             "description" => "some details",
             "project_id" => "",
-            "agent_id" => "",
-            "priority" => "2"
+            "agent_id" => ""
           }
         })
 
