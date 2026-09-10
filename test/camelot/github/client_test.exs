@@ -68,6 +68,12 @@ defmodule Camelot.Github.ClientTest do
     end
   end
 
+  describe "list_installation_repositories/2" do
+    test "handles API errors gracefully" do
+      assert {:error, _} = Client.list_installation_repositories(999_999_999)
+    end
+  end
+
   describe "installation_id: opt" do
     test "proceeds unauthenticated (no crash) when the App isn't configured" do
       assert {:error, _} =

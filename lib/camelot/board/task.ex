@@ -59,7 +59,8 @@ defmodule Camelot.Board.Task do
         where(
           expr(
             not is_nil(pr_number) and
-              stage == :pr
+              stage == :pr and
+              project.status == :active
           )
         )
       end

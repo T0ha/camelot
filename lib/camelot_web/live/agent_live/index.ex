@@ -10,6 +10,7 @@ defmodule CamelotWeb.AgentLive.Index do
   use CamelotWeb, :live_view
 
   alias Camelot.Agents.Agent
+  alias CamelotWeb.Components.RunnerImagePicker
 
   @parser_options [
     {"Claude Code JSON", "claude_code_json"},
@@ -91,6 +92,13 @@ defmodule CamelotWeb.AgentLive.Index do
          |> put_flash(:error, msg)
          |> assign(form: to_form(form_p))}
     end
+  end
+
+  @impl true
+  def handle_info({:runner_image_selected, image}, socket) do
+    form_params = Map.put(socket.assigns.form.params, "runner_image", image)
+
+    {:noreply, assign(socket, form: to_form(form_params))}
   end
 
   defp save_agent(socket, :new, attrs, form_p) do
@@ -415,11 +423,12 @@ defmodule CamelotWeb.AgentLive.Index do
               Leave blank when using the LocalPort backend.
             </p>
 
-            <.input
-              field={@form[:runner_image]}
-              type="text"
+            <.live_component
+              module={RunnerImagePicker}
+              id="runner-image-picker"
+              name={@form[:runner_image].name}
+              value={@form[:runner_image].value}
               label="Runner image"
-              placeholder="ghcr.io/t0ha/camelot-runner-claude:latest"
             />
             <.input
               field={@form[:runner_resources]}
