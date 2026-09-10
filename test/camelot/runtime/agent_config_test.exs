@@ -230,6 +230,61 @@ defmodule Camelot.Runtime.AgentConfigTest do
       assert "acceptEdits" in rendered.permission_args_by_stage["executing"]
     end
 
+    test "an arbitrary user-created slug (not one of the three built-in stages) renders too" do
+      {:ok, _custom} =
+        Ash.create(PromptTemplate, %{
+          slug: "my_experimental_planning_prompt",
+          name: "Experimental Planning Prompt",
+          body: "EXPERIMENTAL PLANNING PROMPT"
+        })
+
+      agent = agent_struct()
+
+      project = %Project{
+        path: "/p",
+        permission_args_by_stage_override: %{
+          "planning" => [
+            "--append-system-prompt",
+            "{{prompt:my_experimental_planning_prompt}}"
+          ]
+        }
+      }
+
+      config = AgentConfig.resolve(agent, project)
+      rendered = AgentConfig.render_permission_args(config, nil, nil)
+
+      assert rendered.permission_args_by_stage["planning"] == [
+               "--append-system-prompt",
+               "EXPERIMENTAL PLANNING PROMPT"
+             ]
+    end
+
+    test "a missing arbitrary slug (no built-in default) falls back to an empty string and logs a warning" do
+      agent = agent_struct()
+
+      project = %Project{
+        path: "/p",
+        permission_args_by_stage_override: %{
+          "planning" => [
+            "--append-system-prompt",
+            "{{prompt:never_seeded_slug}}"
+          ]
+        }
+      }
+
+      config = AgentConfig.resolve(agent, project)
+
+      {rendered, log} =
+        with_log(fn -> AgentConfig.render_permission_args(config, nil, nil) end)
+
+      assert rendered.permission_args_by_stage["planning"] == [
+               "--append-system-prompt",
+               ""
+             ]
+
+      assert log =~ "Missing PromptTemplate never_seeded_slug"
+    end
+
     test "a permission_args_by_stage_override with literal text (no placeholder) passes through untouched" do
       agent = agent_struct()
 

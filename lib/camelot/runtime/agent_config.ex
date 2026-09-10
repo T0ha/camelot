@@ -98,6 +98,10 @@ defmodule Camelot.Runtime.AgentConfig do
   misinterpreted as a placeholder. Kept separate from `resolve/2` (DB-
   free) and `build_cli_args/4` (whose structural-equality regression
   tests must keep passing unmodified against the raw placeholder).
+
+  The slug isn't restricted to the three built-in stage prompts — any
+  `PromptTemplate` a user creates can be referenced this way, e.g. to
+  experiment with alternate stage prompts without touching code.
   """
   @spec render_permission_args(t(), String.t() | nil, String.t() | nil) :: t()
   def render_permission_args(%__MODULE__{} = config, project_id, user_id) do
@@ -162,8 +166,13 @@ defmodule Camelot.Runtime.AgentConfig do
   end
 
   # A deleted/missing row must never blank out the system prompt (that
-  # would silently strip e.g. "always open a PR" from every run) —
-  # fall back to the built-in default and log loudly instead.
+  # would silently strip e.g. "always open a PR" from every run) for
+  # the three built-in stages — fall back to the literal default and
+  # log instead. Any other slug is a template a user created to plug
+  # into `{{prompt:<slug>}}` themselves (e.g. to experiment with an
+  # alternate stage prompt); there's no built-in text to restore for
+  # those, so a missing row just renders empty, same as an unfilled
+  # `claude_pr_system_prompt` row does today.
   defp fallback_for("claude_planning_system_prompt") do
     Logger.warning("Missing PromptTemplate claude_planning_system_prompt; using built-in default")
     ClaudeCodeDefaults.planning_system_prompt()
@@ -179,13 +188,8 @@ defmodule Camelot.Runtime.AgentConfig do
     ClaudeCodeDefaults.pr_system_prompt()
   end
 
-  # An unrecognized slug means a placeholder was typed with a typo or
-  # points at a template that was never seeded — there is no built-in
-  # default to fall back to, so this is a developer-facing bug, not a
-  # routine missing-row case. Escalate past `warning` so it isn't lost
-  # in the noise.
   defp fallback_for(slug) do
-    Logger.error("Unknown PromptTemplate placeholder slug #{slug}; blanking system prompt")
+    Logger.warning("Missing PromptTemplate #{slug}; using empty system prompt")
     ""
   end
 
