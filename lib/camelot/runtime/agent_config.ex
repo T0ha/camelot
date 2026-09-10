@@ -18,7 +18,7 @@ defmodule Camelot.Runtime.AgentConfig do
 
   require Logger
 
-  @placeholder ~r/^\{\{prompt:(.+)\}\}$/
+  @placeholder ~r/^\{\{prompt:([^}]+)\}\}$/
 
   @enforce_keys [:parser, :executable]
   defstruct command_prefix: nil,
@@ -164,15 +164,29 @@ defmodule Camelot.Runtime.AgentConfig do
   # A deleted/missing row must never blank out the system prompt (that
   # would silently strip e.g. "always open a PR" from every run) —
   # fall back to the built-in default and log loudly instead.
-  defp fallback_for(slug) do
-    Logger.warning("Missing PromptTemplate #{slug}; using built-in default")
+  defp fallback_for("claude_planning_system_prompt") do
+    Logger.warning("Missing PromptTemplate claude_planning_system_prompt; using built-in default")
+    ClaudeCodeDefaults.planning_system_prompt()
+  end
 
-    case slug do
-      "claude_planning_system_prompt" -> ClaudeCodeDefaults.planning_system_prompt()
-      "claude_execution_system_prompt" -> ClaudeCodeDefaults.execution_system_prompt()
-      "claude_pr_system_prompt" -> ClaudeCodeDefaults.pr_system_prompt()
-      _ -> ""
-    end
+  defp fallback_for("claude_execution_system_prompt") do
+    Logger.warning("Missing PromptTemplate claude_execution_system_prompt; using built-in default")
+    ClaudeCodeDefaults.execution_system_prompt()
+  end
+
+  defp fallback_for("claude_pr_system_prompt") do
+    Logger.warning("Missing PromptTemplate claude_pr_system_prompt; using built-in default")
+    ClaudeCodeDefaults.pr_system_prompt()
+  end
+
+  # An unrecognized slug means a placeholder was typed with a typo or
+  # points at a template that was never seeded — there is no built-in
+  # default to fall back to, so this is a developer-facing bug, not a
+  # routine missing-row case. Escalate past `warning` so it isn't lost
+  # in the noise.
+  defp fallback_for(slug) do
+    Logger.error("Unknown PromptTemplate placeholder slug #{slug}; blanking system prompt")
+    ""
   end
 
   defp tools_args(%__MODULE__{tools_flag: nil}, _tools), do: []

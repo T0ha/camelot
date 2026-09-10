@@ -9,6 +9,7 @@ defmodule Camelot.Runtime.AgentConfigTest do
 
   import ExUnit.CaptureLog
 
+  alias Camelot.Accounts.User
   alias Camelot.Agents.ClaudeCodeDefaults
   alias Camelot.Projects.Project
   alias Camelot.Prompts.PromptTemplate
@@ -151,6 +152,52 @@ defmodule Camelot.Runtime.AgentConfigTest do
       rendered = AgentConfig.render_permission_args(ctx.claude, project.id, nil)
 
       assert "CUSTOM PROJECT PLANNING PROMPT" in rendered.permission_args_by_stage["planning"]
+
+      refute ClaudeCodeDefaults.planning_system_prompt() in rendered.permission_args_by_stage["planning"]
+    end
+
+    # Mirrors the real call site (`TaskRunner.start_runner/1`), where
+    # `project_id` always comes from `task.project_id` — a required
+    # (`allow_nil?(false)`) attribute — so `project_id` here is always
+    # a real project, never `nil`.
+    test "a user-scoped PromptTemplate wins over the system-global one but loses to a project-scoped one",
+         ctx do
+      {:ok, project} =
+        Ash.create(Project, %{
+          name: "arp-user-proj-#{System.unique_integer()}",
+          path: "/tmp/arp-user"
+        })
+
+      user = Ash.Seed.seed!(User, %{email: "arp-user-#{System.unique_integer()}@x.com"})
+      user_id = user.id
+
+      {:ok, _user_override} =
+        Ash.create(PromptTemplate, %{
+          slug: "claude_planning_system_prompt",
+          name: "User Planning Override",
+          body: "CUSTOM USER PLANNING PROMPT",
+          user_id: user_id
+        })
+
+      no_project_override_rendered =
+        AgentConfig.render_permission_args(ctx.claude, project.id, user_id)
+
+      assert "CUSTOM USER PLANNING PROMPT" in no_project_override_rendered.permission_args_by_stage["planning"]
+
+      {:ok, _project_override} =
+        Ash.create(PromptTemplate, %{
+          slug: "claude_planning_system_prompt",
+          name: "Project Planning Override",
+          body: "CUSTOM PROJECT PLANNING PROMPT",
+          project_id: project.id
+        })
+
+      with_project_override_rendered =
+        AgentConfig.render_permission_args(ctx.claude, project.id, user_id)
+
+      assert "CUSTOM PROJECT PLANNING PROMPT" in with_project_override_rendered.permission_args_by_stage["planning"]
+
+      refute "CUSTOM USER PLANNING PROMPT" in with_project_override_rendered.permission_args_by_stage["planning"]
     end
 
     test "missing template falls back to the literal ClaudeCodeDefaults text and logs a warning",

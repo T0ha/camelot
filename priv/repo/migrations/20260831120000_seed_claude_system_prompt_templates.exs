@@ -18,6 +18,11 @@ defmodule Camelot.Repo.Migrations.SeedClaudeSystemPromptTemplates do
   `20260604063740_seed_default_prompt_templates.exs`: the unique index
   on `(slug, project_id)` does not catch duplicates when
   `project_id IS NULL` (PostgreSQL treats NULLs as distinct).
+
+  `down` only deletes a row whose body still matches the exact text
+  `up` inserted, so rolling back after someone has hand-edited one of
+  these rows via `/prompts` leaves their edit in place instead of
+  silently destroying it.
   """
 
   use Ecto.Migration
@@ -77,16 +82,9 @@ defmodule Camelot.Repo.Migrations.SeedClaudeSystemPromptTemplates do
   end
 
   def down do
-    execute("""
-    DELETE FROM prompt_templates
-     WHERE project_id IS NULL
-       AND user_id IS NULL
-       AND slug IN (
-         'claude_planning_system_prompt',
-         'claude_execution_system_prompt',
-         'claude_pr_system_prompt'
-       )
-    """)
+    unseed("claude_planning_system_prompt", @planning_body)
+    unseed("claude_execution_system_prompt", @execution_body)
+    unseed("claude_pr_system_prompt", @pr_body)
   end
 
   defp seed(slug, name, body, description) do
@@ -102,6 +100,20 @@ defmodule Camelot.Repo.Migrations.SeedClaudeSystemPromptTemplates do
           AND project_id IS NULL
           AND user_id IS NULL
      )
+    """)
+  end
+
+  # Only deletes the row if its body still matches what `up` seeded —
+  # an exact-value guard, same precedent as
+  # `20260831120100_claude_append_system_prompt_placeholders.exs`, so a
+  # row a user has since hand-edited via /prompts survives a rollback.
+  defp unseed(slug, seeded_body) do
+    execute("""
+    DELETE FROM prompt_templates
+     WHERE project_id IS NULL
+       AND user_id IS NULL
+       AND slug = #{quote_str(slug)}
+       AND body = #{quote_str(seeded_body)}
     """)
   end
 

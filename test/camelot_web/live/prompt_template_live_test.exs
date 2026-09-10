@@ -165,8 +165,9 @@ defmodule CamelotWeb.PromptTemplateLiveTest do
 
       {:ok, view, html} = live(conn, ~p"/prompts/#{planning.id}/edit")
       assert html =~ "Edit Template"
-      assert html =~ "no"
-      assert html =~ "placeholders are"
+      assert html =~ "Plain text — no"
+      assert html =~ "silently stripped"
+      refute html =~ "Available variables:"
 
       view
       |> form("#template-form", %{
