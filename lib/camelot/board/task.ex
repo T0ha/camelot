@@ -192,6 +192,18 @@ defmodule Camelot.Board.Task do
       )
     end
 
+    attribute :next_model, :string do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Sticky, explicit model choice for the next dispatch. Nil " <>
+          "resolves to the agent's default_model; once set, it stays " <>
+          "until the user changes it again — it is never cleared or " <>
+          "overwritten by the system after a run."
+      )
+    end
+
     timestamps()
   end
 
@@ -233,7 +245,7 @@ defmodule Camelot.Board.Task do
 
     create :create do
       primary?(true)
-      accept([:title, :description, :priority])
+      accept([:title, :description, :priority, :next_model])
 
       argument :project_id, :uuid do
         allow_nil?(false)
@@ -275,6 +287,10 @@ defmodule Camelot.Board.Task do
       validate(attribute_equals(:stage, :draft))
       change(set_attribute(:stage, :todo))
       change(set_attribute(:state, :queued))
+    end
+
+    update :set_next_model do
+      accept([:next_model])
     end
 
     update :begin_work do

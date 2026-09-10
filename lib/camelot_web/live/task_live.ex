@@ -254,6 +254,20 @@ defmodule CamelotWeb.TaskLive do
     end
   end
 
+  def handle_event("set_next_model", %{"next_model" => model}, socket) do
+    task = socket.assigns.task
+    model = if model == "", do: nil, else: model
+
+    case Ash.update(task, %{next_model: model}, action: :set_next_model) do
+      {:ok, updated} ->
+        broadcast_update(updated)
+        {:noreply, assign(socket, task: Ash.load!(updated, @task_load))}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Failed to update model")}
+    end
+  end
+
   def handle_event("validate_attachment", _params, socket), do: {:noreply, socket}
 
   def handle_event("save_attachments", _params, socket) do
@@ -360,6 +374,12 @@ defmodule CamelotWeb.TaskLive do
     end
   end
 
+  defp next_model_options(%Task{agent: %{available_models: models}}) when is_list(models) do
+    models
+  end
+
+  defp next_model_options(_task), do: []
+
   defp stage_class(:draft), do: "badge-ghost"
   defp stage_class(:todo), do: "badge-ghost"
   defp stage_class(:planning), do: "badge-info"
@@ -383,7 +403,32 @@ defmodule CamelotWeb.TaskLive do
           </.link>
           <h1 class="text-2xl font-bold">{@task.title}</h1>
         </div>
-        <div class="flex gap-2">
+        <div class="flex items-center gap-2">
+          <form
+            :if={@task.stage not in [:done, :cancelled]}
+            phx-change="set_next_model"
+            class="flex items-center gap-1"
+          >
+            <label for="next-model-select" class="text-xs text-base-content/60">
+              Model
+            </label>
+            <select
+              id="next-model-select"
+              name="next_model"
+              class="select select-sm select-bordered"
+            >
+              <option value="" selected={is_nil(@task.next_model)}>
+                Use agent default
+              </option>
+              <option
+                :for={model <- next_model_options(@task)}
+                value={model}
+                selected={@task.next_model == model}
+              >
+                {model}
+              </option>
+            </select>
+          </form>
           <button
             :for={{action, label} <- @transitions}
             phx-click="transition"
@@ -664,6 +709,12 @@ defmodule CamelotWeb.TaskLive do
                     class="badge badge-sm badge-outline"
                   >
                     retry #{session.retry_number}
+                  </span>
+                  <span
+                    :if={session.model}
+                    class="badge badge-sm badge-ghost"
+                  >
+                    {session.model}
                   </span>
                 </div>
                 <span :if={session.exit_code} class="text-xs">

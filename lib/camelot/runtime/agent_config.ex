@@ -20,6 +20,7 @@ defmodule Camelot.Runtime.AgentConfig do
             base_args: [],
             prompt_flag: nil,
             tools_flag: nil,
+            model_flag: nil,
             tools_separator: ",",
             permission_args_by_stage: %{},
             internal_tools: [],
@@ -38,6 +39,7 @@ defmodule Camelot.Runtime.AgentConfig do
           base_args: [String.t()],
           prompt_flag: String.t() | nil,
           tools_flag: String.t() | nil,
+          model_flag: String.t() | nil,
           tools_separator: String.t(),
           permission_args_by_stage: %{optional(String.t()) => [String.t()]},
           internal_tools: [String.t()],
@@ -59,6 +61,7 @@ defmodule Camelot.Runtime.AgentConfig do
       base_args: override(project.base_args_override, agent.base_args),
       prompt_flag: agent.prompt_flag,
       tools_flag: agent.tools_flag,
+      model_flag: agent.model_flag,
       tools_separator: agent.tools_separator,
       permission_args_by_stage:
         override(
@@ -90,11 +93,13 @@ defmodule Camelot.Runtime.AgentConfig do
     |> String.split(~r/\s+/, trim: true)
   end
 
-  @spec build_cli_args(t(), String.t(), [String.t()], atom()) :: [String.t()]
-  def build_cli_args(%__MODULE__{} = config, prompt, allowed_tools, task_stage) do
+  @spec build_cli_args(t(), String.t(), [String.t()], atom(), String.t() | nil) ::
+          [String.t()]
+  def build_cli_args(%__MODULE__{} = config, prompt, allowed_tools, task_stage, model) do
     config.base_args
     |> Kernel.++(stage_args(config, task_stage))
     |> Kernel.++(tools_args(config, allowed_tools))
+    |> Kernel.++(model_args(config, model))
     |> Kernel.++(prompt_args(config, prompt))
   end
 
@@ -129,6 +134,10 @@ defmodule Camelot.Runtime.AgentConfig do
       list -> [config.tools_flag, Enum.join(list, config.tools_separator)]
     end
   end
+
+  defp model_args(%__MODULE__{model_flag: nil}, _model), do: []
+  defp model_args(_config, nil), do: []
+  defp model_args(config, model), do: [config.model_flag, model]
 
   defp filter_internal_tools(allowed_tools, internal_tools) do
     Enum.reject(allowed_tools, fn tool ->

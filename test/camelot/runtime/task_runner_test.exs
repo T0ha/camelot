@@ -3,6 +3,7 @@ defmodule Camelot.Runtime.TaskRunnerTest do
 
   alias Camelot.Accounts.Credential
   alias Camelot.Accounts.User
+  alias Camelot.Agents.Agent
   alias Camelot.Agents.Session
   alias Camelot.Board.AttachmentStore
   alias Camelot.Board.Task
@@ -161,6 +162,33 @@ defmodule Camelot.Runtime.TaskRunnerTest do
 
     test "returns nil when nothing is pinned anywhere" do
       assert TaskRunner.node_label_for(task_with(nil, nil)) == nil
+    end
+  end
+
+  describe "resolve_model/1" do
+    test "an explicit next_model wins over the agent's default_model" do
+      task = %Task{
+        next_model: "claude-opus-5",
+        agent: %Agent{default_model: "claude-sonnet-5"}
+      }
+
+      assert TaskRunner.resolve_model(task) == "claude-opus-5"
+    end
+
+    test "falls back to the agent's default_model when next_model is nil" do
+      task = %Task{next_model: nil, agent: %Agent{default_model: "claude-sonnet-5"}}
+
+      assert TaskRunner.resolve_model(task) == "claude-sonnet-5"
+    end
+
+    test "is nil when neither next_model nor the agent's default_model is set" do
+      task = %Task{next_model: nil, agent: %Agent{default_model: nil}}
+
+      assert TaskRunner.resolve_model(task) == nil
+    end
+
+    test "is nil when the agent isn't loaded and next_model is nil" do
+      assert TaskRunner.resolve_model(%Task{next_model: nil, agent: nil}) == nil
     end
   end
 

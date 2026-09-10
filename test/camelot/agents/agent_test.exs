@@ -18,6 +18,9 @@ defmodule Camelot.Agents.AgentTest do
       assert "ExitPlanMode" in agent.internal_tools
       assert agent.env_vars == %{"CLAUDECODE" => "false"}
       assert agent.max_retries == 3
+      assert agent.model_flag == "--model"
+      assert "claude-sonnet-5" in agent.available_models
+      assert agent.default_model == "claude-sonnet-5"
     end
 
     test "codex agent exists with raw_text parser" do
@@ -27,6 +30,8 @@ defmodule Camelot.Agents.AgentTest do
       assert agent.parser == :raw_text
       assert agent.base_args == ["--quiet"]
       assert agent.prompt_flag == nil
+      assert agent.model_flag == "--model"
+      assert agent.default_model == "gpt-5.1-codex"
     end
   end
 
@@ -45,6 +50,25 @@ defmodule Camelot.Agents.AgentTest do
       assert agent.tools_separator == ","
       assert agent.base_retry_delay_ms == 5_000
       assert agent.max_retries == 3
+      assert agent.model_flag == nil
+      assert agent.available_models == []
+      assert agent.default_model == nil
+    end
+
+    test "creates a custom agent with model selection configured" do
+      assert {:ok, agent} =
+               Ash.create(Agent, %{
+                 slug: "aider-models",
+                 name: "Aider",
+                 executable: "aider",
+                 model_flag: "--model",
+                 available_models: ["gpt-5.1", "claude-sonnet-5"],
+                 default_model: "gpt-5.1"
+               })
+
+      assert agent.model_flag == "--model"
+      assert agent.available_models == ["gpt-5.1", "claude-sonnet-5"]
+      assert agent.default_model == "gpt-5.1"
     end
 
     test "creates a custom agent with an explicit max_retries" do
@@ -97,6 +121,21 @@ defmodule Camelot.Agents.AgentTest do
 
       assert {:ok, updated} = Ash.update(agent, %{max_retries: 5})
       assert updated.max_retries == 5
+    end
+
+    test "edits model selection fields" do
+      agent = agent!("codex")
+
+      assert {:ok, updated} =
+               Ash.update(agent, %{
+                 model_flag: "--model",
+                 available_models: ["o4-mini"],
+                 default_model: "o4-mini"
+               })
+
+      assert updated.model_flag == "--model"
+      assert updated.available_models == ["o4-mini"]
+      assert updated.default_model == "o4-mini"
     end
   end
 

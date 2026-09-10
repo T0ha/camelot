@@ -29,6 +29,7 @@ defmodule Camelot.Runtime.TaskRunner do
   use GenServer, restart: :transient
 
   alias Camelot.Accounts.Credential
+  alias Camelot.Agents.Agent
   alias Camelot.Agents.Session
   alias Camelot.Board.Interruption
   alias Camelot.Board.PromptBuilder
@@ -67,6 +68,7 @@ defmodule Camelot.Runtime.TaskRunner do
     :current_prompt,
     :runner,
     :user_id,
+    :model,
     max_retries: 0,
     retry_count: 0,
     output_buffer: "",
@@ -80,6 +82,7 @@ defmodule Camelot.Runtime.TaskRunner do
           current_prompt: String.t() | nil,
           runner: pid() | nil,
           user_id: String.t() | nil,
+          model: String.t() | nil,
           max_retries: non_neg_integer(),
           retry_count: non_neg_integer(),
           output_buffer: String.t(),
@@ -504,7 +507,8 @@ defmodule Camelot.Runtime.TaskRunner do
         retry_count: 0,
         output_buffer: "",
         allowed_tools: [],
-        user_id: nil
+        user_id: nil,
+        model: nil
     }
   end
 
@@ -537,13 +541,15 @@ defmodule Camelot.Runtime.TaskRunner do
       )
 
     config = AgentConfig.resolve(task.agent, task.project)
+    model = resolve_model(task)
 
     {:ok, session} =
       Ash.create(Session, %{
         agent_id: task.agent_id,
         task_id: state.task_id,
         user_id: task.creator_id,
-        retry_number: retry_number
+        retry_number: retry_number,
+        model: model
       })
 
     {:ok, %{position: position}} = RunnerPool.enqueue(task.creator_id, session.id, self())
@@ -558,6 +564,7 @@ defmodule Camelot.Runtime.TaskRunner do
          allowed_tools: allowed_tools,
          config: config,
          user_id: task.creator_id,
+         model: model,
          max_retries: task.agent.max_retries,
          retry_count: retry_number,
          output_buffer: ""
@@ -664,7 +671,8 @@ defmodule Camelot.Runtime.TaskRunner do
         config,
         state.current_prompt,
         state.allowed_tools,
-        task.stage
+        task.stage,
+        state.model
       )
 
     spec = build_spec(state, task, config, cli_args)
@@ -746,6 +754,17 @@ defmodule Camelot.Runtime.TaskRunner do
   # ephemeral /workspace. LocalPort doesn't clone — it runs in-place.
   defp repo_url_for(LocalPort, _task), do: nil
   defp repo_url_for(_backend, task), do: task_repo_url(task)
+
+  @doc """
+  Resolves the model for the next dispatch of a task: the task's
+  explicit, sticky `next_model` when set, else the agent CLI's
+  `default_model`. Never writes anything back — `next_model` stays
+  untouched until the user changes it again.
+  """
+  @spec resolve_model(Task.t()) :: String.t() | nil
+  def resolve_model(%Task{next_model: next_model}) when not is_nil(next_model), do: next_model
+  def resolve_model(%Task{agent: %Agent{default_model: default_model}}), do: default_model
+  def resolve_model(_task), do: nil
 
   @doc false
   # Precedence: a project's own pin wins, then its owner's
