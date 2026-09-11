@@ -13,12 +13,21 @@ defmodule CamelotWeb.PromptTemplateLive do
   use CamelotWeb, :live_view
 
   alias Camelot.Accounts.User
+  alias Camelot.Agents.ClaudeCodeDefaults
   alias Camelot.Projects.Membership
   alias Camelot.Projects.Project
   alias Camelot.Prompts.PromptTemplate
   alias CamelotWeb.Scope
 
   require Ash.Query
+
+  # System-prompt slugs take plain text, not `{{variable}}` templates —
+  # see the note above `Renderer.interpolate/2`.
+  @system_prompt_slugs [
+    ClaudeCodeDefaults.planning_system_prompt_slug(),
+    ClaudeCodeDefaults.execution_system_prompt_slug(),
+    ClaudeCodeDefaults.pr_system_prompt_slug()
+  ]
 
   @impl true
   def mount(params, _session, socket) do
@@ -231,6 +240,15 @@ defmodule CamelotWeb.PromptTemplateLive do
 
   defp writable?(_template, _user), do: false
 
+  # The three claude_*_system_prompt slugs are appended verbatim to
+  # `--append-system-prompt`, not interpolated via
+  # `Renderer.render/4`'s `{{variable}}` syntax, so the "Available
+  # variables" hint is misleading for them (any literal `{{...}}` in
+  # their body would be silently stripped by `Renderer.interpolate/2`).
+  defp system_prompt_template?(%PromptTemplate{slug: slug}, _form), do: slug in @system_prompt_slugs
+
+  defp system_prompt_template?(nil, form), do: to_string(form[:slug].value) in @system_prompt_slugs
+
   defp scope_label(%PromptTemplate{project_id: nil, user_id: nil}), do: "Global"
 
   defp scope_label(%PromptTemplate{project_id: nil} = t) do
@@ -322,8 +340,14 @@ defmodule CamelotWeb.PromptTemplateLive do
               rows="8"
             />
             <p class="text-xs text-base-content/50 -mt-2">
-              Available variables: <code>{"{{title}}"}</code>, <code>{"{{description}}"}</code>,
-              <code>{"{{plan}}"}</code>
+              <%= if system_prompt_template?(@template, @form) do %>
+                Plain text — no <code>{"{{variable}}"}</code> placeholders are
+                supported here; any <code>{"{{...}}"}</code> in the body will
+                be silently stripped.
+              <% else %>
+                Available variables: <code>{"{{title}}"}</code>, <code>{"{{description}}"}</code>,
+                <code>{"{{plan}}"}</code>
+              <% end %>
             </p>
             <.input
               field={@form[:description]}

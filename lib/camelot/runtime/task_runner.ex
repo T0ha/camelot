@@ -659,7 +659,15 @@ defmodule Camelot.Runtime.TaskRunner do
         authorize?: false
       )
 
-    config = AgentConfig.resolve(task.agent, task.project)
+    # task.project_id / task.creator_id line up with
+    # `Renderer.render/4`'s (slug, project_id, user_id, _) resolution
+    # order — project-scoped template wins, then the task creator's
+    # own user-scoped template, then the system-global default.
+    config =
+      task.agent
+      |> AgentConfig.resolve(task.project)
+      |> AgentConfig.render_permission_args(task.project_id, task.creator_id)
+
     model = resolve_model(task)
 
     cli_args =
