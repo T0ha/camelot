@@ -334,6 +334,60 @@ defmodule CamelotWeb.TaskLiveTest do
     end
   end
 
+  describe "messages and sessions sorting" do
+    test "messages render newest first", %{conn: conn, task: task} do
+      older =
+        Ash.Seed.seed!(TaskMessage, %{
+          role: :user,
+          content: "First message",
+          task_id: task.id,
+          inserted_at: ~U[2026-08-25 10:00:00Z]
+        })
+
+      newer =
+        Ash.Seed.seed!(TaskMessage, %{
+          role: :assistant,
+          content: "Second message",
+          task_id: task.id,
+          inserted_at: ~U[2026-08-25 10:05:00Z]
+        })
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ "First message"
+      assert html =~ "Second message"
+
+      assert index_of(html, newer.content) < index_of(html, older.content)
+    end
+
+    test "sessions render newest first", %{conn: conn, task: task} do
+      Ash.Seed.seed!(Session, %{
+        agent_id: task.agent_id,
+        task_id: task.id,
+        status: :completed,
+        queued_at: ~U[2026-08-25 10:00:00Z],
+        started_at: ~U[2026-08-25 10:00:00Z],
+        finished_at: ~U[2026-08-25 10:01:00Z],
+        inserted_at: ~U[2026-08-25 10:00:00Z]
+      })
+
+      Ash.Seed.seed!(Session, %{
+        agent_id: task.agent_id,
+        task_id: task.id,
+        status: :completed,
+        queued_at: ~U[2026-08-25 10:10:00Z],
+        started_at: ~U[2026-08-25 10:10:00Z],
+        finished_at: ~U[2026-08-25 10:11:00Z],
+        inserted_at: ~U[2026-08-25 10:10:00Z]
+      })
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert index_of(html, "Started 2026-08-25 10:10") <
+               index_of(html, "Started 2026-08-25 10:00")
+    end
+  end
+
   describe "pubsub" do
     test "ignores unrelated PubSub messages without crashing", %{conn: conn, task: task} do
       {:ok, _task} = Ash.update(task, %{}, action: :begin_work)
@@ -679,6 +733,13 @@ defmodule CamelotWeb.TaskLiveTest do
 
       refute render(view) =~ "Ship the API first"
       assert Ash.read!(TaskLink) == []
+    end
+  end
+
+  defp index_of(html, substring) do
+    case :binary.match(html, substring) do
+      {pos, _len} -> pos
+      :nomatch -> flunk("expected #{inspect(substring)} to be present in html")
     end
   end
 end
