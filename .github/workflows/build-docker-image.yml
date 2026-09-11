@@ -4,6 +4,12 @@ on:
     branches:
       - develop
 
+# Only the newest run per branch survives: merging several PRs in a row
+# should not leave a queue of superseded check/build/deploy runs behind.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 defaults:
   run:
     shell: bash
@@ -126,3 +132,15 @@ jobs:
             --appToken "$CAPROVER_APP_TOKEN" \
             --appName "${{ vars.APP_NAME }}" \
             --imageName "$CAPROVER_IMAGE_NAME"
+
+  # The develop pipeline is green (checks + image + deploy to test), so
+  # refresh the rolling release PR into main.
+  promote:
+    name: Promote develop to main
+    needs: [merge]
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    uses: ./.github/workflows/promote-develop.yml
+    secrets: inherit

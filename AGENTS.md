@@ -43,7 +43,7 @@ Follow the [Elixir Style Guide](https://github.com/christopheradams/elixir_style
 ## Feature Implementation Flow
 
 1. Plan the feature and ask for feedback
-2. Create a new branch from `main` for the feature
+2. Create a new branch from `develop` for the feature
 3. Implement tests first (TDD) and ask for approval
 4. Implement the feature code
 5. Make sure code is compilable by `mix compile` and has no warnings
@@ -52,7 +52,9 @@ Follow the [Elixir Style Guide](https://github.com/christopheradams/elixir_style
 8. Check with `mix dialyzer` for type issues
 9. Update documentation and AGENTS.md if needed
 10. Run `mix format` to ensure code style compliance
-11. Create a pull request and ask for review
+11. Create a pull request **against `develop`** and ask for review
+    (`main` only accepts the automatic `develop` → `main` release PR —
+    see `docs/contributing.md`)
 12. Address any feedback from the review
 
 ## Project Guidelines
