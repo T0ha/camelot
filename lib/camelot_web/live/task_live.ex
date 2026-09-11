@@ -12,15 +12,32 @@ defmodule CamelotWeb.TaskLive do
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
   alias Camelot.Board.TaskAttachment
+  alias Camelot.Board.TaskLink
   alias Camelot.Board.TaskMessage
+  alias Camelot.Github.Resolver
   alias Camelot.Runtime.TaskRegistry
   alias Camelot.Runtime.TaskRunnerSupervisor
+  alias CamelotWeb.Components.TaskPicker
   alias CamelotWeb.Scope
   alias CamelotWeb.TaskAttachments
 
   require Ash.Query
 
-  @task_load [:project, :agent, :creator, :sessions, :messages, :attachments]
+  @task_load [
+    :project,
+    :agent,
+    :creator,
+    :sessions,
+    :messages,
+    :attachments,
+    :blocked?,
+    parent_link: [source_task: [:project]],
+    blocker_links: [source_task: [:project]],
+    blocked_task_links: [target_task: [:project]],
+    subtask_links: [target_task: [:project]],
+    related_out_links: [target_task: [:project]],
+    related_in_links: [source_task: [:project]]
+  ]
 
   # Drives the "runner status" elapsed counter. Only re-assigns while a
   # session is provisioning, so an idle page produces no diffs.
@@ -44,7 +61,9 @@ defmodule CamelotWeb.TaskLive do
             live_output: "",
             progress: nil,
             now: DateTime.utc_now(),
-            focused_column: :none
+            focused_column: :none,
+            link_modal_open?: false,
+            link_task: nil
           )
           |> allow_upload(:attachment, accept: :any, max_entries: 5, max_file_size: 25_000_000)
 
@@ -97,6 +116,14 @@ defmodule CamelotWeb.TaskLive do
   def handle_info(:tick, socket) do
     Process.send_after(self(), :tick, @tick_ms)
     {:noreply, refresh_elapsed(socket)}
+  end
+
+  def handle_info({:task_selected, :link_task, task}, socket) do
+    {:noreply, assign(socket, link_task: task)}
+  end
+
+  def handle_info({:task_cleared, :link_task}, socket) do
+    {:noreply, assign(socket, link_task: nil)}
   end
 
   # Never crash the card on an unexpected PubSub message.
@@ -291,6 +318,35 @@ defmodule CamelotWeb.TaskLive do
     {:noreply, assign(socket, task: updated)}
   end
 
+  def handle_event("open_link_modal", _params, socket) do
+    {:noreply, assign(socket, link_modal_open?: true, link_task: nil)}
+  end
+
+  def handle_event("close_link_modal", _params, socket) do
+    {:noreply, assign(socket, link_modal_open?: false, link_task: nil)}
+  end
+
+  def handle_event("add_link", %{"relation" => relation}, socket) do
+    task = socket.assigns.task
+
+    case socket.assigns.link_task do
+      nil ->
+        {:noreply, put_flash(socket, :error, "Pick a task first")}
+
+      other ->
+        create_link(socket, task, relation, other)
+    end
+  end
+
+  def handle_event("unlink_task", %{"id" => id}, socket) do
+    TaskLink
+    |> Ash.get!(id)
+    |> Ash.destroy!()
+
+    updated = Ash.load!(socket.assigns.task, @task_load)
+    {:noreply, assign(socket, task: updated)}
+  end
+
   def handle_event("toggle_column", %{"col" => "left"}, socket) do
     {:noreply, toggle_focused_column(socket, :left)}
   end
@@ -298,6 +354,40 @@ defmodule CamelotWeb.TaskLive do
   def handle_event("toggle_column", %{"col" => "right"}, socket) do
     {:noreply, toggle_focused_column(socket, :right)}
   end
+
+  defp create_link(socket, task, relation, other) do
+    {source_id, target_id, link_type} = link_attributes(relation, task.id, other.id)
+
+    case Ash.create(TaskLink, %{
+           source_task_id: source_id,
+           target_task_id: target_id,
+           link_type: link_type
+         }) do
+      {:ok, _link} ->
+        broadcast_update(task)
+        updated = Ash.load!(task, @task_load)
+
+        {:noreply,
+         socket
+         |> assign(task: updated, link_modal_open?: false, link_task: nil)
+         |> put_flash(:info, "Link added")}
+
+      {:error, error} ->
+        {:noreply, put_flash(socket, :error, link_error_message(error))}
+    end
+  end
+
+  defp link_attributes("blocked_by", current_id, other_id), do: {other_id, current_id, :blocks}
+  defp link_attributes("blocks", current_id, other_id), do: {current_id, other_id, :blocks}
+  defp link_attributes("parent", current_id, other_id), do: {other_id, current_id, :parent_of}
+  defp link_attributes("subtask", current_id, other_id), do: {current_id, other_id, :parent_of}
+  defp link_attributes("related", current_id, other_id), do: {current_id, other_id, :relates_to}
+
+  defp link_error_message(%Ash.Error.Invalid{errors: errors}) when errors != [] do
+    Enum.map_join(errors, ", ", &Exception.message/1)
+  end
+
+  defp link_error_message(_error), do: "Failed to add link"
 
   defp toggle_focused_column(socket, target) do
     next =
@@ -406,7 +496,9 @@ defmodule CamelotWeb.TaskLive do
   @impl true
   def render(assigns) do
     assigns =
-      assign(assigns, :transitions, available_transitions(assigns.task))
+      assigns
+      |> assign(:transitions, available_transitions(assigns.task))
+      |> assign(:link_view, link_view(assigns.task, assigns.current_user))
 
     ~H"""
     <div class="space-y-6">
@@ -495,6 +587,15 @@ defmodule CamelotWeb.TaskLive do
         </div>
       </div>
 
+      <div
+        :if={@task.blocked?}
+        class="alert alert-warning text-sm items-start"
+        role="alert"
+      >
+        <.icon name="hero-exclamation-triangle" class="size-5 shrink-0" />
+        <p>Waiting on {blocked_task_count(@task)} task(s) to open a PR</p>
+      </div>
+
       <div class={grid_class(@focused_column)}>
         <div class={[
           "space-y-4",
@@ -547,6 +648,69 @@ defmodule CamelotWeb.TaskLive do
               </a>
             </:item>
           </.list>
+
+          <div class="space-y-2">
+            <div class="flex items-center justify-between">
+              <h3 class="font-semibold">Linked Tasks</h3>
+              <button
+                type="button"
+                class="btn btn-xs btn-ghost"
+                phx-click={show_modal("link-task-modal") |> JS.push("open_link_modal")}
+              >
+                <.icon name="hero-plus" class="size-4" /> Add link
+              </button>
+            </div>
+
+            <div :if={@link_view.parent} class="space-y-1">
+              <span class="text-xs uppercase opacity-60">Parent</span>
+              <.link_task_row row={@link_view.parent} current_project_id={@task.project_id} />
+            </div>
+
+            <div :if={@link_view.blockers != []} class="space-y-1">
+              <span class="text-xs uppercase opacity-60">Blocked by</span>
+              <.link_task_row
+                :for={row <- @link_view.blockers}
+                row={row}
+                current_project_id={@task.project_id}
+                hint={blocker_hint(@task, row.task)}
+              />
+            </div>
+
+            <div :if={@link_view.blocked_tasks != []} class="space-y-1">
+              <span class="text-xs uppercase opacity-60">Blocks</span>
+              <.link_task_row
+                :for={row <- @link_view.blocked_tasks}
+                row={row}
+                current_project_id={@task.project_id}
+              />
+            </div>
+
+            <div :if={@link_view.subtasks != []} class="space-y-1">
+              <span class="text-xs uppercase opacity-60">Subtasks</span>
+              <.link_task_row
+                :for={row <- @link_view.subtasks}
+                row={row}
+                current_project_id={@task.project_id}
+              />
+            </div>
+
+            <div :if={@link_view.related != []} class="space-y-1">
+              <span class="text-xs uppercase opacity-60">Related</span>
+              <.link_task_row
+                :for={row <- @link_view.related}
+                row={row}
+                current_project_id={@task.project_id}
+              />
+            </div>
+
+            <p :if={@link_view.hidden_count > 0} class="text-xs text-base-content/50">
+              {@link_view.hidden_count} linked task(s) in a project you don't have access to
+            </p>
+
+            <p :if={empty_link_view?(@link_view)} class="text-sm text-base-content/50">
+              No linked tasks
+            </p>
+          </div>
 
           <div :if={@task.description} class="prose max-w-none overflow-x-auto">
             <h3>Description</h3>
@@ -914,11 +1078,190 @@ defmodule CamelotWeb.TaskLive do
           </p>
         </div>
       </div>
+
+      <.modal
+        id="link-task-modal"
+        show={@link_modal_open?}
+        on_cancel={hide_modal("link-task-modal") |> JS.push("close_link_modal")}
+      >
+        <h3 class="font-bold text-lg mb-4">Add Link</h3>
+        <form phx-submit="add_link" id="add-link-form" class="space-y-4">
+          <div class="fieldset mb-2">
+            <label>
+              <span class="label mb-1">Relation</span>
+              <select name="relation" class="w-full select">
+                <option value="blocked_by">Blocked by</option>
+                <option value="blocks">Blocks</option>
+                <option value="parent">Parent of this task</option>
+                <option value="subtask">Subtask of this task</option>
+                <option value="related">Related to</option>
+              </select>
+            </label>
+          </div>
+          <.live_component
+            module={TaskPicker}
+            id="link-task-picker"
+            label="Task"
+            field={:link_task}
+            selected={@link_task}
+            current_user={@current_user}
+            exclude_ids={excluded_link_ids(@task)}
+          />
+          <div class="flex justify-end">
+            <button type="submit" class="btn btn-primary btn-sm" disabled={is_nil(@link_task)}>
+              Add Link
+            </button>
+          </div>
+        </form>
+      </.modal>
     </div>
     """
   end
 
   defp render_markdown(text), do: CamelotWeb.Markdown.render(text)
+
+  attr :row, :map, required: true
+  attr :current_project_id, :any, required: true
+  attr :hint, :string, default: nil
+
+  defp link_task_row(assigns) do
+    ~H"""
+    <div class="flex items-center justify-between gap-2 text-sm p-2 rounded bg-base-200">
+      <.link navigate={~p"/tasks/#{@row.task.id}"} class="link truncate flex items-center gap-2">
+        <.state_badge :if={@row.task.state} state={@row.task.state} />
+        {@row.task.title}
+      </.link>
+      <span
+        :if={Ash.Resource.loaded?(@row.task, :project) && @row.task.project.id != @current_project_id}
+        class="text-xs text-base-content/50"
+      >
+        [{@row.task.project.name}]
+      </span>
+      <span :if={@hint} class="badge badge-xs badge-outline">{@hint}</span>
+      <button
+        type="button"
+        phx-click="unlink_task"
+        phx-value-id={@row.link_id}
+        data-confirm="Remove this link?"
+        class="btn btn-xs btn-ghost text-error ml-auto"
+      >
+        <.icon name="hero-x-mark" class="size-4" />
+      </button>
+    </div>
+    """
+  end
+
+  # Board resources have no Ash policies — `CamelotWeb.Scope` filters
+  # at the LiveView load layer only, so loading link relationships
+  # bypasses it. This assembles the render-time view of every link
+  # category, filtered through `Scope.scope_tasks/2`, collapsing
+  # anything the current user can't see into a single count.
+  #
+  # Filtering here rather than inside the `load` is a deliberate
+  # trade-off: a relationship load takes no scope argument, so pushing
+  # it down means either policies on the whole `Camelot.Board` domain
+  # or hand-written filters duplicated per relationship. The cost is
+  # bounded — the rows fetched are only this one task's links — and
+  # nothing about an out-of-scope task reaches the page beyond its
+  # count in the placeholder. Revisit when board resources gain
+  # policies.
+  defp link_view(task, user) do
+    {parent, hidden_parent} = scoped_parent_row(parent_row(task.parent_link), user)
+    {blockers, hidden_blockers} = scoped_rows(task.blocker_links, :source_task, user)
+    {blocked_tasks, hidden_blocked} = scoped_rows(task.blocked_task_links, :target_task, user)
+    {subtasks, hidden_subtasks} = scoped_rows(task.subtask_links, :target_task, user)
+
+    related_rows =
+      rows(task.related_out_links, :target_task) ++ rows(task.related_in_links, :source_task)
+
+    {related, hidden_related} = scope_rows(related_rows, user)
+
+    %{
+      parent: parent,
+      blockers: blockers,
+      blocked_tasks: blocked_tasks,
+      subtasks: subtasks,
+      related: related,
+      hidden_count: hidden_parent + hidden_blockers + hidden_blocked + hidden_subtasks + hidden_related
+    }
+  end
+
+  defp empty_link_view?(link_view) do
+    is_nil(link_view.parent) and link_view.blockers == [] and link_view.blocked_tasks == [] and
+      link_view.subtasks == [] and link_view.related == [] and link_view.hidden_count == 0
+  end
+
+  defp parent_row(%TaskLink{} = link), do: %{link_id: link.id, task: link.source_task}
+  defp parent_row(nil), do: nil
+
+  defp rows(links, other_key) do
+    Enum.map(links, &%{link_id: &1.id, task: Map.fetch!(&1, other_key)})
+  end
+
+  defp scoped_rows(links, other_key, user) do
+    links |> rows(other_key) |> scope_rows(user)
+  end
+
+  defp scope_rows(rows, %User{role: :admin}), do: {rows, 0}
+
+  defp scope_rows(rows, user) do
+    ids = visible_task_ids(Enum.map(rows, & &1.task), user)
+    {visible, hidden} = Enum.split_with(rows, &MapSet.member?(ids, &1.task.id))
+    {visible, length(hidden)}
+  end
+
+  defp scoped_parent_row(nil, _user), do: {nil, 0}
+  defp scoped_parent_row(row, %User{role: :admin}), do: {row, 0}
+
+  defp scoped_parent_row(row, user) do
+    case scope_rows([row], user) do
+      {[^row], 0} -> {row, 0}
+      _ -> {nil, 1}
+    end
+  end
+
+  defp visible_task_ids(tasks, user) do
+    ids = Enum.map(tasks, & &1.id)
+
+    Task
+    |> Ash.Query.filter(id in ^ids)
+    |> Scope.scope_tasks(user)
+    |> Ash.read!()
+    |> MapSet.new(& &1.id)
+  end
+
+  defp blocked_task_count(task) do
+    blocking_stages = Task.blocking_stages()
+
+    blocking_blockers =
+      Enum.count(task.blocker_links, &(&1.source_task.stage in blocking_stages))
+
+    blocking_subtasks =
+      Enum.count(task.subtask_links, &(&1.target_task.stage in blocking_stages))
+
+    blocking_blockers + blocking_subtasks
+  end
+
+  defp blocker_hint(task, blocker) do
+    if blocker.stage == :pr and Resolver.same_repo?(task.project, blocker.project) do
+      "stacked on this branch"
+    end
+  end
+
+  defp excluded_link_ids(task) do
+    linked_ids =
+      Enum.map(task.blocker_links, & &1.source_task_id) ++
+        Enum.map(task.blocked_task_links, & &1.target_task_id) ++
+        Enum.map(task.subtask_links, & &1.target_task_id) ++
+        Enum.map(task.related_out_links, & &1.target_task_id) ++
+        Enum.map(task.related_in_links, & &1.source_task_id) ++
+        parent_id(task.parent_link)
+
+    [task.id | linked_ids]
+  end
+
+  defp parent_id(%TaskLink{source_task_id: id}), do: [id]
+  defp parent_id(nil), do: []
 
   defp sorted_sessions(task) do
     if Ash.Resource.loaded?(task, :sessions) do

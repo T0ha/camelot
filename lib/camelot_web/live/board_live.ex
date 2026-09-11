@@ -12,7 +12,9 @@ defmodule CamelotWeb.BoardLive do
   alias Camelot.Agents.Agent
   alias Camelot.Agents.ModelLabel
   alias Camelot.Board.Task
+  alias Camelot.Board.TaskLink
   alias Camelot.Projects.Project
+  alias CamelotWeb.Components.TaskPicker
   alias CamelotWeb.Scope
   alias CamelotWeb.TaskAttachments
   alias Phoenix.LiveView.Socket
@@ -30,7 +32,12 @@ defmodule CamelotWeb.BoardLive do
 
     socket =
       socket
-      |> assign(see_all: params["scope"] == "all", new_task_open?: false)
+      |> assign(
+        see_all: params["scope"] == "all",
+        new_task_open?: false,
+        parent_task: nil,
+        blocked_by_task: nil
+      )
       |> load_board()
       |> allow_upload(:attachment, accept: :any, max_entries: 5, max_file_size: 25_000_000)
 
@@ -44,6 +51,14 @@ defmodule CamelotWeb.BoardLive do
 
   def handle_info({:task_created, _task}, socket) do
     {:noreply, socket}
+  end
+
+  def handle_info({:task_selected, field, task}, socket) when field in [:parent_task, :blocked_by_task] do
+    {:noreply, assign(socket, field, task)}
+  end
+
+  def handle_info({:task_cleared, field}, socket) when field in [:parent_task, :blocked_by_task] do
+    {:noreply, assign(socket, field, nil)}
   end
 
   # Never crash the board on an unexpected PubSub message.
@@ -69,15 +84,20 @@ defmodule CamelotWeb.BoardLive do
           {:ok, TaskAttachments.store!(task.id, tmp_path, entry)}
         end)
 
+        failures =
+          create_requested_links(task, socket.assigns.parent_task, socket.assigns.blocked_by_task)
+
         broadcast_task_event(:task_created, task)
 
         {:noreply,
          socket
          |> assign(
            new_task_open?: false,
-           task_form: new_task_form(socket.assigns.current_user)
+           task_form: new_task_form(socket.assigns.current_user),
+           parent_task: nil,
+           blocked_by_task: nil
          )
-         |> put_flash(:info, "Task created")
+         |> link_flash(failures)
          |> load_board()}
 
       {:error, form} ->
@@ -127,7 +147,7 @@ defmodule CamelotWeb.BoardLive do
     tasks =
       Task
       |> Scope.maybe_scope(user, see_all, &Scope.scope_tasks/2)
-      |> Ash.read!(load: [:project, :waiting_for_slot?])
+      |> Ash.read!(load: [:project, :waiting_for_slot?, :blocked?])
 
     projects =
       Project
@@ -183,6 +203,59 @@ defmodule CamelotWeb.BoardLive do
   end
 
   defp drop_blank_priority(params, _type), do: params
+
+  # Links are created outside the `AshPhoenix.Form` create flow, right
+  # where `consume_uploaded_entries/3` already runs — nesting the
+  # picker picks into the Ash form would fight `AshPhoenix.Form`'s
+  # nested-form machinery for no benefit, since a brand new task can't
+  # already be a link target.
+  # The task itself is already committed (and its attachments stored)
+  # by the time the picked links are created, so a rejected link — a
+  # cycle raced in between, a parent that just gained another child —
+  # must not discard it. Failures are reported back so the flash can
+  # name them and the user can re-add the link from the task page,
+  # instead of the links vanishing behind a "Task created".
+  @spec create_requested_links(Task.t(), Task.t() | nil, Task.t() | nil) :: [String.t()]
+  defp create_requested_links(task, parent_task, blocked_by_task) do
+    [
+      create_link(parent_task, task, :parent_of),
+      create_link(blocked_by_task, task, :blocks)
+    ]
+    |> Enum.reject(&(&1 == :ok))
+    |> Enum.map(fn {:error, label} -> label end)
+  end
+
+  defp create_link(nil, _target_task, _link_type), do: :ok
+
+  defp create_link(source_task, target_task, link_type) do
+    case Ash.create(TaskLink, %{
+           source_task_id: source_task.id,
+           target_task_id: target_task.id,
+           link_type: link_type
+         }) do
+      {:ok, _link} ->
+        :ok
+
+      {:error, error} ->
+        Logger.warning("Failed to create #{link_type} link for task #{target_task.id}: #{inspect(error)}")
+
+        {:error, link_label(link_type, source_task)}
+    end
+  end
+
+  defp link_label(:parent_of, source_task), do: "parent \"#{source_task.title}\""
+  defp link_label(:blocks, source_task), do: "blocked by \"#{source_task.title}\""
+
+  defp link_flash(socket, []), do: put_flash(socket, :info, "Task created")
+
+  defp link_flash(socket, failures) do
+    put_flash(
+      socket,
+      :error,
+      "Task created, but these links were rejected: " <>
+        Enum.join(failures, ", ") <> ". Add them from the task page."
+    )
+  end
 
   # A blank "Use agent default" selection is stored as unset rather
   # than an empty string, so it resolves through `agent.default_model`
@@ -315,6 +388,26 @@ defmodule CamelotWeb.BoardLive do
               {TaskAttachments.error_to_string(err)}
             </p>
           </fieldset>
+          <.live_component
+            module={TaskPicker}
+            id="new-task-parent-picker"
+            label="Parent task"
+            field={:parent_task}
+            selected={@parent_task}
+            current_user={@current_user}
+            see_all?={@see_all}
+            placeholder="Search for the umbrella task…"
+          />
+          <.live_component
+            module={TaskPicker}
+            id="new-task-blocked-by-picker"
+            label="Blocked by"
+            field={:blocked_by_task}
+            selected={@blocked_by_task}
+            current_user={@current_user}
+            see_all?={@see_all}
+            placeholder="Search for a prerequisite task…"
+          />
           <:actions>
             <.button class="btn btn-primary">
               Create Task
