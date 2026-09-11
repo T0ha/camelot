@@ -136,6 +136,13 @@ if posthog_api_key = System.get_env("POSTHOG_API_KEY") do
     api_host: System.get_env("POSTHOG_API_HOST", "https://us.i.posthog.com")
 end
 
+# Ahrefs Web Analytics. Set AHREFS_ANALYTICS_KEY on the production app
+# only: the test cluster runs the same MIX_ENV=prod release, so leaving
+# the var unset there is what keeps its traffic out of the report.
+if ahrefs_key = System.get_env("AHREFS_ANALYTICS_KEY") do
+  config :camelot, :ahrefs, key: ahrefs_key
+end
+
 # DATABASE_URL is required in prod (below) but only an optional override
 # in dev/test, where config/dev.exs and config/test.exs already set up a
 # working default. When set, the parsed URL fields take precedence over

@@ -3,7 +3,7 @@ defmodule Camelot.Runtime.AgentConfigTest do
   Regression guard: the args produced from the seeded
   `claude_code` and `codex` agent CLIs must match exactly
   what the pre-migration hardcoded `TaskRunner.build_cli_args/4`
-  emitted.
+  emitted (now `build_cli_args/5`, with an added `model` argument).
   """
   use Camelot.DataCase, async: true
 
@@ -24,14 +24,15 @@ defmodule Camelot.Runtime.AgentConfigTest do
     }
   end
 
-  describe "build_cli_args/4 — claude_code parity with hardcoded logic" do
+  describe "build_cli_args/5 — claude_code parity with hardcoded logic" do
     test "planning stage emits the structured-output contract", ctx do
       args =
         AgentConfig.build_cli_args(
           ctx.claude,
           "do the thing",
           ["Read", "Write"],
-          :planning
+          :planning,
+          nil
         )
 
       planning_args = ClaudeCodeDefaults.permission_args_by_stage()["planning"]
@@ -53,7 +54,8 @@ defmodule Camelot.Runtime.AgentConfigTest do
           ctx.claude,
           "do it",
           ["Read"],
-          :executing
+          :executing,
+          nil
         )
 
       executing_args = ClaudeCodeDefaults.permission_args_by_stage()["executing"]
@@ -75,7 +77,8 @@ defmodule Camelot.Runtime.AgentConfigTest do
           ctx.claude,
           "p",
           ["Read", "EnterPlanMode", "ExitPlanMode", "Write"],
-          :executing
+          :executing,
+          nil
         )
 
       assert "--allowedTools" in args
@@ -88,7 +91,8 @@ defmodule Camelot.Runtime.AgentConfigTest do
           ctx.claude,
           "p",
           ["EnterPlanMode"],
-          :executing
+          :executing,
+          nil
         )
 
       refute "--allowedTools" in args
@@ -100,7 +104,8 @@ defmodule Camelot.Runtime.AgentConfigTest do
           ctx.claude,
           "p",
           ["Read(foo)", "ExitPlanMode(bar)"],
-          :executing
+          :executing,
+          nil
         )
 
       assert "Read(foo)" in args
@@ -108,14 +113,15 @@ defmodule Camelot.Runtime.AgentConfigTest do
     end
   end
 
-  describe "build_cli_args/4 — codex parity" do
+  describe "build_cli_args/5 — codex parity" do
     test "uses positional prompt and --quiet base arg", ctx do
       args =
         AgentConfig.build_cli_args(
           ctx.codex,
           "hello",
           ["any", "tools"],
-          :executing
+          :executing,
+          nil
         )
 
       assert args == ["--quiet", "hello"]
@@ -312,6 +318,41 @@ defmodule Camelot.Runtime.AgentConfigTest do
     end
   end
 
+  describe "build_cli_args/5 — model flag" do
+    test "appends the model flag and value when both are set", ctx do
+      config = %{ctx.claude | model_flag: "--model"}
+
+      args =
+        AgentConfig.build_cli_args(
+          config,
+          "do it",
+          [],
+          :executing,
+          "claude-opus-5"
+        )
+
+      assert Enum.take(args, -4) == ["--model", "claude-opus-5", "-p", "do it"]
+    end
+
+    test "omits the flag when model_flag is nil", ctx do
+      config = %{ctx.claude | model_flag: nil}
+
+      args =
+        AgentConfig.build_cli_args(config, "do it", [], :executing, "claude-opus-5")
+
+      refute "--model" in args
+      refute "claude-opus-5" in args
+    end
+
+    test "omits the flag when model is nil", ctx do
+      config = %{ctx.claude | model_flag: "--model"}
+
+      args = AgentConfig.build_cli_args(config, "do it", [], :executing, nil)
+
+      refute "--model" in args
+    end
+  end
+
   describe "prefix_tokens/2" do
     test "returns [] when command_prefix is nil", ctx do
       assert AgentConfig.prefix_tokens(ctx.claude, "/tmp/x") == []
@@ -372,6 +413,12 @@ defmodule Camelot.Runtime.AgentConfigTest do
       assert resolved.base_retry_delay_ms == 5_000
       assert resolved.parser == :claude_code_json
     end
+
+    test "carries the agent CLI's model_flag through (no project override exists)" do
+      resolved = AgentConfig.resolve(agent_struct(), %Project{path: "/p"})
+
+      assert resolved.model_flag == "--model"
+    end
   end
 
   describe "resolve/2 — project-level runner_image override" do
@@ -412,6 +459,7 @@ defmodule Camelot.Runtime.AgentConfigTest do
       base_args: ["--output-format", "stream-json", "--verbose"],
       prompt_flag: "-p",
       tools_flag: "--allowedTools",
+      model_flag: "--model",
       tools_separator: ",",
       permission_args_by_stage: %{
         "planning" => ["--permission-mode", "plan"],

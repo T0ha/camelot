@@ -32,10 +32,37 @@ config :camelot, CamelotWeb.Endpoint,
   pubsub_server: Camelot.PubSub,
   live_view: [signing_salt: "VZXwbZtB"]
 
+# Lifeline is not optional here. AshOban gives every scheduled action
+# `unique: [period: :infinity, states: :incomplete]`, so a single job
+# left in `executing` by a node that died blocks that worker from ever
+# being enqueued again — silently, forever. That is exactly how GitHub
+# issue sync died on the test cluster (orphan from 2026-07-01, no sync
+# for two months). Pruner keeps the table from growing without bound;
+# it had reached 300k rows / 172MB on a 1GB node.
+#
+# 30 minutes is far above any job's real runtime — every Oban job here
+# returns promptly (dispatch hands off to a `TaskRunner` process, the
+# rest are single HTTP round trips), so Lifeline can only ever catch a
+# genuine orphan. Keep it that way: a job that can legitimately run
+# past `rescue_after` will be rescued out from under itself, so put
+# long work in a supervised process and raise this window if that ever
+# stops being true.
+#
+# Pruner's `max_age` is in SECONDS, unlike Lifeline's `rescue_after`,
+# which is milliseconds — hence the bare arithmetic rather than
+# `to_timeout/1`.
 config :camelot, Oban,
   repo: Camelot.Repo,
   queues: [default: 10, tasks: 5, github: 3, notifications: 5],
-  plugins: [{Oban.Plugins.Cron, crontab: []}]
+  plugins: [
+    {Oban.Plugins.Cron, crontab: []},
+    {Oban.Plugins.Lifeline, rescue_after: to_timeout(minute: 30)},
+    {Oban.Plugins.Pruner, max_age: 7 * 24 * 60 * 60}
+  ]
+
+# Ahrefs Web Analytics is production-only — the snippet is rendered only
+# when AHREFS_ANALYTICS_KEY is supplied at runtime (see config/runtime.exs).
+config :camelot, :ahrefs, key: nil
 
 # Attachment store for task file uploads. Overridden in
 # config/runtime.exs alongside the runner backend. Dev/test default

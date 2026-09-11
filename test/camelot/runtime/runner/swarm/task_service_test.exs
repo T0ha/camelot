@@ -27,6 +27,8 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskServiceTest do
     }
   end
 
+  defp secret(kind, name), do: %{kind: kind, name: name, value: "v"}
+
   describe "service_create_payload/2 — networks" do
     test "omits Networks when the list is empty" do
       put_networks([])
@@ -125,6 +127,47 @@ defmodule Camelot.Runtime.Runner.Swarm.TaskServiceTest do
 
       assert :unchanged =
                TaskService.plan_pinned_update(spec, "ghcr.io/acme/runner:latest@sha256:same", "sha256:same")
+    end
+  end
+
+  describe "task_scoped_secrets/2" do
+    test "picks the secrets named after the task" do
+      spec = %{
+        spec()
+        | secrets: [secret(:github_app_token, "camelot_task_task-1_gh_token")]
+      }
+
+      assert TaskService.task_scoped_secrets(spec, "task-1") == spec.secrets
+    end
+
+    test "leaves per-user secrets alone" do
+      # Rotating these from a task create would fail whenever another
+      # task's live runner pins them — not this task's problem, and
+      # they do not expire the way an installation token does.
+      spec = %{
+        spec()
+        | secrets: [
+            secret(:ssh_private_key, "camelot_user_user-1_ssh_pk"),
+            secret(:claude_api_key, "camelot_user_user-1_claude_api_key")
+          ]
+      }
+
+      assert TaskService.task_scoped_secrets(spec, "task-1") == []
+    end
+
+    test "ignores the env-only github_token_clear marker" do
+      spec = %{spec() | secrets: [secret(:github_token_clear, "")]}
+
+      assert TaskService.task_scoped_secrets(spec, "task-1") == []
+    end
+
+    test "ignores another task's secret" do
+      spec = %{
+        spec()
+        | secrets: [secret(:github_app_token, "camelot_task_task-2_gh_token")]
+      }
+
+      assert TaskService.task_scoped_secrets(spec, "task-1") == []
     end
   end
 end

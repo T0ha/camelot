@@ -59,6 +59,7 @@ defmodule CamelotWeb.BoardComponentsTest do
           state: :in_progress,
           stage: :executing,
           priority: 0,
+          project: %{name: "Camelot"},
           pr_url: nil,
           pr_number: nil,
           last_error: nil,
@@ -68,14 +69,14 @@ defmodule CamelotWeb.BoardComponentsTest do
       )
     end
 
-    test "shows the running badge for a task holding a runner slot" do
+    test "shows the running emoji for a task holding a runner slot" do
       html = render_component(&BoardComponents.task_card/1, task: task(%{}))
 
       assert html =~ "🔃"
       assert html =~ ~s(title="In progress")
     end
 
-    test "shows the waiting badge for a dispatched task with no runner slot" do
+    test "shows the waiting emoji for a dispatched task with no runner slot" do
       html =
         render_component(&BoardComponents.task_card/1,
           task: task(%{waiting_for_slot?: true})
@@ -103,6 +104,37 @@ defmodule CamelotWeb.BoardComponentsTest do
         )
 
       assert html =~ "🔃"
+    end
+
+    test "does not render the state emoji inside a badge" do
+      html = render_component(&BoardComponents.task_card/1, task: task(%{}))
+
+      refute html =~ ~s(badge-primary)
+    end
+
+    test "omits the emoji entirely when the task has no state" do
+      html = render_component(&BoardComponents.task_card/1, task: task(%{state: nil}))
+
+      refute html =~ "🔃"
+      refute html =~ "⏳"
+      refute html =~ "💬"
+      refute html =~ "⚠️"
+    end
+
+    test "shows the task's project instead of its description" do
+      html =
+        render_component(&BoardComponents.task_card/1,
+          task: task(%{description: "Some description", project: %{name: "My Project"}})
+        )
+
+      assert html =~ "My Project"
+      refute html =~ "Some description"
+    end
+
+    test "does not render priority anywhere on the card" do
+      html = render_component(&BoardComponents.task_card/1, task: task(%{priority: 7}))
+
+      refute html =~ "P7"
     end
   end
 end

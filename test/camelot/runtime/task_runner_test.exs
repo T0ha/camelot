@@ -3,6 +3,7 @@ defmodule Camelot.Runtime.TaskRunnerTest do
 
   alias Camelot.Accounts.Credential
   alias Camelot.Accounts.User
+  alias Camelot.Agents.Agent
   alias Camelot.Agents.Session
   alias Camelot.Board.AttachmentStore
   alias Camelot.Board.Task
@@ -161,6 +162,33 @@ defmodule Camelot.Runtime.TaskRunnerTest do
 
     test "returns nil when nothing is pinned anywhere" do
       assert TaskRunner.node_label_for(task_with(nil, nil)) == nil
+    end
+  end
+
+  describe "resolve_model/1" do
+    test "an explicit next_model wins over the agent's default_model" do
+      task = %Task{
+        next_model: "claude-opus-5",
+        agent: %Agent{default_model: "claude-sonnet-5"}
+      }
+
+      assert TaskRunner.resolve_model(task) == "claude-opus-5"
+    end
+
+    test "falls back to the agent's default_model when next_model is nil" do
+      task = %Task{next_model: nil, agent: %Agent{default_model: "claude-sonnet-5"}}
+
+      assert TaskRunner.resolve_model(task) == "claude-sonnet-5"
+    end
+
+    test "is nil when neither next_model nor the agent's default_model is set" do
+      task = %Task{next_model: nil, agent: %Agent{default_model: nil}}
+
+      assert TaskRunner.resolve_model(task) == nil
+    end
+
+    test "is nil when the agent isn't loaded and next_model is nil" do
+      assert TaskRunner.resolve_model(%Task{next_model: nil, agent: nil}) == nil
     end
   end
 
@@ -566,6 +594,67 @@ defmodule Camelot.Runtime.TaskRunnerTest do
       assert reloaded.duration_api_ms == 5000
       assert reloaded.num_turns == 7
       assert reloaded.usage == %{"input_tokens" => 200, "output_tokens" => 80}
+      assert is_nil(reloaded.error_message)
+    end
+
+    test "leaves no error message on a clean exit with an unparsable buffer", ctx do
+      {:ok, session} =
+        Ash.create(Session, %{
+          agent_id: ctx.task.agent_id,
+          task_id: ctx.task.id
+        })
+
+      state = %TaskRunner{
+        task_id: ctx.task.id,
+        current_session_id: session.id,
+        output_buffer: ""
+      }
+
+      assert :ok = TaskRunner.finish_session(state, 0, {:error, "empty output"}, [])
+
+      reloaded = Ash.get!(Session, session.id)
+      assert reloaded.status == :completed
+      assert is_nil(reloaded.error_message)
+    end
+
+    test "records the parsed reason on a non-zero exit", ctx do
+      {:ok, session} =
+        Ash.create(Session, %{
+          agent_id: ctx.task.agent_id,
+          task_id: ctx.task.id
+        })
+
+      state = %TaskRunner{
+        task_id: ctx.task.id,
+        current_session_id: session.id,
+        output_buffer: "boom"
+      }
+
+      assert :ok = TaskRunner.finish_session(state, 1, {:error, "runner died"}, [])
+
+      reloaded = Ash.get!(Session, session.id)
+      assert reloaded.status == :failed
+      assert reloaded.error_message == "runner died"
+    end
+
+    test "falls back to a generic reason on a non-zero exit with no parsed error", ctx do
+      {:ok, session} =
+        Ash.create(Session, %{
+          agent_id: ctx.task.agent_id,
+          task_id: ctx.task.id
+        })
+
+      state = %TaskRunner{
+        task_id: ctx.task.id,
+        current_session_id: session.id,
+        output_buffer: "partial"
+      }
+
+      assert :ok = TaskRunner.finish_session(state, 1, nil, [])
+
+      reloaded = Ash.get!(Session, session.id)
+      assert reloaded.status == :failed
+      assert reloaded.error_message =~ "non-zero status"
     end
   end
 

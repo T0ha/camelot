@@ -24,6 +24,13 @@
       data-distinct-id={config.distinct_id}
       data-email={config.email}
     />
+    <script
+      :if={ahrefs_key = CamelotWeb.AhrefsConfig.key()}
+      src="https://analytics.ahrefs.com/analytics.js"
+      data-key={ahrefs_key}
+      async
+    >
+    </script>
     <script>
       (() => {
         const setTheme = (theme) => {

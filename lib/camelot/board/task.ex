@@ -17,6 +17,7 @@ defmodule Camelot.Board.Task do
     authorizers: [],
     simple_notifiers: [Camelot.Telemetry.Notifier]
 
+  alias Camelot.Agents.Agent
   alias Camelot.Board.Notifiers.NotifyTaskStateEmail
 
   @stages [
@@ -59,7 +60,8 @@ defmodule Camelot.Board.Task do
         where(
           expr(
             not is_nil(pr_number) and
-              stage == :pr
+              stage == :pr and
+              project.status == :active
           )
         )
       end
@@ -191,6 +193,18 @@ defmodule Camelot.Board.Task do
       )
     end
 
+    attribute :next_model, :string do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Sticky, explicit model choice for the next dispatch. Nil " <>
+          "resolves to the agent's default_model; once set, it stays " <>
+          "until the user changes it again — it is never cleared or " <>
+          "overwritten by the system after a run."
+      )
+    end
+
     timestamps()
   end
 
@@ -199,7 +213,7 @@ defmodule Camelot.Board.Task do
       allow_nil?(false)
     end
 
-    belongs_to :agent, Camelot.Agents.Agent do
+    belongs_to :agent, Agent do
       allow_nil?(true)
     end
 
@@ -232,7 +246,7 @@ defmodule Camelot.Board.Task do
 
     create :create do
       primary?(true)
-      accept([:title, :description, :priority])
+      accept([:title, :description, :priority, :next_model])
 
       argument :project_id, :uuid do
         allow_nil?(false)
@@ -249,6 +263,10 @@ defmodule Camelot.Board.Task do
       change(manage_relationship(:project_id, :project, type: :append))
       change(manage_relationship(:creator_id, :creator, type: :append))
       change(manage_relationship(:agent_id, :agent, type: :append))
+
+      validate(fn changeset, _context ->
+        validate_next_model(changeset, Ash.Changeset.get_argument(changeset, :agent_id))
+      end)
     end
 
     update :update do
@@ -274,6 +292,15 @@ defmodule Camelot.Board.Task do
       validate(attribute_equals(:stage, :draft))
       change(set_attribute(:stage, :todo))
       change(set_attribute(:state, :queued))
+    end
+
+    update :set_next_model do
+      accept([:next_model])
+      require_atomic?(false)
+
+      validate(fn changeset, _context ->
+        validate_next_model(changeset, changeset.data.agent_id)
+      end)
     end
 
     update :begin_work do
@@ -519,6 +546,37 @@ defmodule Camelot.Board.Task do
   @spec column_stages() :: [atom()]
   def column_stages do
     @stages -- [:cancelled, :draft]
+  end
+
+  # Rejects a `next_model` that isn't one of the agent's configured
+  # `available_models`, so a typo never reaches the CLI. An agent with no
+  # `available_models` configured (or none loadable) imposes no
+  # restriction — the flag-less/unconfigured CLI case.
+  defp validate_next_model(changeset, agent_id) do
+    case Ash.Changeset.get_attribute(changeset, :next_model) do
+      nil -> :ok
+      model -> agent_id |> load_agent() |> validate_model_allowed(model)
+    end
+  end
+
+  defp load_agent(nil), do: nil
+
+  defp load_agent(agent_id) do
+    case Ash.get(Agent, agent_id, authorize?: false) do
+      {:ok, agent} -> agent
+      {:error, _} -> nil
+    end
+  end
+
+  defp validate_model_allowed(nil, _model), do: :ok
+  defp validate_model_allowed(%Agent{available_models: []}, _model), do: :ok
+
+  defp validate_model_allowed(%Agent{available_models: models}, model) do
+    if model in models do
+      :ok
+    else
+      {:error, field: :next_model, message: "is not one of the agent's available models"}
+    end
   end
 
   # Drops `runner_handle` unless the caller asked to keep it — see the

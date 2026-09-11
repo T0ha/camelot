@@ -26,5 +26,24 @@ defmodule CamelotWeb.AgentLiveTest do
       assert html =~ claude.slug
       assert html =~ to_string(claude.max_retries)
     end
+
+    test "runner image picker suggests Camelot's built images and fills the field", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/agents/new")
+
+      html =
+        view
+        |> element("#runner-image-picker-container button[phx-click=toggle_browser]")
+        |> render_click()
+
+      assert html =~ "ghcr.io/t0ha/camelot-runner-codex:latest"
+
+      view
+      |> element(~s(#runner-image-picker-container button[phx-value-image="ghcr.io/t0ha/camelot-runner-codex:latest"]))
+      |> render_click()
+
+      assert render(view) =~ ~s(value="ghcr.io/t0ha/camelot-runner-codex:latest")
+    end
   end
 end

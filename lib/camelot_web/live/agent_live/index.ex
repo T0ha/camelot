@@ -10,6 +10,7 @@ defmodule CamelotWeb.AgentLive.Index do
   use CamelotWeb, :live_view
 
   alias Camelot.Agents.Agent
+  alias CamelotWeb.Components.RunnerImagePicker
 
   @parser_options [
     {"Claude Code JSON", "claude_code_json"},
@@ -17,10 +18,10 @@ defmodule CamelotWeb.AgentLive.Index do
   ]
 
   @text_fields ~w(slug name command_prefix executable prompt_flag
-                  tools_flag tools_separator parser pr_url_pattern
-                  runner_image)
+                  tools_flag model_flag tools_separator parser pr_url_pattern
+                  runner_image default_model)
   @array_fields ~w(base_args internal_tools question_phrases
-                   required_credential_kinds)
+                   required_credential_kinds available_models)
   @map_fields ~w(permission_args_by_stage env_vars runner_resources)
   @integer_fields ~w(base_retry_delay_ms max_retries)
 
@@ -93,6 +94,13 @@ defmodule CamelotWeb.AgentLive.Index do
     end
   end
 
+  @impl true
+  def handle_info({:runner_image_selected, image}, socket) do
+    form_params = Map.put(socket.assigns.form.params, "runner_image", image)
+
+    {:noreply, assign(socket, form: to_form(form_params))}
+  end
+
   defp save_agent(socket, :new, attrs, form_p) do
     case Ash.create(Agent, attrs, action: :create) do
       {:ok, _agent} ->
@@ -152,6 +160,9 @@ defmodule CamelotWeb.AgentLive.Index do
       "base_args" => "",
       "prompt_flag" => "",
       "tools_flag" => "",
+      "model_flag" => "",
+      "available_models" => "",
+      "default_model" => "",
       "tools_separator" => ",",
       "permission_args_by_stage" => "{}",
       "internal_tools" => "",
@@ -176,6 +187,9 @@ defmodule CamelotWeb.AgentLive.Index do
       "base_args" => lines(agent.base_args),
       "prompt_flag" => agent.prompt_flag || "",
       "tools_flag" => agent.tools_flag || "",
+      "model_flag" => agent.model_flag || "",
+      "available_models" => lines(agent.available_models),
+      "default_model" => agent.default_model || "",
       "tools_separator" => agent.tools_separator,
       "permission_args_by_stage" => Jason.encode!(agent.permission_args_by_stage, pretty: true),
       "internal_tools" => lines(agent.internal_tools),
@@ -212,6 +226,9 @@ defmodule CamelotWeb.AgentLive.Index do
          base_args: split_lines(form_p["base_args"]),
          prompt_flag: nilify(form_p["prompt_flag"]),
          tools_flag: nilify(form_p["tools_flag"]),
+         model_flag: nilify(form_p["model_flag"]),
+         available_models: split_lines(form_p["available_models"]),
+         default_model: nilify(form_p["default_model"]),
          tools_separator: form_p["tools_separator"] || ",",
          permission_args_by_stage: perm,
          internal_tools: split_lines(form_p["internal_tools"]),
@@ -355,6 +372,23 @@ defmodule CamelotWeb.AgentLive.Index do
               label="Tools separator"
             />
             <.input
+              field={@form[:model_flag]}
+              type="text"
+              label="Model flag (blank to disable model selection)"
+              placeholder="--model"
+            />
+            <.input
+              field={@form[:available_models]}
+              type="textarea"
+              label="Available models (one per line)"
+              rows="3"
+            />
+            <.input
+              field={@form[:default_model]}
+              type="text"
+              label="Default model (blank uses the CLI's own default)"
+            />
+            <.input
               field={@form[:permission_args_by_stage]}
               type="textarea"
               label="Permission args by stage (JSON)"
@@ -415,11 +449,12 @@ defmodule CamelotWeb.AgentLive.Index do
               Leave blank when using the LocalPort backend.
             </p>
 
-            <.input
-              field={@form[:runner_image]}
-              type="text"
+            <.live_component
+              module={RunnerImagePicker}
+              id="runner-image-picker"
+              name={@form[:runner_image].name}
+              value={@form[:runner_image].value}
               label="Runner image"
-              placeholder="ghcr.io/t0ha/camelot-runner-claude:latest"
             />
             <.input
               field={@form[:runner_resources]}

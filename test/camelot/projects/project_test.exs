@@ -270,4 +270,22 @@ defmodule Camelot.Projects.ProjectTest do
       assert {:ok, []} = Ash.read(Project)
     end
   end
+
+  describe "active?/1" do
+    test "a freshly created project is active" do
+      {:ok, project} = Ash.create(Project, @valid_attrs)
+      assert Project.active?(project)
+    end
+
+    test "an archived project is not active" do
+      {:ok, project} = Ash.create(Project, @valid_attrs)
+      {:ok, archived} = Ash.update(project, %{}, action: :archive)
+
+      refute Project.active?(archived)
+    end
+
+    test "a nil project is not active" do
+      refute Project.active?(nil)
+    end
+  end
 end

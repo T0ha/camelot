@@ -29,6 +29,7 @@ defmodule Camelot.Runtime.TaskRunner do
   use GenServer, restart: :transient
 
   alias Camelot.Accounts.Credential
+  alias Camelot.Agents.Agent
   alias Camelot.Agents.Session
   alias Camelot.Board.Interruption
   alias Camelot.Board.PromptBuilder
@@ -67,6 +68,7 @@ defmodule Camelot.Runtime.TaskRunner do
     :current_prompt,
     :runner,
     :user_id,
+    :model,
     max_retries: 0,
     retry_count: 0,
     output_buffer: "",
@@ -80,6 +82,7 @@ defmodule Camelot.Runtime.TaskRunner do
           current_prompt: String.t() | nil,
           runner: pid() | nil,
           user_id: String.t() | nil,
+          model: String.t() | nil,
           max_retries: non_neg_integer(),
           retry_count: non_neg_integer(),
           output_buffer: String.t(),
@@ -223,8 +226,8 @@ defmodule Camelot.Runtime.TaskRunner do
       Progress.report(state.task_id, session_id, :provisioning, "Starting the runner…")
 
       case start_runner(state) do
-        {:ok, runner_pid, config} ->
-          mark_session_running(session_id, runner_pid)
+        {:ok, runner_pid, config, model} ->
+          mark_session_running(session_id, runner_pid, model)
           SessionRegistry.register(session_id)
           Process.monitor(runner_pid)
           broadcast_session_update(state.task_id)
@@ -234,6 +237,7 @@ defmodule Camelot.Runtime.TaskRunner do
              state
              | runner: runner_pid,
                config: config,
+               model: model,
                output_buffer: ""
            }}
 
@@ -504,7 +508,8 @@ defmodule Camelot.Runtime.TaskRunner do
         retry_count: 0,
         output_buffer: "",
         allowed_tools: [],
-        user_id: nil
+        user_id: nil,
+        model: nil
     }
   end
 
@@ -558,6 +563,7 @@ defmodule Camelot.Runtime.TaskRunner do
          allowed_tools: allowed_tools,
          config: config,
          user_id: task.creator_id,
+         model: nil,
          max_retries: task.agent.max_retries,
          retry_count: retry_number,
          output_buffer: ""
@@ -666,18 +672,21 @@ defmodule Camelot.Runtime.TaskRunner do
       |> AgentConfig.resolve(task.project)
       |> AgentConfig.render_permission_args(task.project_id, task.creator_id)
 
+    model = resolve_model(task)
+
     cli_args =
       AgentConfig.build_cli_args(
         config,
         state.current_prompt,
         state.allowed_tools,
-        task.stage
+        task.stage,
+        model
       )
 
     spec = build_spec(state, task, config, cli_args)
 
     case Runner.start(spec) do
-      {:ok, pid} -> {:ok, pid, config}
+      {:ok, pid} -> {:ok, pid, config, model}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -753,6 +762,17 @@ defmodule Camelot.Runtime.TaskRunner do
   # ephemeral /workspace. LocalPort doesn't clone — it runs in-place.
   defp repo_url_for(LocalPort, _task), do: nil
   defp repo_url_for(_backend, task), do: task_repo_url(task)
+
+  @doc """
+  Resolves the model for the next dispatch of a task: the task's
+  explicit, sticky `next_model` when set, else the agent CLI's
+  `default_model`. Never writes anything back — `next_model` stays
+  untouched until the user changes it again.
+  """
+  @spec resolve_model(Task.t()) :: String.t() | nil
+  def resolve_model(%Task{next_model: next_model}) when not is_nil(next_model), do: next_model
+  def resolve_model(%Task{agent: %Agent{default_model: default_model}}), do: default_model
+  def resolve_model(_task), do: nil
 
   @doc false
   # Precedence: a project's own pin wins, then its owner's
@@ -860,7 +880,7 @@ defmodule Camelot.Runtime.TaskRunner do
     case InstallationTokenCache.refresh(installation_id) do
       {:ok, token} ->
         name = github_app_token_secret_name(task_id)
-        publish_swarm_secret(name, token)
+        publish_swarm_secret(name, token, task_id)
         secrets ++ [%{kind: :github_app_token, name: name, value: token}]
 
       {:error, reason} ->
@@ -877,9 +897,21 @@ defmodule Camelot.Runtime.TaskRunner do
   defp github_app_token_secret_name(nil), do: "camelot_github_app_token"
   defp github_app_token_secret_name(task_id), do: SecretSync.task_secret_name(task_id, :github_app_token)
 
-  defp publish_swarm_secret(name, value) do
-    if Runner.backend() == Swarm, do: SecretSync.put_secret(name, value)
+  # On the Swarm backend a task's secret is published by
+  # `Swarm.TaskService`, which must do it *after* removing any stale
+  # service left under the task's name — Docker will not delete (and so
+  # cannot rotate) a secret a service still references. Publishing here
+  # too would just fail against that same stale service and log a
+  # misleading `AlreadyExists`. Sessions with no task id never reach
+  # TaskService, so they still publish from here.
+  defp publish_swarm_secret(name, value, nil) do
+    case Runner.backend() do
+      Swarm -> SecretSync.put_secret(name, value)
+      _ -> :ok
+    end
   end
+
+  defp publish_swarm_secret(_name, _value, _task_id), do: :ok
 
   defp fetch_credential(user_id, kind_atom, name \\ nil)
 
@@ -937,9 +969,12 @@ defmodule Camelot.Runtime.TaskRunner do
     end
   end
 
+  # `reason` is never nil: both callers pass a built message, and
+  # `parsed_error/1` falls back to `@unexplained_failure` rather than
+  # returning nil, so an error card always carries an explanation.
   defp mark_task_error(task_id, reason) do
     task = Ash.get!(Task, task_id)
-    transition(task, :mark_error, %{last_error: reason || @unexplained_failure})
+    transition(task, :mark_error, %{last_error: reason})
   end
 
   # Variant used by paths where the CLI exited cleanly but the
@@ -971,12 +1006,12 @@ defmodule Camelot.Runtime.TaskRunner do
     end
   end
 
-  defp mark_session_running(session_id, runner_pid) do
+  defp mark_session_running(session_id, runner_pid, model) do
     session = Ash.get!(Session, session_id)
 
     Ash.update(
       session,
-      %{service_id: inspect(runner_pid)},
+      %{service_id: inspect(runner_pid), model: model},
       action: :mark_running
     )
   end
@@ -1406,7 +1441,7 @@ defmodule Camelot.Runtime.TaskRunner do
            %{
              output_log: state.output_buffer,
              exit_code: exit_code,
-             error_message: parsed_error(parsed),
+             error_message: session_error(exit_code, parsed),
              permission_denials: denials,
              cost_usd: parsed_field(parsed, :cost_usd),
              duration_ms: parsed_field(parsed, :duration_ms),
@@ -1444,6 +1479,17 @@ defmodule Camelot.Runtime.TaskRunner do
   # Never nil: a non-zero exit with a parsable-but-resultless buffer
   # would otherwise produce an error card with no explanation at all.
   defp parsed_error(_parsed), do: @unexplained_failure
+
+  # Session-level variant of `parsed_error/1`. The fallback above is a
+  # statement about the *exit status*, so it must never be written for a
+  # clean exit — doing so stamped every successful session with a
+  # "non-zero status" error the task page then rendered. A clean exit
+  # whose buffer would not parse still reaches the card through
+  # `mark_task_error/2`, so nothing is lost by leaving the row nil.
+  @spec session_error(integer(), term()) :: String.t() | nil
+  defp session_error(0, _parsed), do: nil
+  defp session_error(_exit_code, {:error, msg}), do: msg
+  defp session_error(_exit_code, _parsed), do: @unexplained_failure
 
   defp parsed_field({:ok, parsed}, key), do: Map.get(parsed, key)
   defp parsed_field(_parsed, _key), do: nil
