@@ -221,8 +221,14 @@ defmodule Camelot.Board.Task do
       allow_nil?(false)
     end
 
-    has_many(:sessions, Camelot.Agents.Session)
-    has_many(:messages, Camelot.Board.TaskMessage)
+    has_many :sessions, Camelot.Agents.Session do
+      sort(inserted_at: :desc)
+    end
+
+    has_many :messages, Camelot.Board.TaskMessage do
+      sort(inserted_at: :desc)
+    end
+
     has_many(:attachments, Camelot.Board.TaskAttachment)
   end
 

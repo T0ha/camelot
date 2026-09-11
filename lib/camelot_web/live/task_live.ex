@@ -922,7 +922,7 @@ defmodule CamelotWeb.TaskLive do
 
   defp sorted_sessions(task) do
     if Ash.Resource.loaded?(task, :sessions) do
-      Enum.sort_by(task.sessions, & &1.inserted_at, {:desc, DateTime})
+      task.sessions
     else
       []
     end
@@ -1013,7 +1013,7 @@ defmodule CamelotWeb.TaskLive do
 
   defp sorted_messages(task) do
     if Ash.Resource.loaded?(task, :messages) do
-      Enum.sort_by(task.messages, & &1.inserted_at)
+      task.messages
     else
       []
     end
