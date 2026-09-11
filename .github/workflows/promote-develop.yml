@@ -4,13 +4,19 @@ name: Promote develop to main
 # build-docker-image.yml): once the checks, the multi-arch image build and
 # the deploy to test have all succeeded, open - or refresh - the single
 # rolling release PR from `develop` into `main`.
+#
+# No `concurrency:` key here on purpose. In a called workflow the group is
+# evaluated in the CALLER's context - `github.workflow` is the caller's
+# name - so `${{ github.workflow }}-${{ github.ref }}` resolves to exactly
+# the group the calling run already holds. The job can then never be
+# scheduled and the whole run fails without it ever being created. The
+# caller's group already serialises this workflow.
+#
+# `workflow_dispatch` only becomes usable once this file is on the default
+# branch (`main`).
 on:
   workflow_call:
   workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 defaults:
   run:
