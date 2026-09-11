@@ -57,24 +57,23 @@ defmodule CamelotWeb.BoardComponents do
     >
       <div class="card-body p-3">
         <h3 class="card-title text-sm">
+          <span
+            :if={@task.state}
+            title={format_state(display_state(@task))}
+          >
+            {state_emoji(display_state(@task))}
+          </span>
           {@task.title}
         </h3>
-        <p
-          :if={@task.description}
-          class="text-xs text-base-content/60 line-clamp-2"
-        >
-          {@task.description}
+        <p class="text-xs text-base-content/60 line-clamp-1">
+          {@task.project.name}
         </p>
         <div class="flex items-center gap-2 mt-1">
-          <.state_badge :if={@task.state} state={display_state(@task)} />
           <span
             :if={@task.pr_url}
             class="badge badge-xs badge-outline"
           >
             <.icon name="hero-code-bracket" class="size-3" /> PR #{@task.pr_number}
-          </span>
-          <span class="badge badge-xs badge-ghost">
-            P{@task.priority}
           </span>
           <button
             :if={@task.state in [:error, :in_progress]}
@@ -158,4 +157,5 @@ defmodule CamelotWeb.BoardComponents do
   defp state_emoji(:in_progress), do: "🔃"
   defp state_emoji(:waiting_for_input), do: "💬"
   defp state_emoji(:error), do: "⚠️"
+  defp state_emoji(_state), do: "❓"
 end

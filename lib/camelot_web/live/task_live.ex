@@ -470,7 +470,6 @@ defmodule CamelotWeb.TaskLive do
                 —
               </span>
             </:item>
-            <:item title="Priority">{@task.priority}</:item>
             <:item title="Project">
               {if Ash.Resource.loaded?(@task, :project), do: @task.project.name, else: "—"}
             </:item>
