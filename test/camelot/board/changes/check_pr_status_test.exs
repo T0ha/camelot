@@ -486,7 +486,10 @@ defmodule Camelot.Board.Changes.CheckPrStatusTest do
     defp pr(sha, opts \\ []) do
       %{
         "head" => %{"sha" => sha},
-        "base" => %{"ref" => "main"},
+        "base" => %{
+          "ref" => Keyword.get(opts, :base_ref, "main"),
+          "repo" => %{"default_branch" => "main"}
+        },
         "merged" => Keyword.get(opts, :merged, false)
       }
     end
@@ -585,6 +588,32 @@ defmodule Camelot.Board.Changes.CheckPrStatusTest do
       assert message.content =~ "merged"
       assert message.content =~ "main"
       assert Ash.get!(Task, dependent.id).state == :queued
+    end
+
+    test "a merged blocker that was itself stacked retargets to the default branch", ctx do
+      blocker = create_task(ctx.project, ctx)
+      dependent = ctx.project |> create_task(ctx) |> Ash.Seed.update!(%{stage: :pr, state: :queued})
+      link!(blocker, dependent)
+
+      CheckPrStatus.propagate_to_dependents(
+        blocker,
+        pr("sha1", merged: true, base_ref: "camelot/task-#{Ash.UUID.generate()}")
+      )
+
+      [message] = messages(dependent)
+      assert message.content =~ "origin/main"
+      refute message.content =~ "camelot/task-"
+    end
+
+    test "a merged blocker keeps a non-default merge base", ctx do
+      blocker = create_task(ctx.project, ctx)
+      dependent = ctx.project |> create_task(ctx) |> Ash.Seed.update!(%{stage: :pr, state: :queued})
+      link!(blocker, dependent)
+
+      CheckPrStatus.propagate_to_dependents(blocker, pr("sha1", merged: true, base_ref: "release/2.0"))
+
+      [message] = messages(dependent)
+      assert message.content =~ "origin/release/2.0"
     end
 
     test "a cross-repo dependent is skipped entirely", ctx do

@@ -1156,6 +1156,15 @@ defmodule CamelotWeb.TaskLive do
   # bypasses it. This assembles the render-time view of every link
   # category, filtered through `Scope.scope_tasks/2`, collapsing
   # anything the current user can't see into a single count.
+  #
+  # Filtering here rather than inside the `load` is a deliberate
+  # trade-off: a relationship load takes no scope argument, so pushing
+  # it down means either policies on the whole `Camelot.Board` domain
+  # or hand-written filters duplicated per relationship. The cost is
+  # bounded — the rows fetched are only this one task's links — and
+  # nothing about an out-of-scope task reaches the page beyond its
+  # count in the placeholder. Revisit when board resources gain
+  # policies.
   defp link_view(task, user) do
     {parent, hidden_parent} = scoped_parent_row(parent_row(task.parent_link), user)
     {blockers, hidden_blockers} = scoped_rows(task.blocker_links, :source_task, user)

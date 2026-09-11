@@ -187,6 +187,10 @@ defmodule Camelot.Board.PromptBuilderTest do
       assert PromptBuilder.related_context_block(task) == ""
     end
 
+    test "is empty when the link associations were never loaded" do
+      assert PromptBuilder.related_context_block(%Task{id: @task.id, project: @core_api}) == ""
+    end
+
     test "a same-repo blocker carries title, project, stage, summary, PR and branch note" do
       blocker = %Task{
         id: "b1111111-0000-0000-0000-000000000001",

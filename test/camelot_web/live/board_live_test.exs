@@ -491,5 +491,88 @@ defmodule CamelotWeb.BoardLiveTest do
       assert html =~ "Out of scope but visible"
       refute html =~ "Out of scope task"
     end
+
+    test "a search treats LIKE metacharacters as literal text", %{conn: conn, user: user} do
+      {:ok, project} =
+        Ash.create(
+          Project,
+          %{name: "wildcard-board-#{System.unique_integer()}", path: "/tmp/wildcard-board"},
+          actor: user
+        )
+
+      [literal, wildcard_match] =
+        for title <- ["Discount 50% banner", "Discount 5012 banner"] do
+          Ash.create!(Task, %{
+            title: title,
+            project_id: project.id,
+            creator_id: user.id,
+            agent_id: agent!("claude_code").id
+          })
+        end
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_new_task")
+
+      view
+      |> element("#new-task-parent-picker input[name=query]")
+      |> render_change(%{"query" => "50%"})
+
+      # Both titles also appear on the board behind the modal, so the
+      # assertion is on the picker's own result buttons.
+      assert has_element?(view, ~s(#new-task-parent-picker button[phx-value-id="#{literal.id}"]))
+      refute has_element?(view, ~s(#new-task-parent-picker button[phx-value-id="#{wildcard_match.id}"]))
+    end
+
+    test "a rejected link is reported instead of silently dropped", %{conn: conn, user: user} do
+      {:ok, project} =
+        Ash.create(
+          Project,
+          %{name: "reject-board-#{System.unique_integer()}", path: "/tmp/reject-board"},
+          actor: user
+        )
+
+      {:ok, parent} =
+        Ash.create(Task, %{
+          title: "Doomed umbrella",
+          project_id: project.id,
+          creator_id: user.id,
+          agent_id: agent!("claude_code").id
+        })
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_new_task")
+
+      view
+      |> element("#new-task-parent-picker input[name=query]")
+      |> render_change(%{"query" => "Doomed"})
+
+      view
+      |> element(~s(button[phx-value-id="#{parent.id}"]))
+      |> render_click()
+
+      # The picked parent disappears between the pick and the submit,
+      # so the link create fails while the task itself succeeds.
+      Ash.destroy!(parent)
+
+      title = "orphan-task-#{System.unique_integer()}"
+
+      html =
+        view
+        |> form("#new-task-form", %{
+          "task" => %{
+            "title" => title,
+            "project_id" => project.id,
+            "agent_id" => agent!("claude_code").id
+          }
+        })
+        |> render_submit()
+
+      assert html =~ "Task created, but these links were rejected"
+      assert html =~ "Doomed umbrella"
+      assert Ash.read!(TaskLink) == []
+      assert Task |> Ash.Query.filter(title == ^title) |> Ash.read_one!()
+    end
   end
 end

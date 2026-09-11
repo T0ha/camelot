@@ -69,7 +69,11 @@ defmodule Camelot.Board.TaskLink do
       description(
         "Head sha of the blocker's PR branch that the dependent has " <>
           "already been told to rebase onto. Only meaningful for " <>
-          "`:blocks` links — see `Camelot.Board.Changes.CheckPrStatus`."
+          "`:blocks` links — see `Camelot.Board.Changes.CheckPrStatus`. " <>
+          "It lives here because the sync is a property of the edge " <>
+          "and is a single value per edge; a dedicated sync resource " <>
+          "is the move once a link needs more than one (say, rebased " <>
+          "but not yet pushed)."
       )
     end
 

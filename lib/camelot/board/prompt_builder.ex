@@ -10,6 +10,7 @@ defmodule Camelot.Board.PromptBuilder do
   that session was dispatched with only ever lived in the memory of the
   process that died.
   """
+  use CamelotWeb, :verified_routes
 
   alias Camelot.Board.Changes.CheckPrStatus
   alias Camelot.Board.Task
@@ -154,12 +155,18 @@ defmodule Camelot.Board.PromptBuilder do
   end
 
   defp branch_directive_for(blockers, task) do
-    names = Enum.map_join(blockers, ", ", &"`camelot/task-#{&1.id}`")
+    names =
+      blockers
+      |> Enum.sort_by(& &1.id)
+      |> Enum.map_join(", ", &"`camelot/task-#{&1.id}`")
 
     "\n\nCreate a git branch named exactly `camelot/task-#{task.id}` " <>
-      "from the default branch, then `git merge` each of #{names} into " <>
-      "it before starting, and open the pull request against the " <>
-      "default branch."
+      "from the default branch, then `git merge --no-ff` each of " <>
+      "#{names} into it in that order, committing each merge before " <>
+      "starting the next. If two of those branches conflict with each " <>
+      "other, resolve in favour of the branch merged later and note " <>
+      "the resolution in the pull request description. Open the pull " <>
+      "request against the default branch."
   end
 
   defp stacked_blockers(%{blockers: blockers, project: project}) when is_list(blockers) do
@@ -366,7 +373,11 @@ defmodule Camelot.Board.PromptBuilder do
 
   defp branch_line(_blocker, _task), do: nil
 
-  defp task_url(task), do: CamelotWeb.Endpoint.url() <> "/tasks/#{task.id}"
+  # Verified route rather than the hand-built
+  # `Endpoint.url() <> "/tasks/…"` the senders use: the path is checked
+  # against the router at compile time, so renaming the route can't
+  # silently ship a dead link into an agent's prompt.
+  defp task_url(task), do: url(~p"/tasks/#{task.id}")
 
   defp append_conversation(prompt, messages) when is_list(messages) and messages != [] do
     sorted = Enum.sort_by(messages, & &1.inserted_at)

@@ -13,6 +13,12 @@ defmodule CamelotWeb.Components.TaskPicker do
   `CamelotWeb.Scope.scope_tasks/2`, bypassed only when the caller
   passes `see_all?: true` (an admin with the board's "Showing: All"
   toggle on) — mirroring `CamelotWeb.Scope.maybe_scope/4`.
+
+  The search is a plain `ilike` sequential scan over `tasks.title`,
+  bounded by a two-character minimum query, the membership scope and
+  the ten-row limit. That is deliberate at the board sizes this
+  app runs at (thousands of tasks); a `gin_trgm_ops` index on
+  `tasks.title` is the escalation path if that stops holding.
   """
   use CamelotWeb, :live_component
 
@@ -66,11 +72,24 @@ defmodule CamelotWeb.Components.TaskPicker do
     exclude_ids = socket.assigns.exclude_ids
 
     Task
-    |> Ash.Query.filter(ilike(title, ^"%#{query}%"))
+    |> Ash.Query.filter(ilike(title, ^like_pattern(query)))
     |> Ash.Query.filter(id not in ^exclude_ids)
     |> Ash.Query.limit(@max_results)
     |> Scope.maybe_scope(socket.assigns.current_user, socket.assigns.see_all?, &Scope.scope_tasks/2)
     |> Ash.read!(load: [:project])
+  end
+
+  # `ilike` is the only case-insensitive match Ash offers here
+  # (`contains/2` compiles to a case-sensitive `strpos`), so the
+  # pattern is built up front with the LIKE metacharacters escaped:
+  # a title typed as "50%_off" searches for that literal text instead
+  # of turning into a wildcard. Ash still parameterises the resulting
+  # string, this only stops it from being read as a pattern.
+  @spec like_pattern(String.t()) :: String.t()
+  defp like_pattern(query) do
+    escaped = String.replace(query, ~r/([\\%_])/, "\\\\\\1")
+
+    "%#{escaped}%"
   end
 
   @impl true

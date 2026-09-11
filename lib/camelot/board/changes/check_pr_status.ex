@@ -281,6 +281,12 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
     end
   end
 
+  # `:user` is the only inbound role `Camelot.Board.TaskMessage`
+  # has, and the notice has to reach the agent's conversation the same
+  # way a human reply does. So attribution is carried in the body
+  # instead: every notice opens with the same marker, which keeps the
+  # message greppable for filtering without a schema change and a
+  # migration of the existing `@roles`.
   defp notify_dependent(blocker, dependent, pr, merged?) do
     Ash.create!(TaskMessage, %{
       role: :user,
@@ -291,24 +297,43 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
     maybe_requeue(dependent)
   end
 
-  defp rebase_message(blocker, pr, true) do
-    default_branch = get_in(pr, ["base", "ref"]) || "the default branch"
+  @notice_prefix "Automated dependency notice — "
 
-    "The task you depend on (`#{blocker.title}`) merged its pull " <>
-      "request. Rebase onto the default branch: run `git fetch origin " <>
-      "&& git rebase origin/#{default_branch}` on your branch, retarget " <>
-      "your pull request's base to `#{default_branch}`, and `git push " <>
-      "--force-with-lease`. Resolve any conflicts in favour of the " <>
-      "newer base."
+  defp rebase_message(blocker, pr, true) do
+    branch = merged_into_branch(pr)
+
+    @notice_prefix <>
+      "the task you depend on (`#{blocker.title}`) merged its pull " <>
+      "request. Run `git fetch origin && git rebase origin/#{branch}` " <>
+      "on your branch, retarget your pull request's base to " <>
+      "`#{branch}`, and `git push --force-with-lease`. Resolve any " <>
+      "conflicts in favour of the newer base."
   end
 
   defp rebase_message(blocker, _pr, false) do
-    "The task you depend on (`#{blocker.title}`) pushed new commits to " <>
-      "its branch `camelot/task-#{blocker.id}`. Run `git fetch origin " <>
-      "&& git rebase origin/camelot/task-#{blocker.id}` on your branch " <>
-      "and `git push --force-with-lease`. Resolve any conflicts in " <>
-      "favour of the newer base."
+    @notice_prefix <>
+      "the task you depend on (`#{blocker.title}`) pushed new commits " <>
+      "to its branch `camelot/task-#{blocker.id}`. Run `git fetch " <>
+      "origin && git rebase origin/camelot/task-#{blocker.id}` on your " <>
+      "branch and `git push --force-with-lease`. Resolve any conflicts " <>
+      "in favour of the newer base."
   end
+
+  # Where the dependent should land now that its base branch is gone.
+  # Normally that is whatever the blocker merged into — a release
+  # branch stays a release branch. The exception is a blocker that was
+  # itself stacked: its base is another task branch that GitHub will
+  # delete on merge, so the dependent is sent to the repository
+  # default branch instead.
+  defp merged_into_branch(pr) do
+    base_branch(get_in(pr, ["base", "ref"]), get_in(pr, ["base", "repo", "default_branch"]))
+  end
+
+  defp base_branch("camelot/task-" <> _id, nil), do: "the default branch"
+  defp base_branch("camelot/task-" <> _id, default_branch), do: default_branch
+  defp base_branch(nil, nil), do: "the default branch"
+  defp base_branch(nil, default_branch), do: default_branch
+  defp base_branch(base_ref, _default_branch), do: base_ref
 
   defp maybe_requeue(%{state: state} = dependent) when state in [:waiting_for_input, :error] do
     case Ash.update(dependent, %{}, action: :reset) do

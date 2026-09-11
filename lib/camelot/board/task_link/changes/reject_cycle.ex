@@ -23,9 +23,20 @@ defmodule Camelot.Board.TaskLink.Changes.RejectCycle do
   transaction. A recursive CTE would be a single round trip instead of
   O(depth), but raw SQL in a change breaks the pattern every other
   change module in this repo follows, and a board's link graph is at
-  most a few hundred edges. Concurrent inserts can still race into a
-  cycle; the failure mode is "neither task ever dispatches", which is
-  visible on the board — accepted as a known gap.
+  most a few hundred edges.
+
+  Concurrent inserts can still race into a cycle: two links created at
+  the same instant each read a graph without the other. The failure
+  mode is "neither task ever dispatches", which surfaces on the board
+  as a pair of tasks stuck behind the blocked banner and is undone by
+  deleting either link. Closing that window for real needs the
+  database to hold the invariant — a `SERIALIZABLE` transaction around
+  the create, or a deferred constraint trigger — and both move the
+  reachability rule out of this module: the trigger duplicates it in
+  PL/pgSQL, and the isolation level is a repo-wide setting that would
+  make every caller of this action retry on serialization failures.
+  Accepted as a known gap at the rate links are created (by hand, from
+  the UI) rather than paid for up front.
   """
   use Ash.Resource.Change
 

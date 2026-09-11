@@ -19,6 +19,7 @@ defmodule Camelot.Board.Task do
 
   alias Camelot.Agents.Agent
   alias Camelot.Board.Notifiers.NotifyTaskStateEmail
+  alias Camelot.Board.Task.Changes.RejectBlocked
   alias Camelot.Board.TaskLink
 
   @stages [
@@ -444,23 +445,10 @@ defmodule Camelot.Board.Task do
       end)
 
       # A plain `validate` can't see aggregates/calculations, so the
-      # blocked check runs as a `before_action` load instead — guards a
+      # blocked check runs as a `before_action` hook instead — guards a
       # manual Retry/Reset from jumping the gate the same way the
       # dispatcher's `not blocked?` query filter does.
-      change(fn changeset, _context ->
-        Ash.Changeset.before_action(changeset, fn changeset ->
-          loaded = Ash.load!(changeset.data, :blocked?, authorize?: false)
-
-          if loaded.blocked? do
-            Ash.Changeset.add_error(changeset,
-              field: :base,
-              message: "task is blocked by an incomplete dependency"
-            )
-          else
-            changeset
-          end
-        end)
-      end)
+      change(RejectBlocked)
 
       change(fn changeset, _context ->
         stage = Ash.Changeset.get_attribute(changeset, :stage)
@@ -721,9 +709,15 @@ defmodule Camelot.Board.Task do
   @doc """
   Every `:relates_to` counterpart, in either direction.
 
-  Requires `:related_out_tasks` and `:related_in_tasks` to be loaded.
+  Requires `:related_out_tasks` and `:related_in_tasks` to be loaded;
+  an unloaded task has no known counterparts rather than raising, so
+  that `PromptBuilder.related_context_block/1` degrades to an empty
+  block the same way its blocker and subtask sections do.
   """
   @spec related_tasks(t()) :: [t()]
+  def related_tasks(%{related_out_tasks: %Ash.NotLoaded{}}), do: []
+  def related_tasks(%{related_in_tasks: %Ash.NotLoaded{}}), do: []
+
   def related_tasks(%{related_out_tasks: out_tasks, related_in_tasks: in_tasks}) do
     out_tasks ++ in_tasks
   end

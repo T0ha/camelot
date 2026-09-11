@@ -46,7 +46,7 @@ defmodule Camelot.Board.Changes.DispatchTasks do
     |> Ash.Query.sort(priority: :desc)
     |> Ash.read!(
       load:
-        [:messages, :attachments, :project] ++
+        [:blocked?, :messages, :attachments, :project] ++
           Task.link_load() ++ [creator: [:github_installations]],
       authorize?: false
     )

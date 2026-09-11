@@ -41,7 +41,8 @@ main
 ```
 
 Two or more same-repo blockers at `:pr` fall back to branching from the
-default branch and merging each blocker branch in first. Cross-repo
+default branch and merging each blocker branch in first, in blocker-id
+order and with `--no-ff` so each merge is its own commit. Cross-repo
 blockers never get a branch directive — there is no git relationship to
 express — but they still gate dispatch and still show up in the prompt's
 "Related Tasks" context block (`PromptBuilder.related_context_block/1`).
@@ -54,7 +55,13 @@ notice when a blocker's branch moves and tell its same-repo dependents to
 rebase, via a `TaskMessage`. A dependent that hasn't branched yet just has
 its synced sha recorded; a `:waiting_for_input`/`:error` dependent is also
 re-queued (`action: :reset`). When the blocker's PR merges, dependents are
-told to rebase onto the default branch and retarget their PR instead.
+told to rebase onto whatever it merged into and retarget their PR instead —
+except when the blocker was itself stacked, where its own base branch is
+about to be deleted and they are sent to the repository default branch.
+
+Every such message is a `TaskMessage` with `role: :user` (the only inbound
+role there is) whose body opens with `Automated dependency notice — `, so
+these can be told apart from a human reply without a schema change.
 
 ## UI
 
