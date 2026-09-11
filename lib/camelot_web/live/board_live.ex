@@ -306,11 +306,6 @@ defmodule CamelotWeb.BoardLive do
             options={next_model_options(@agents, @task_form)}
             disabled={is_nil(selected_agent(@agents, @task_form))}
           />
-          <.input
-            field={@task_form[:priority]}
-            type="number"
-            label="Priority"
-          />
           <fieldset class="fieldset">
             <label class="label" for={@uploads.attachment.ref}>
               Attachments
