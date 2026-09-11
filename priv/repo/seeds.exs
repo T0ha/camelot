@@ -40,8 +40,6 @@ existing_templates = Ash.read!(Agent)
 # (ToolSearch build) does NOT expose ExitPlanMode in the headless tool
 # registry, so the plan/question can't be recovered from a tool denial;
 # instead the agent emits it via the injected `StructuredOutput` tool.
-# Placeholder set — verify against Claude Code's current `--model`
-# documentation before relying on it in production.
 claude_code_available_models = [
   "claude-opus-5",
   "claude-sonnet-5",
@@ -83,11 +81,11 @@ if !Enum.any?(existing_templates, &(&1.slug == "codex")) do
     name: "Codex",
     executable: "codex",
     base_args: ["--quiet"],
-    # Placeholder set — verify against Codex CLI's current `--model`
-    # documentation before relying on it in production.
+    # `available_models`/`default_model` deliberately left unset: unlike
+    # Claude Code's ids above, Codex CLI's current `--model` values
+    # aren't confirmed here. Left for an admin to fill in via the Agent
+    # CLI admin page once verified against the CLI's own docs.
     model_flag: "--model",
-    available_models: ["gpt-5.1-codex", "gpt-5.1-codex-mini"],
-    default_model: "gpt-5.1-codex",
     tools_separator: ",",
     parser: :raw_text,
     pr_url_pattern: pr_url_pattern,

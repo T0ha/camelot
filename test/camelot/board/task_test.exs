@@ -465,6 +465,39 @@ defmodule Camelot.Board.TaskTest do
       assert updated.stage == :planning
       assert updated.state == :in_progress
     end
+
+    test "rejects a model not in the agent's available_models on create", ctx do
+      assert {:error, error} =
+               create_task(ctx.project, ctx.user, %{next_model: "not-a-real-model"})
+
+      assert Enum.any?(error.errors, &(&1.field == :next_model))
+    end
+
+    test "rejects a model not in the agent's available_models via set_next_model", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      assert {:error, error} =
+               Ash.update(task, %{next_model: "not-a-real-model"}, action: :set_next_model)
+
+      assert Enum.any?(error.errors, &(&1.field == :next_model))
+    end
+
+    test "allows any model when the agent has no available_models configured", ctx do
+      {:ok, unrestricted_agent} =
+        Ash.create(Camelot.Agents.Agent, %{
+          slug: "unrestricted-#{System.unique_integer([:positive])}",
+          name: "Unrestricted",
+          executable: "unrestricted"
+        })
+
+      assert {:ok, task} =
+               create_task(ctx.project, ctx.user, %{
+                 agent_id: unrestricted_agent.id,
+                 next_model: "anything-goes"
+               })
+
+      assert task.next_model == "anything-goes"
+    end
   end
 
   describe "cancel" do

@@ -10,6 +10,7 @@ defmodule CamelotWeb.BoardLive do
 
   alias AshPhoenix.Form
   alias Camelot.Agents.Agent
+  alias Camelot.Agents.ModelLabel
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
   alias CamelotWeb.Scope
@@ -209,7 +210,7 @@ defmodule CamelotWeb.BoardLive do
   defp next_model_options(agents, form) do
     case selected_agent(agents, form) do
       nil -> []
-      agent -> Enum.map(agent.available_models, &{&1, &1})
+      agent -> Enum.map(agent.available_models, &{ModelLabel.humanize(&1), &1})
     end
   end
 

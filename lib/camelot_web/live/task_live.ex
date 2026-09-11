@@ -8,6 +8,7 @@ defmodule CamelotWeb.TaskLive do
   import CamelotWeb.BoardComponents, only: [state_badge: 1]
 
   alias Camelot.Accounts.User
+  alias Camelot.Agents.ModelLabel
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
   alias Camelot.Board.TaskAttachment
@@ -380,6 +381,19 @@ defmodule CamelotWeb.TaskLive do
 
   defp next_model_options(_task), do: []
 
+  # Read-only summary of the effective model, shown once a task reaches a
+  # terminal stage (the picker itself is hidden — no further runs will
+  # use it).
+  defp model_summary(%Task{next_model: model}) when is_binary(model) do
+    ModelLabel.humanize(model)
+  end
+
+  defp model_summary(%Task{agent: %{default_model: model}}) when is_binary(model) do
+    ModelLabel.humanize(model) <> " (agent default)"
+  end
+
+  defp model_summary(_task), do: "Agent default"
+
   defp stage_class(:draft), do: "badge-ghost"
   defp stage_class(:todo), do: "badge-ghost"
   defp stage_class(:planning), do: "badge-info"
@@ -425,10 +439,16 @@ defmodule CamelotWeb.TaskLive do
                 value={model}
                 selected={@task.next_model == model}
               >
-                {model}
+                {ModelLabel.humanize(model)}
               </option>
             </select>
           </form>
+          <div
+            :if={@task.stage in [:done, :cancelled]}
+            class="flex items-center gap-1 text-xs text-base-content/60"
+          >
+            Model: <span class="font-medium">{model_summary(@task)}</span>
+          </div>
           <button
             :for={{action, label} <- @transitions}
             phx-click="transition"

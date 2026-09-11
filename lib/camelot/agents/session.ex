@@ -252,7 +252,7 @@ defmodule Camelot.Agents.Session do
     end
 
     update :mark_running do
-      accept([:service_id])
+      accept([:service_id, :model])
       change(set_attribute(:status, :running))
       change(set_attribute(:started_at, &DateTime.utc_now/0))
     end

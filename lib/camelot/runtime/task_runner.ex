@@ -226,8 +226,8 @@ defmodule Camelot.Runtime.TaskRunner do
       Progress.report(state.task_id, session_id, :provisioning, "Starting the runner…")
 
       case start_runner(state) do
-        {:ok, runner_pid, config} ->
-          mark_session_running(session_id, runner_pid)
+        {:ok, runner_pid, config, model} ->
+          mark_session_running(session_id, runner_pid, model)
           SessionRegistry.register(session_id)
           Process.monitor(runner_pid)
           broadcast_session_update(state.task_id)
@@ -237,6 +237,7 @@ defmodule Camelot.Runtime.TaskRunner do
              state
              | runner: runner_pid,
                config: config,
+               model: model,
                output_buffer: ""
            }}
 
@@ -541,15 +542,13 @@ defmodule Camelot.Runtime.TaskRunner do
       )
 
     config = AgentConfig.resolve(task.agent, task.project)
-    model = resolve_model(task)
 
     {:ok, session} =
       Ash.create(Session, %{
         agent_id: task.agent_id,
         task_id: state.task_id,
         user_id: task.creator_id,
-        retry_number: retry_number,
-        model: model
+        retry_number: retry_number
       })
 
     {:ok, %{position: position}} = RunnerPool.enqueue(task.creator_id, session.id, self())
@@ -564,7 +563,7 @@ defmodule Camelot.Runtime.TaskRunner do
          allowed_tools: allowed_tools,
          config: config,
          user_id: task.creator_id,
-         model: model,
+         model: nil,
          max_retries: task.agent.max_retries,
          retry_count: retry_number,
          output_buffer: ""
@@ -665,6 +664,7 @@ defmodule Camelot.Runtime.TaskRunner do
       )
 
     config = AgentConfig.resolve(task.agent, task.project)
+    model = resolve_model(task)
 
     cli_args =
       AgentConfig.build_cli_args(
@@ -672,13 +672,13 @@ defmodule Camelot.Runtime.TaskRunner do
         state.current_prompt,
         state.allowed_tools,
         task.stage,
-        state.model
+        model
       )
 
     spec = build_spec(state, task, config, cli_args)
 
     case Runner.start(spec) do
-      {:ok, pid} -> {:ok, pid, config}
+      {:ok, pid} -> {:ok, pid, config, model}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -998,12 +998,12 @@ defmodule Camelot.Runtime.TaskRunner do
     end
   end
 
-  defp mark_session_running(session_id, runner_pid) do
+  defp mark_session_running(session_id, runner_pid, model) do
     session = Ash.get!(Session, session_id)
 
     Ash.update(
       session,
-      %{service_id: inspect(runner_pid)},
+      %{service_id: inspect(runner_pid), model: model},
       action: :mark_running
     )
   end

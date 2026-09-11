@@ -31,7 +31,8 @@ defmodule Camelot.Agents.AgentTest do
       assert agent.base_args == ["--quiet"]
       assert agent.prompt_flag == nil
       assert agent.model_flag == "--model"
-      assert agent.default_model == "gpt-5.1-codex"
+      assert agent.available_models == []
+      assert agent.default_model == nil
     end
   end
 

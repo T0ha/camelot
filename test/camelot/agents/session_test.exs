@@ -84,6 +84,25 @@ defmodule Camelot.Agents.SessionTest do
       assert running.started_at
       assert running.service_id == "svc-1"
     end
+
+    test "records the model resolved at actual dispatch time", ctx do
+      {:ok, session} =
+        Ash.create(Session, %{
+          agent_id: ctx.agent.id,
+          task_id: ctx.task.id
+        })
+
+      assert session.model == nil
+
+      assert {:ok, running} =
+               Ash.update(
+                 session,
+                 %{service_id: "svc-1", model: "claude-opus-5"},
+                 action: :mark_running
+               )
+
+      assert running.model == "claude-opus-5"
+    end
   end
 
   describe "complete" do
