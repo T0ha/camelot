@@ -188,9 +188,14 @@ Run `docker compose up` to deploy with the included `Dockerfile` and
 
 PRs welcome — see the roadmap above for ideas.
 
+- Branch off `develop` and **open your PR against `develop`** — `main` is
+  release-only and is updated through an automatic `develop` → `main` PR
 - Follow the [Elixir Style Guide](https://github.com/christopheradams/elixir_style_guide)
-- Run `mix precommit` before submitting
+- Run `mix precommit`, `mix credo` and `mix dialyzer` before submitting
 - Open an issue first for large changes
+
+Branching model, CI pipelines and the release flow are documented in
+[docs/contributing.md](docs/contributing.md).
 
 ## License
 
