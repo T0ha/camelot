@@ -115,6 +115,75 @@ defmodule CamelotWeb.BoardLiveTest do
     assert task.priority == 0
   end
 
+  describe "New Task model picker" do
+    test "is disabled with a placeholder before an agent is selected", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_new_task")
+
+      html = view |> element("#new-task-form") |> render()
+
+      assert html =~ "Select a CLI agent first"
+      assert html =~ ~r/<select[^>]*id="task_next_model"[^>]*\sdisabled/
+    end
+
+    test "shows humanized, agent-scoped options once an agent is picked", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_new_task")
+
+      html =
+        view
+        |> form("#new-task-form", %{
+          "task" => %{"agent_id" => agent!("claude_code").id}
+        })
+        |> render_change()
+
+      assert html =~ "Use agent default"
+      assert html =~ "Claude Opus 5"
+      refute html =~ ~r/<select[^>]*id="task_next_model"[^>]*\sdisabled/
+    end
+
+    test "persists the chosen model on the created task", %{conn: conn, user: user} do
+      title = "with-model-#{System.unique_integer()}"
+
+      {:ok, project} =
+        Ash.create(
+          Project,
+          %{name: "p-#{System.unique_integer()}", path: "/tmp/model"},
+          actor: user
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_new_task")
+
+      view
+      |> form("#new-task-form", %{
+        "task" => %{
+          "title" => title,
+          "project_id" => project.id,
+          "agent_id" => agent!("claude_code").id
+        }
+      })
+      |> render_change()
+
+      view
+      |> form("#new-task-form", %{
+        "task" => %{
+          "title" => title,
+          "project_id" => project.id,
+          "agent_id" => agent!("claude_code").id,
+          "next_model" => "claude-opus-5"
+        }
+      })
+      |> render_submit()
+
+      task = Task |> Ash.Query.filter(title == ^title) |> Ash.read_one!()
+      assert task.next_model == "claude-opus-5"
+    end
+  end
+
   test "restart_task resets an errored task back to queued", %{conn: conn, user: user} do
     {:ok, project} =
       Ash.create(

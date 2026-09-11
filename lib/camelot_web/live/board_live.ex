@@ -10,6 +10,7 @@ defmodule CamelotWeb.BoardLive do
 
   alias AshPhoenix.Form
   alias Camelot.Agents.Agent
+  alias Camelot.Agents.ModelLabel
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
   alias CamelotWeb.Scope
@@ -161,10 +162,16 @@ defmodule CamelotWeb.BoardLive do
       actor: user,
       forms: [auto?: false],
       params: %{"priority" => "0"},
-      prepare_params: &drop_blank_priority/2,
+      prepare_params: &prepare_task_params/2,
       prepare_source: &Ash.Changeset.set_argument(&1, :creator_id, user.id)
     )
     |> to_form()
+  end
+
+  defp prepare_task_params(params, type) do
+    params
+    |> drop_blank_priority(type)
+    |> drop_blank_next_model(type)
   end
 
   # A cleared number input arrives as "", which would fail the
@@ -176,6 +183,36 @@ defmodule CamelotWeb.BoardLive do
   end
 
   defp drop_blank_priority(params, _type), do: params
+
+  # A blank "Use agent default" selection is stored as unset rather
+  # than an empty string, so it resolves through `agent.default_model`
+  # like a brand-new task.
+  @spec drop_blank_next_model(map(), atom()) :: map()
+  defp drop_blank_next_model(%{"next_model" => ""} = params, _type) do
+    Map.delete(params, "next_model")
+  end
+
+  defp drop_blank_next_model(params, _type), do: params
+
+  @spec selected_agent(list(Agent.t()), Phoenix.HTML.Form.t()) :: Agent.t() | nil
+  defp selected_agent(agents, form) do
+    agent_id = form.params["agent_id"] || form[:agent_id].value
+    Enum.find(agents, &(&1.id == agent_id))
+  end
+
+  defp next_model_prompt(agents, form) do
+    case selected_agent(agents, form) do
+      nil -> "Select a CLI agent first"
+      _agent -> "Use agent default"
+    end
+  end
+
+  defp next_model_options(agents, form) do
+    case selected_agent(agents, form) do
+      nil -> []
+      agent -> Enum.map(agent.available_models, &{ModelLabel.humanize(&1), &1})
+    end
+  end
 
   defp broadcast_task_event(event, task) do
     Phoenix.PubSub.broadcast(
@@ -260,6 +297,14 @@ defmodule CamelotWeb.BoardLive do
             prompt="Select agent CLI"
             options={Enum.map(@agents, &{&1.name, &1.id})}
             required
+          />
+          <.input
+            field={@task_form[:next_model]}
+            type="select"
+            label="Model"
+            prompt={next_model_prompt(@agents, @task_form)}
+            options={next_model_options(@agents, @task_form)}
+            disabled={is_nil(selected_agent(@agents, @task_form))}
           />
           <fieldset class="fieldset">
             <label class="label" for={@uploads.attachment.ref}>
