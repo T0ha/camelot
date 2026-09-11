@@ -429,8 +429,7 @@ defmodule CamelotWeb.BoardLiveTest do
         "task" => %{
           "title" => title,
           "project_id" => project.id,
-          "agent_id" => agent!("claude_code").id,
-          "priority" => "0"
+          "agent_id" => agent!("claude_code").id
         }
       })
       |> render_submit()
