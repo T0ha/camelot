@@ -1,0 +1,80 @@
+name: PR base guard
+
+# `main` is a release-only branch: it is updated solely through the rolling
+# `develop` → `main` release PR (see promote-develop.yml), so everything
+# landing in production has already passed the develop pipeline and has a
+# built, tested image in the registry.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited]
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # The job name doubles as the status check name and must stay in sync
+  # with GUARD_CONTEXT in promote-develop.yml.
+  main-only-from-develop:
+    name: main-only-from-develop
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PR: ${{ github.event.pull_request.number }}
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      MARKER: "<!-- camelot:base-guard -->"
+    steps:
+      - name: Verify the PR comes from develop
+        run: |
+          if [ "$HEAD_REF" = "develop" ] \
+             && [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
+            echo "$HEAD_REPO:$HEAD_REF -> main: allowed."
+            exit 0
+          fi
+
+          echo "::error::main only accepts PRs from develop, got" \
+               "$HEAD_REPO:$HEAD_REF."
+
+          cat > comment.md <<'MD'
+          __MARKER__
+          🚫 **`main` only accepts pull requests from `develop`.**
+
+          This PR targets `main` from `__HEAD__`. `main` is a release-only
+          branch, updated exclusively through the rolling `develop` → `main`
+          release PR that opens automatically once the `develop` pipeline
+          succeeds.
+
+          Please retarget this PR at `develop`:
+
+          ```
+          gh pr edit __PR__ --base develop
+          ```
+
+          See [docs/contributing.md](https://github.com/__REPO__/blob/develop/docs/contributing.md).
+          MD
+
+          # Written via placeholders so the body can be a quoted heredoc
+          # (markdown backticks must not be read as command substitution).
+          sed -e "s|__MARKER__|$MARKER|" \
+              -e "s|__HEAD__|$HEAD_REPO:$HEAD_REF|" \
+              -e "s|__REPO__|$GITHUB_REPOSITORY|" \
+              -e "s|__PR__|$PR|" comment.md > body.md
+
+          gh pr view "$PR" --json comments --jq '.comments[].body' \
+            > comments.txt || : > comments.txt
+          if ! grep -qF "$MARKER" comments.txt; then
+            gh pr comment "$PR" --body-file body.md
+          fi
+
+          exit 1

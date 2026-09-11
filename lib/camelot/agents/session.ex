@@ -128,6 +128,12 @@ defmodule Camelot.Agents.Session do
       default(0)
     end
 
+    attribute :model, :string do
+      allow_nil?(true)
+      public?(true)
+      description("Model this run actually used, resolved at dispatch time")
+    end
+
     attribute :permission_denials, {:array, :map} do
       allow_nil?(true)
       public?(true)
@@ -224,7 +230,7 @@ defmodule Camelot.Agents.Session do
 
     create :create do
       primary?(true)
-      accept([:kind, :bootstrap_kind, :retry_number])
+      accept([:kind, :bootstrap_kind, :retry_number, :model])
 
       argument :agent_id, :uuid do
         allow_nil?(false)
@@ -246,7 +252,7 @@ defmodule Camelot.Agents.Session do
     end
 
     update :mark_running do
-      accept([:service_id])
+      accept([:service_id, :model])
       change(set_attribute(:status, :running))
       change(set_attribute(:started_at, &DateTime.utc_now/0))
     end

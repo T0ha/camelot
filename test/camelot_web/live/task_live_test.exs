@@ -129,6 +129,51 @@ defmodule CamelotWeb.TaskLiveTest do
     end
   end
 
+  describe "model selection" do
+    test "shows the picker with humanized labels and no selection by default", %{
+      conn: conn,
+      task: task
+    } do
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ ~s(id="next-model-select")
+      assert html =~ "Use agent default"
+      assert html =~ "Claude Opus 5"
+      assert html =~ ~s(value="claude-opus-5")
+    end
+
+    test "changing the picker persists the sticky choice", %{conn: conn, task: task} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      view
+      |> element("form[phx-change='set_next_model']")
+      |> render_change(%{"next_model" => "claude-opus-5"})
+
+      assert Ash.get!(Task, task.id).next_model == "claude-opus-5"
+    end
+
+    test "hides the picker and shows a read-only summary once the task is done", %{
+      conn: conn,
+      task: task
+    } do
+      {:ok, task} = Ash.update(task, %{next_model: "claude-opus-5"}, action: :set_next_model)
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+      {:ok, task} = Ash.update(task, %{plan: "a plan"}, action: :submit_plan)
+      {:ok, task} = Ash.update(task, %{}, action: :approve_plan)
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+
+      {:ok, task} =
+        Ash.update(task, %{pr_url: "https://github.com/a/b/pull/1", pr_number: 1}, action: :pr_created)
+
+      {:ok, task} = Ash.update(task, %{}, action: :complete)
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      refute html =~ ~s(id="next-model-select")
+      assert html =~ "Claude Opus 5"
+    end
+  end
+
   describe "reset_task" do
     test "re-queues a stuck task", %{conn: conn, task: task} do
       {:ok, task} = Ash.update(task, %{}, action: :begin_work)
@@ -286,6 +331,60 @@ defmodule CamelotWeb.TaskLiveTest do
       assert html =~ "out 50"
       assert html =~ "cache read 30"
       assert html =~ "cache write 10"
+    end
+  end
+
+  describe "messages and sessions sorting" do
+    test "messages render newest first", %{conn: conn, task: task} do
+      older =
+        Ash.Seed.seed!(TaskMessage, %{
+          role: :user,
+          content: "First message",
+          task_id: task.id,
+          inserted_at: ~U[2026-08-25 10:00:00Z]
+        })
+
+      newer =
+        Ash.Seed.seed!(TaskMessage, %{
+          role: :assistant,
+          content: "Second message",
+          task_id: task.id,
+          inserted_at: ~U[2026-08-25 10:05:00Z]
+        })
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ "First message"
+      assert html =~ "Second message"
+
+      assert index_of(html, newer.content) < index_of(html, older.content)
+    end
+
+    test "sessions render newest first", %{conn: conn, task: task} do
+      Ash.Seed.seed!(Session, %{
+        agent_id: task.agent_id,
+        task_id: task.id,
+        status: :completed,
+        queued_at: ~U[2026-08-25 10:00:00Z],
+        started_at: ~U[2026-08-25 10:00:00Z],
+        finished_at: ~U[2026-08-25 10:01:00Z],
+        inserted_at: ~U[2026-08-25 10:00:00Z]
+      })
+
+      Ash.Seed.seed!(Session, %{
+        agent_id: task.agent_id,
+        task_id: task.id,
+        status: :completed,
+        queued_at: ~U[2026-08-25 10:10:00Z],
+        started_at: ~U[2026-08-25 10:10:00Z],
+        finished_at: ~U[2026-08-25 10:11:00Z],
+        inserted_at: ~U[2026-08-25 10:10:00Z]
+      })
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert index_of(html, "Started 2026-08-25 10:10") <
+               index_of(html, "Started 2026-08-25 10:00")
     end
   end
 
@@ -503,6 +602,13 @@ defmodule CamelotWeb.TaskLiveTest do
       assert html =~ "Live output"
       assert html =~ "hello"
       refute html =~ "Runner status"
+    end
+  end
+
+  defp index_of(html, substring) do
+    case :binary.match(html, substring) do
+      {pos, _len} -> pos
+      :nomatch -> flunk("expected #{inspect(substring)} to be present in html")
     end
   end
 end

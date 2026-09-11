@@ -5,6 +5,14 @@ defmodule Camelot.Agents.ClaudeCodeDefaults do
   Single source of truth for the planning-stage structured-output
   contract so the seed script, the data migration, and the regression
   tests never drift. See `docs/planning-output-contract.md`.
+
+  The `*_system_prompt/0` functions below return the literal default
+  body for each stage's `--append-system-prompt` text. They are the
+  seed-migration source of truth and the runtime fallback used by
+  `Camelot.Runtime.AgentConfig.render_permission_args/3` when the
+  corresponding `PromptTemplate` row (see `*_system_prompt_slug/0`) is
+  missing — the actual editable text lives in `PromptTemplate` rows at
+  `/prompts`, not here.
   """
 
   @planning_system_prompt "You are in planning mode: investigate the " <>
@@ -17,9 +25,13 @@ defmodule Camelot.Agents.ClaudeCodeDefaults do
                             "planning can complete. Never ask questions as " <>
                             "plain assistant text; always use StructuredOutput."
 
-  @doc "System prompt appended to the planning run."
+  @doc "Literal default system prompt for the planning run."
   @spec planning_system_prompt() :: String.t()
   def planning_system_prompt, do: @planning_system_prompt
+
+  @doc "Slug of the `PromptTemplate` row holding the planning system prompt."
+  @spec planning_system_prompt_slug() :: String.t()
+  def planning_system_prompt_slug, do: "claude_planning_system_prompt"
 
   @execution_system_prompt "You are running fully autonomously in a " <>
                              "headless, single-turn session: there is no " <>
@@ -36,9 +48,25 @@ defmodule Camelot.Agents.ClaudeCodeDefaults do
                              "as the last line of your final message so it is " <>
                              "captured."
 
-  @doc "System prompt appended to the execution run."
+  @doc "Literal default system prompt for the execution run."
   @spec execution_system_prompt() :: String.t()
   def execution_system_prompt, do: @execution_system_prompt
+
+  @doc "Slug of the `PromptTemplate` row holding the execution system prompt."
+  @spec execution_system_prompt_slug() :: String.t()
+  def execution_system_prompt_slug, do: "claude_execution_system_prompt"
+
+  @doc """
+  Literal default system prompt for the pr-review run. Empty — no
+  pr-stage system prompt exists yet; edit the `PromptTemplate` row at
+  `/prompts` to give the pr stage one.
+  """
+  @spec pr_system_prompt() :: String.t()
+  def pr_system_prompt, do: ""
+
+  @doc "Slug of the `PromptTemplate` row holding the pr-review system prompt."
+  @spec pr_system_prompt_slug() :: String.t()
+  def pr_system_prompt_slug, do: "claude_pr_system_prompt"
 
   @doc """
   JSON Schema (encoded string) passed as `--json-schema` for planning.
@@ -79,7 +107,15 @@ defmodule Camelot.Agents.ClaudeCodeDefaults do
     })
   end
 
-  @doc "Per-stage permission/CLI args for the `claude_code` template."
+  @doc """
+  Per-stage permission/CLI args for the `claude_code` template.
+
+  The `--append-system-prompt` values are `{{prompt:<slug>}}`
+  placeholders resolved at dispatch time by
+  `Camelot.Runtime.AgentConfig.render_permission_args/3` against the
+  `PromptTemplate` rows named by the `*_system_prompt_slug/0`
+  functions above.
+  """
   @spec permission_args_by_stage() :: %{optional(String.t()) => [String.t()]}
   def permission_args_by_stage do
     %{
@@ -87,7 +123,7 @@ defmodule Camelot.Agents.ClaudeCodeDefaults do
         "--permission-mode",
         "plan",
         "--append-system-prompt",
-        planning_system_prompt(),
+        "{{prompt:#{planning_system_prompt_slug()}}}",
         "--json-schema",
         planning_json_schema()
       ],
@@ -95,7 +131,11 @@ defmodule Camelot.Agents.ClaudeCodeDefaults do
         "--permission-mode",
         "acceptEdits",
         "--append-system-prompt",
-        execution_system_prompt()
+        "{{prompt:#{execution_system_prompt_slug()}}}"
+      ],
+      "pr" => [
+        "--append-system-prompt",
+        "{{prompt:#{pr_system_prompt_slug()}}}"
       ]
     }
   end

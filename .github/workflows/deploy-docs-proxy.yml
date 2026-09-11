@@ -8,6 +8,12 @@ on:
       - ".github/workflows/deploy-docs-proxy.yml"
   workflow_dispatch:
 
+# Only the newest run per branch survives: merging several PRs in a row
+# should not leave a queue of superseded check/build/deploy runs behind.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 defaults:
   run:
     shell: bash

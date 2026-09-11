@@ -1,0 +1,176 @@
+name: Promote develop to main
+
+# Runs as the last stage of the `develop` pipeline (see
+# build-docker-image.yml): once the checks, the multi-arch image build and
+# the deploy to test have all succeeded, open - or refresh - the single
+# rolling release PR from `develop` into `main`.
+#
+# No `concurrency:` key here on purpose. In a called workflow the group is
+# evaluated in the CALLER's context - `github.workflow` is the caller's
+# name - so `${{ github.workflow }}-${{ github.ref }}` resolves to exactly
+# the group the calling run already holds. The job can then never be
+# scheduled and the whole run fails without it ever being created. The
+# caller's group already serialises this workflow.
+#
+# `workflow_dispatch` only becomes usable once this file is on the default
+# branch (`main`).
+on:
+  workflow_call:
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write
+
+env:
+  BASE: main
+  HEAD: develop
+  TITLE: "Release: develop → main"
+  # Marker that identifies the rolling release PR body on later runs.
+  MARKER: "<!-- camelot:release-pr -->"
+  # Must match the job name in pr-base-guard.yml. GitHub never starts
+  # workflows for PRs opened with GITHUB_TOKEN, so this run publishes the
+  # guard status itself - otherwise the release PR would wait forever for
+  # a required check that can never report.
+  GUARD_CONTEXT: main-only-from-develop
+
+jobs:
+  release_pr:
+    name: Open or update the release PR
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch base and head
+        run: |
+          git fetch --no-tags --quiet origin \
+            "+refs/heads/$BASE:refs/remotes/origin/$BASE" \
+            "+refs/heads/$HEAD:refs/remotes/origin/$HEAD"
+
+      - name: Count commits ahead of main
+        id: ahead
+        run: |
+          # --first-parent so the count matches the commit list in the body
+          count=$(git rev-list --count --first-parent \
+                    "origin/$BASE..origin/$HEAD")
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse "origin/$HEAD")" >> "$GITHUB_OUTPUT"
+          if [ "$count" -eq 0 ]; then
+            echo "::notice::$HEAD is not ahead of $BASE - nothing to promote."
+          fi
+
+      # Every PR merged into develop since the last release is listed in the
+      # body, so a release PR that is still open simply accumulates ("stacks")
+      # the PRs of every develop pipeline that ran while it was open.
+      - name: Build PR body
+        if: steps.ahead.outputs.count != '0'
+        id: body
+        env:
+          COUNT: ${{ steps.ahead.outputs.count }}
+          SHA: ${{ steps.ahead.outputs.sha }}
+        run: |
+          range="origin/$BASE..origin/$HEAD"
+          git log --first-parent --pretty=format:'%s' "$range" > subjects.txt
+          prs=$(grep -oE 'Merge pull request #[0-9]+|\(#[0-9]+\)' subjects.txt \
+                  | grep -oE '[0-9]+' | sort -un | tr '\n' ' ')
+          read -ra numbers <<< "$prs"
+
+          {
+            echo "$MARKER"
+            echo
+            echo "Opened automatically: the \`$HEAD\` pipeline (checks →"
+            echo "image build → deploy to test) succeeded for \`$SHA\`."
+            echo
+            echo "## PRs in this release"
+            echo
+            if [ "${#numbers[@]}" -gt 0 ]; then
+              for n in "${numbers[@]}"; do
+                title=$(gh pr view "$n" --json title --jq .title 2>/dev/null) \
+                  || title=""
+                echo "- #$n $title"
+              done
+            else
+              echo "_No merged PRs detected - direct commits only._"
+            fi
+            echo
+            echo "## Commits ($COUNT)"
+            echo
+            # shellcheck disable=SC2016 # backticks are markdown, not a subshell
+            git log --first-parent --pretty=format:'- `%h` %s' "$range" \
+              | head -n 50
+            echo
+            if [ "$COUNT" -gt 50 ]; then
+              echo
+              echo "_Truncated to the 50 most recent commits._"
+            fi
+            echo
+            echo "---"
+            echo
+            echo "⚠️ **Merge with a merge commit** (not squash, not rebase):"
+            echo "the production deploy resolves the already built and tested"
+            echo "image from the merge commit's second parent. See"
+            echo "[docs/contributing.md][doc]."
+            echo
+            echo "[doc]: https://github.com/$GITHUB_REPOSITORY/blob/$HEAD/docs/contributing.md"
+          } > body.md
+
+          printf 'prs=%s\n' "$prs" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the release PR
+        if: steps.ahead.outputs.count != '0'
+        id: pr
+        env:
+          PRS: ${{ steps.body.outputs.prs }}
+        run: |
+          number=$(gh pr list --base "$BASE" --head "$HEAD" --state open \
+                     --json number --jq '.[0].number // empty')
+
+          if [ -z "$number" ]; then
+            gh pr create --base "$BASE" --head "$HEAD" \
+              --title "$TITLE" --body-file body.md || true
+            number=$(gh pr list --base "$BASE" --head "$HEAD" --state open \
+                       --json number --jq '.[0].number // empty')
+            if [ -z "$number" ]; then
+              echo "::error::Could not open or find the $HEAD -> $BASE PR."
+              exit 1
+            fi
+            echo "::notice::Opened release PR #$number."
+          else
+            gh pr view "$number" --json body --jq .body > old-body.md
+            read -ra numbers <<< "$PRS"
+            added=""
+            for n in "${numbers[@]}"; do
+              grep -qE "#${n}([^0-9]|$)" old-body.md || added="$added #$n"
+            done
+            gh pr edit "$number" --title "$TITLE" --body-file body.md
+            echo "::notice::Updated release PR #$number."
+            if [ -n "$added" ]; then
+              gh pr comment "$number" --body \
+                "Stacked onto this release by the latest \`$HEAD\` pipeline:$added"
+            fi
+          fi
+
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+          echo "Release PR: #$number" >> "$GITHUB_STEP_SUMMARY"
+
+      # Keeps the release PR mergeable when `main-only-from-develop` is a
+      # required status check (see docs/contributing.md).
+      - name: Publish source-branch guard status
+        if: steps.pr.outputs.number != ''
+        env:
+          SHA: ${{ steps.ahead.outputs.sha }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$SHA" \
+            -f state=success \
+            -f context="$GUARD_CONTEXT" \
+            -f description="head branch is $HEAD"

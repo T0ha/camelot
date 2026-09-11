@@ -12,7 +12,13 @@ defmodule Camelot.Runtime.AgentConfig do
   """
 
   alias Camelot.Agents.Agent
+  alias Camelot.Agents.ClaudeCodeDefaults
   alias Camelot.Projects.Project
+  alias Camelot.Prompts.Renderer
+
+  require Logger
+
+  @placeholder ~r/^\{\{prompt:([^}]+)\}\}$/
 
   @enforce_keys [:parser, :executable]
   defstruct command_prefix: nil,
@@ -20,6 +26,7 @@ defmodule Camelot.Runtime.AgentConfig do
             base_args: [],
             prompt_flag: nil,
             tools_flag: nil,
+            model_flag: nil,
             tools_separator: ",",
             permission_args_by_stage: %{},
             internal_tools: [],
@@ -38,6 +45,7 @@ defmodule Camelot.Runtime.AgentConfig do
           base_args: [String.t()],
           prompt_flag: String.t() | nil,
           tools_flag: String.t() | nil,
+          model_flag: String.t() | nil,
           tools_separator: String.t(),
           permission_args_by_stage: %{optional(String.t()) => [String.t()]},
           internal_tools: [String.t()],
@@ -59,6 +67,7 @@ defmodule Camelot.Runtime.AgentConfig do
       base_args: override(project.base_args_override, agent.base_args),
       prompt_flag: agent.prompt_flag,
       tools_flag: agent.tools_flag,
+      model_flag: agent.model_flag,
       tools_separator: agent.tools_separator,
       permission_args_by_stage:
         override(
@@ -81,6 +90,32 @@ defmodule Camelot.Runtime.AgentConfig do
     }
   end
 
+  @doc """
+  Resolves `{{prompt:<slug>}}` placeholders inside
+  `config.permission_args_by_stage` against the `PromptTemplate`
+  project → user → system-global resolution (see
+  `Camelot.Prompts.Renderer.render/4`).
+
+  Only touches `permission_args_by_stage` — never the task prompt or
+  allowed-tools list, so a task's title/description text is never
+  misinterpreted as a placeholder. Kept separate from `resolve/2` (DB-
+  free) and `build_cli_args/4` (whose structural-equality regression
+  tests must keep passing unmodified against the raw placeholder).
+
+  The slug isn't restricted to the three built-in stage prompts — any
+  `PromptTemplate` a user creates can be referenced this way, e.g. to
+  experiment with alternate stage prompts without touching code.
+  """
+  @spec render_permission_args(t(), String.t() | nil, String.t() | nil) :: t()
+  def render_permission_args(%__MODULE__{} = config, project_id, user_id) do
+    rendered =
+      Map.new(config.permission_args_by_stage, fn {stage, args} ->
+        {stage, Enum.map(args, &render_arg(&1, project_id, user_id))}
+      end)
+
+    %{config | permission_args_by_stage: rendered}
+  end
+
   @spec prefix_tokens(t(), String.t()) :: [String.t()]
   def prefix_tokens(%__MODULE__{command_prefix: nil}, _project_path), do: []
 
@@ -90,11 +125,13 @@ defmodule Camelot.Runtime.AgentConfig do
     |> String.split(~r/\s+/, trim: true)
   end
 
-  @spec build_cli_args(t(), String.t(), [String.t()], atom()) :: [String.t()]
-  def build_cli_args(%__MODULE__{} = config, prompt, allowed_tools, task_stage) do
+  @spec build_cli_args(t(), String.t(), [String.t()], atom(), String.t() | nil) ::
+          [String.t()]
+  def build_cli_args(%__MODULE__{} = config, prompt, allowed_tools, task_stage, model) do
     config.base_args
     |> Kernel.++(stage_args(config, task_stage))
     |> Kernel.++(tools_args(config, allowed_tools))
+    |> Kernel.++(model_args(config, model))
     |> Kernel.++(prompt_args(config, prompt))
   end
 
@@ -119,6 +156,48 @@ defmodule Camelot.Runtime.AgentConfig do
     Map.get(config.permission_args_by_stage, to_string(task_stage), [])
   end
 
+  defp render_arg(arg, project_id, user_id) do
+    case Regex.run(@placeholder, arg) do
+      [_, slug] -> render_prompt(slug, project_id, user_id)
+      nil -> arg
+    end
+  end
+
+  defp render_prompt(slug, project_id, user_id) do
+    case Renderer.render(slug, project_id, user_id, %{}) do
+      {:ok, body} -> body
+      {:error, :template_not_found} -> fallback_for(slug)
+    end
+  end
+
+  # A deleted/missing row must never blank out the system prompt (that
+  # would silently strip e.g. "always open a PR" from every run) for
+  # the three built-in stages — fall back to the literal default and
+  # log instead. Any other slug is a template a user created to plug
+  # into `{{prompt:<slug>}}` themselves (e.g. to experiment with an
+  # alternate stage prompt); there's no built-in text to restore for
+  # those, so a missing row just renders empty, same as an unfilled
+  # `claude_pr_system_prompt` row does today.
+  defp fallback_for("claude_planning_system_prompt") do
+    Logger.warning("Missing PromptTemplate claude_planning_system_prompt; using built-in default")
+    ClaudeCodeDefaults.planning_system_prompt()
+  end
+
+  defp fallback_for("claude_execution_system_prompt") do
+    Logger.warning("Missing PromptTemplate claude_execution_system_prompt; using built-in default")
+    ClaudeCodeDefaults.execution_system_prompt()
+  end
+
+  defp fallback_for("claude_pr_system_prompt") do
+    Logger.warning("Missing PromptTemplate claude_pr_system_prompt; using built-in default")
+    ClaudeCodeDefaults.pr_system_prompt()
+  end
+
+  defp fallback_for(slug) do
+    Logger.warning("Missing PromptTemplate #{slug}; using empty system prompt")
+    ""
+  end
+
   defp tools_args(%__MODULE__{tools_flag: nil}, _tools), do: []
 
   defp tools_args(config, allowed_tools) do
@@ -129,6 +208,10 @@ defmodule Camelot.Runtime.AgentConfig do
       list -> [config.tools_flag, Enum.join(list, config.tools_separator)]
     end
   end
+
+  defp model_args(%__MODULE__{model_flag: nil}, _model), do: []
+  defp model_args(_config, nil), do: []
+  defp model_args(config, model), do: [config.model_flag, model]
 
   defp filter_internal_tools(allowed_tools, internal_tools) do
     Enum.reject(allowed_tools, fn tool ->

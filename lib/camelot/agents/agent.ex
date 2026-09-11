@@ -78,6 +78,29 @@ defmodule Camelot.Agents.Agent do
       description("Flag for the allowed-tools list (e.g. --allowedTools)")
     end
 
+    attribute :model_flag, :string do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Flag for selecting a model (e.g. --model); " <>
+          "nil means this CLI doesn't support switching models"
+      )
+    end
+
+    attribute :available_models, {:array, :string} do
+      allow_nil?(false)
+      public?(true)
+      default([])
+      description("Model ids/aliases valid for this CLI's model_flag")
+    end
+
+    attribute :default_model, :string do
+      allow_nil?(true)
+      public?(true)
+      description("Model used when a task has no explicit next_model")
+    end
+
     attribute :tools_separator, :string do
       allow_nil?(false)
       public?(true)
@@ -219,7 +242,10 @@ defmodule Camelot.Agents.Agent do
         :max_retries,
         :runner_image,
         :runner_resources,
-        :required_credential_kinds
+        :required_credential_kinds,
+        :model_flag,
+        :available_models,
+        :default_model
       ])
     end
 
@@ -244,7 +270,10 @@ defmodule Camelot.Agents.Agent do
         :max_retries,
         :runner_image,
         :runner_resources,
-        :required_credential_kinds
+        :required_credential_kinds,
+        :model_flag,
+        :available_models,
+        :default_model
       ])
     end
   end

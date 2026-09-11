@@ -40,12 +40,21 @@ existing_templates = Ash.read!(Agent)
 # (ToolSearch build) does NOT expose ExitPlanMode in the headless tool
 # registry, so the plan/question can't be recovered from a tool denial;
 # instead the agent emits it via the injected `StructuredOutput` tool.
+claude_code_available_models = [
+  "claude-opus-5",
+  "claude-sonnet-5",
+  "claude-haiku-4-5-20251001"
+]
+
 claude_code_attrs = %{
   name: "Claude Code",
   executable: "claude",
   base_args: ["--output-format", "stream-json", "--verbose"],
   prompt_flag: "-p",
   tools_flag: "--allowedTools",
+  model_flag: "--model",
+  available_models: claude_code_available_models,
+  default_model: "claude-sonnet-5",
   tools_separator: ",",
   permission_args_by_stage: ClaudeCodeDefaults.permission_args_by_stage(),
   internal_tools: ["EnterPlanMode", "ExitPlanMode"],
@@ -72,6 +81,11 @@ if !Enum.any?(existing_templates, &(&1.slug == "codex")) do
     name: "Codex",
     executable: "codex",
     base_args: ["--quiet"],
+    # `available_models`/`default_model` deliberately left unset: unlike
+    # Claude Code's ids above, Codex CLI's current `--model` values
+    # aren't confirmed here. Left for an admin to fill in via the Agent
+    # CLI admin page once verified against the CLI's own docs.
+    model_flag: "--model",
     tools_separator: ",",
     parser: :raw_text,
     pr_url_pattern: pr_url_pattern,

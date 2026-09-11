@@ -8,6 +8,7 @@ defmodule CamelotWeb.TaskLive do
   import CamelotWeb.BoardComponents, only: [state_badge: 1]
 
   alias Camelot.Accounts.User
+  alias Camelot.Agents.ModelLabel
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
   alias Camelot.Board.TaskAttachment
@@ -254,6 +255,20 @@ defmodule CamelotWeb.TaskLive do
     end
   end
 
+  def handle_event("set_next_model", %{"next_model" => model}, socket) do
+    task = socket.assigns.task
+    model = if model == "", do: nil, else: model
+
+    case Ash.update(task, %{next_model: model}, action: :set_next_model) do
+      {:ok, updated} ->
+        broadcast_update(updated)
+        {:noreply, assign(socket, task: Ash.load!(updated, @task_load))}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Failed to update model")}
+    end
+  end
+
   def handle_event("validate_attachment", _params, socket), do: {:noreply, socket}
 
   def handle_event("save_attachments", _params, socket) do
@@ -360,6 +375,25 @@ defmodule CamelotWeb.TaskLive do
     end
   end
 
+  defp next_model_options(%Task{agent: %{available_models: models}}) when is_list(models) do
+    models
+  end
+
+  defp next_model_options(_task), do: []
+
+  # Read-only summary of the effective model, shown once a task reaches a
+  # terminal stage (the picker itself is hidden — no further runs will
+  # use it).
+  defp model_summary(%Task{next_model: model}) when is_binary(model) do
+    ModelLabel.humanize(model)
+  end
+
+  defp model_summary(%Task{agent: %{default_model: model}}) when is_binary(model) do
+    ModelLabel.humanize(model) <> " (agent default)"
+  end
+
+  defp model_summary(_task), do: "Agent default"
+
   defp stage_class(:draft), do: "badge-ghost"
   defp stage_class(:todo), do: "badge-ghost"
   defp stage_class(:planning), do: "badge-info"
@@ -383,7 +417,38 @@ defmodule CamelotWeb.TaskLive do
           </.link>
           <h1 class="text-2xl font-bold">{@task.title}</h1>
         </div>
-        <div class="flex gap-2">
+        <div class="flex items-center gap-2">
+          <form
+            :if={@task.stage not in [:done, :cancelled]}
+            phx-change="set_next_model"
+            class="flex items-center gap-1"
+          >
+            <label for="next-model-select" class="text-xs text-base-content/60">
+              Model
+            </label>
+            <select
+              id="next-model-select"
+              name="next_model"
+              class="select select-sm select-bordered"
+            >
+              <option value="" selected={is_nil(@task.next_model)}>
+                Use agent default
+              </option>
+              <option
+                :for={model <- next_model_options(@task)}
+                value={model}
+                selected={@task.next_model == model}
+              >
+                {ModelLabel.humanize(model)}
+              </option>
+            </select>
+          </form>
+          <div
+            :if={@task.stage in [:done, :cancelled]}
+            class="flex items-center gap-1 text-xs text-base-content/60"
+          >
+            Model: <span class="font-medium">{model_summary(@task)}</span>
+          </div>
           <button
             :for={{action, label} <- @transitions}
             phx-click="transition"
@@ -470,7 +535,6 @@ defmodule CamelotWeb.TaskLive do
                 —
               </span>
             </:item>
-            <:item title="Priority">{@task.priority}</:item>
             <:item title="Project">
               {if Ash.Resource.loaded?(@task, :project), do: @task.project.name, else: "—"}
             </:item>
@@ -665,6 +729,12 @@ defmodule CamelotWeb.TaskLive do
                   >
                     retry #{session.retry_number}
                   </span>
+                  <span
+                    :if={session.model}
+                    class="badge badge-sm badge-ghost"
+                  >
+                    {session.model}
+                  </span>
                 </div>
                 <span :if={session.exit_code} class="text-xs">
                   exit: {session.exit_code}
@@ -852,7 +922,7 @@ defmodule CamelotWeb.TaskLive do
 
   defp sorted_sessions(task) do
     if Ash.Resource.loaded?(task, :sessions) do
-      Enum.sort_by(task.sessions, & &1.inserted_at, {:desc, DateTime})
+      task.sessions
     else
       []
     end
@@ -943,7 +1013,7 @@ defmodule CamelotWeb.TaskLive do
 
   defp sorted_messages(task) do
     if Ash.Resource.loaded?(task, :messages) do
-      Enum.sort_by(task.messages, & &1.inserted_at)
+      task.messages
     else
       []
     end

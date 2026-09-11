@@ -46,6 +46,27 @@ defmodule Camelot.Agents.SessionTest do
       assert session.status == :queued
       assert session.queued_at
     end
+
+    test "records the model this run used", ctx do
+      assert {:ok, session} =
+               Ash.create(Session, %{
+                 agent_id: ctx.agent.id,
+                 task_id: ctx.task.id,
+                 model: "claude-opus-5"
+               })
+
+      assert session.model == "claude-opus-5"
+    end
+
+    test "model defaults to nil", ctx do
+      assert {:ok, session} =
+               Ash.create(Session, %{
+                 agent_id: ctx.agent.id,
+                 task_id: ctx.task.id
+               })
+
+      assert session.model == nil
+    end
   end
 
   describe "mark_running" do
@@ -62,6 +83,25 @@ defmodule Camelot.Agents.SessionTest do
       assert running.status == :running
       assert running.started_at
       assert running.service_id == "svc-1"
+    end
+
+    test "records the model resolved at actual dispatch time", ctx do
+      {:ok, session} =
+        Ash.create(Session, %{
+          agent_id: ctx.agent.id,
+          task_id: ctx.task.id
+        })
+
+      assert session.model == nil
+
+      assert {:ok, running} =
+               Ash.update(
+                 session,
+                 %{service_id: "svc-1", model: "claude-opus-5"},
+                 action: :mark_running
+               )
+
+      assert running.model == "claude-opus-5"
     end
   end
 
