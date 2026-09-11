@@ -13,6 +13,14 @@ defmodule Camelot.Board.Changes.CheckPrStatusTest do
     %{"created_at" => created, "user" => %{"login" => login}}
   end
 
+  defp review(state, submitted_at, login \\ "T0ha") do
+    %{
+      "state" => state,
+      "submitted_at" => submitted_at,
+      "user" => %{"login" => login}
+    }
+  end
+
   describe "new_comments?/3" do
     test "a comment newer than the last commit and unseen triggers" do
       comments = [comment("2026-07-10T05:19:45Z")]
@@ -54,6 +62,142 @@ defmodule Camelot.Board.Changes.CheckPrStatusTest do
 
     test "no comments is never new" do
       refute CheckPrStatus.new_comments?([], @commit, nil)
+    end
+  end
+
+  describe "latest_reviews/1" do
+    test "keeps only each reviewer's most recent verdict" do
+      reviews = [
+        review("CHANGES_REQUESTED", "2026-07-09T10:00:00Z"),
+        review("APPROVED", "2026-07-10T05:19:45Z")
+      ]
+
+      assert [%{"state" => "APPROVED"}] = CheckPrStatus.latest_reviews(reviews)
+    end
+
+    test "keeps one verdict per reviewer" do
+      reviews = [
+        review("APPROVED", "2026-07-10T05:19:45Z", "T0ha"),
+        review("CHANGES_REQUESTED", "2026-07-10T06:00:00Z", "someone")
+      ]
+
+      states =
+        reviews
+        |> CheckPrStatus.latest_reviews()
+        |> Enum.map(& &1["state"])
+        |> Enum.sort()
+
+      assert states == ["APPROVED", "CHANGES_REQUESTED"]
+    end
+
+    test "stateless COMMENTED reviews never supersede a verdict" do
+      reviews = [
+        review("CHANGES_REQUESTED", "2026-07-10T05:19:45Z"),
+        review("COMMENTED", "2026-07-10T06:00:00Z")
+      ]
+
+      assert [%{"state" => "CHANGES_REQUESTED"}] =
+               CheckPrStatus.latest_reviews(reviews)
+    end
+  end
+
+  describe "changes_requested?/3" do
+    test "an unaddressed verdict newer than the last commit triggers" do
+      reviews = [review("CHANGES_REQUESTED", "2026-07-10T05:19:45Z")]
+
+      assert CheckPrStatus.changes_requested?(reviews, @commit, nil)
+    end
+
+    test "a verdict older than the last commit does not trigger" do
+      # Regression: one undismissed review re-dispatched the agent every
+      # two minutes for eight hours. Pushing a fix addresses the review.
+      reviews = [review("CHANGES_REQUESTED", "2026-07-09T10:00:00Z")]
+
+      refute CheckPrStatus.changes_requested?(reviews, @commit, nil)
+    end
+
+    test "an already-seen verdict does not trigger" do
+      submitted = "2026-07-10T05:19:45Z"
+      {:ok, seen_at, _} = DateTime.from_iso8601(submitted)
+      reviews = [review("CHANGES_REQUESTED", submitted)]
+
+      refute CheckPrStatus.changes_requested?(reviews, @commit, seen_at)
+    end
+
+    test "a verdict superseded by an approval does not trigger" do
+      reviews = [
+        review("CHANGES_REQUESTED", "2026-07-10T05:19:45Z"),
+        review("APPROVED", "2026-07-10T06:00:00Z")
+      ]
+
+      refute CheckPrStatus.changes_requested?(reviews, @commit, nil)
+    end
+
+    test "a dismissed verdict does not trigger" do
+      reviews = [
+        review("CHANGES_REQUESTED", "2026-07-10T05:19:45Z"),
+        review("DISMISSED", "2026-07-10T06:00:00Z")
+      ]
+
+      refute CheckPrStatus.changes_requested?(reviews, @commit, nil)
+    end
+
+    test "no reviews never triggers" do
+      refute CheckPrStatus.changes_requested?([], @commit, nil)
+    end
+  end
+
+  describe "approved?/1" do
+    test "a current approval completes the task" do
+      assert CheckPrStatus.approved?([review("APPROVED", "2026-07-10T05:19:45Z")])
+    end
+
+    test "an approval following requested changes still counts" do
+      reviews = [
+        review("CHANGES_REQUESTED", "2026-07-10T05:19:45Z"),
+        review("APPROVED", "2026-07-10T06:00:00Z")
+      ]
+
+      assert CheckPrStatus.approved?(reviews)
+    end
+
+    test "an approval superseded by requested changes does not count" do
+      reviews = [
+        review("APPROVED", "2026-07-10T05:19:45Z"),
+        review("CHANGES_REQUESTED", "2026-07-10T06:00:00Z")
+      ]
+
+      refute CheckPrStatus.approved?(reviews)
+    end
+  end
+
+  describe "feedback_seen_at/2" do
+    test "spans both comments and review verdicts" do
+      comments = [comment("2026-07-10T05:19:45Z")]
+      reviews = [review("CHANGES_REQUESTED", "2026-07-10T06:00:00Z")]
+
+      seen_at = CheckPrStatus.feedback_seen_at(comments, reviews)
+
+      # A body-less review leaves no comment; marking only the latest
+      # comment would leave the review unseen and re-dispatch forever.
+      refute CheckPrStatus.changes_requested?(reviews, @commit, seen_at)
+    end
+
+    test "takes the newest marker across both surfaces" do
+      comments = [comment("2026-07-10T07:00:00Z")]
+      reviews = [review("CHANGES_REQUESTED", "2026-07-10T06:00:00Z")]
+
+      assert CheckPrStatus.feedback_seen_at(comments, reviews) ==
+               ~U[2026-07-10 07:00:00Z]
+    end
+
+    test "no feedback at all falls back to now" do
+      before = DateTime.utc_now()
+
+      assert DateTime.compare(CheckPrStatus.feedback_seen_at([], []), before) in [
+               :gt,
+               :eq
+             ]
     end
   end
 

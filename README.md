@@ -61,7 +61,9 @@ developers who never sleep, managed through a clean visual interface.
 
 - Elixir >= 1.15 and Erlang/OTP (use [asdf](https://asdf-vm.com/) or [mise](https://mise.jdx.dev/) for version management)
 - PostgreSQL >= 14
-- A GitHub personal access token (for GitHub integration)
+- An SSH key is auto-provisioned per user; a GitHub App is optional and
+  admin-configured for PR/issue polling — see
+  [`docs/self-hosting/github-app.md`](docs/self-hosting/github-app.md)
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and/or [Codex](https://github.com/openai/codex) CLI installed
 
 ### Installation
@@ -91,8 +93,9 @@ Visit [`localhost:4000`](http://localhost:4000).
 3. Create a task, pick a CLI Agent (Claude Code or Codex) from the
    dropdown, and watch it flow through the board
 
-See [`docs/get-started.md`](docs/get-started.md) for a full walkthrough
-from first login to your first merged PR.
+See [Get Started](https://docs.camelotai.tech/cloud/get-started) (source:
+[`docs/cloud/get-started.md`](docs/cloud/get-started.md)) for a full
+walkthrough from first login to your first merged PR.
 
 ## Configuration
 
@@ -164,7 +167,8 @@ See `CLAUDE.md` and `AGENTS.md` for AI-assisted development guidelines.
 [Phoenix deployment guides](https://hexdocs.pm/phoenix/deployment.html)
 for general instructions.
 
-Docker and docker-compose configurations are planned for a future release.
+Run `docker compose up` to deploy with the included `Dockerfile` and
+`docker-compose.yml`.
 
 ## Roadmap
 
@@ -174,7 +178,7 @@ Docker and docker-compose configurations are planned for a future release.
 - [x] Prompt template customization
 - [x] Real-time session streaming
 - [x] Tool permission controls
-- [ ] Docker / docker-compose deployment
+- [x] Docker / docker-compose deployment
 - [ ] Webhook-based GitHub integration
 - [ ] Additional agent types
 - [ ] Team / multi-user collaboration

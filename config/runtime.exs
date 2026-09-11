@@ -121,7 +121,9 @@ if backend_env = System.get_env("RUNNER_BACKEND") do
     docker_host: System.get_env("DOCKER_HOST", "unix:///var/run/docker.sock"),
     global_max: String.to_integer(System.get_env("RUNNER_GLOBAL_MAX", "20")),
     per_user_max: String.to_integer(System.get_env("RUNNER_PER_USER_MAX", "2")),
-    networks: runner_networks
+    networks: runner_networks,
+    max_interrupt_requeues: String.to_integer(System.get_env("RUNNER_MAX_INTERRUPT_REQUEUES", "3")),
+    redeploy_wait_ms: String.to_integer(System.get_env("RUNNER_REDEPLOY_WAIT_MS", "60000"))
 end
 
 # PostHog analytics. Read in every env (not just prod) so devs can opt in
@@ -183,7 +185,9 @@ if config_env() == :prod do
       docker_host: System.get_env("DOCKER_HOST", "unix:///var/run/docker.sock"),
       global_max: String.to_integer(System.get_env("RUNNER_GLOBAL_MAX", "20")),
       per_user_max: String.to_integer(System.get_env("RUNNER_PER_USER_MAX", "2")),
-      networks: runner_networks
+      networks: runner_networks,
+      max_interrupt_requeues: String.to_integer(System.get_env("RUNNER_MAX_INTERRUPT_REQUEUES", "3")),
+      redeploy_wait_ms: String.to_integer(System.get_env("RUNNER_REDEPLOY_WAIT_MS", "60000"))
   end
 
   maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []

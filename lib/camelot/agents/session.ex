@@ -24,6 +24,18 @@ defmodule Camelot.Agents.Session do
   ]
   @statuses [:queued, :running, :completed, :failed, :cancelled, :empty]
 
+  # Coarse provisioning phases a session passes through *before* the
+  # agent CLI produces its first byte. Reported by
+  # `Camelot.Runtime.Progress`; purely informational.
+  @progress_phases [
+    :queued,
+    :provisioning,
+    :pulling_image,
+    :starting,
+    :workspace,
+    :running
+  ]
+
   attributes do
     uuid_primary_key(:id)
 
@@ -139,6 +151,35 @@ defmodule Camelot.Agents.Session do
           "index only; authoritative naming is " <>
           "`camelot-runner-<session_id>`."
       )
+    end
+
+    attribute :progress_phase, :atom do
+      allow_nil?(true)
+      public?(true)
+      constraints(one_of: @progress_phases)
+
+      description(
+        "Coarse phase of the runner hand-off (queueing, image " <>
+          "pull, container start, workspace setup) while the " <>
+          "session has produced no agent output yet."
+      )
+    end
+
+    attribute :progress_message, :string do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Human-readable line for `progress_phase`, shown on the " <>
+          "task page so a long, silent provisioning does not look " <>
+          "like a frozen run."
+      )
+    end
+
+    attribute :progress_at, :utc_datetime do
+      allow_nil?(true)
+      public?(true)
+      description("When `progress_message` was last updated")
     end
 
     attribute :was_adopted, :boolean do
@@ -270,6 +311,11 @@ defmodule Camelot.Agents.Session do
 
       change(set_attribute(:status, :empty))
       change(set_attribute(:finished_at, &DateTime.utc_now/0))
+    end
+
+    update :report_progress do
+      accept([:progress_phase, :progress_message])
+      change(set_attribute(:progress_at, &DateTime.utc_now/0))
     end
 
     update :mark_clarified do

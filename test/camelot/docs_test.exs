@@ -12,6 +12,7 @@ defmodule Camelot.DocsTest do
 
       assert "self-hosting/cluster-runners" in slugs
       assert "self-hosting/github-app" in slugs
+      assert "cloud/get-started" in slugs
 
       # Internal docs live flat under docs/ (not in a category folder), so
       # they are never globbed or published.

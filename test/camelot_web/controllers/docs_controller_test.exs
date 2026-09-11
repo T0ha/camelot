@@ -13,8 +13,18 @@ defmodule CamelotWeb.DocsControllerTest do
 
       assert body =~ "Self Hosting"
       assert body =~ "GitHub App"
+      assert body =~ "Cloud"
       # internal (unpublished) docs never appear
       refute body =~ "Session adoption"
+    end
+
+    test "renders Sign In and Sign Up links to the main host", %{conn: conn} do
+      body = conn |> get("/") |> html_response(200)
+      sign_in_href = ~s(href="#{CamelotWeb.Endpoint.url()}/sign-in")
+
+      assert body =~ sign_in_href
+      assert body =~ "Sign In"
+      assert body =~ "Sign Up"
     end
 
     test "is cacheable: sets cache-control and sets no cookie", %{conn: conn} do
@@ -35,11 +45,20 @@ defmodule CamelotWeb.DocsControllerTest do
       assert body =~ "Cluster runners"
       # rendered markdown, not raw
       assert body =~ "<h1>"
+      assert body =~ ~s(href="#{CamelotWeb.Endpoint.url()}/sign-in")
     end
 
     test "returns 404 for an unknown slug", %{conn: conn} do
       conn = get(conn, "/self-hosting/does-not-exist")
       assert response(conn, 404)
+    end
+
+    test "renders the cloud get-started page", %{conn: conn} do
+      conn = get(conn, "/cloud/get-started")
+      body = html_response(conn, 200)
+
+      assert body =~ "Get Started"
+      assert body =~ "<h1>"
     end
   end
 

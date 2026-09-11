@@ -663,4 +663,67 @@ defmodule Camelot.Board.TaskTest do
       assert updated.runner_handle == nil
     end
   end
+
+  describe "requeue_interrupted" do
+    test "re-queues an in-progress task and clears the runner handle", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+
+      {:ok, task} =
+        Ash.update(task, %{runner_handle: "svc123"}, action: :set_runner_handle)
+
+      {:ok, task} =
+        Ash.update(task, %{last_error: "boom"}, action: :mark_error)
+
+      assert {:ok, requeued} =
+               Ash.update(task, %{}, action: :requeue_interrupted)
+
+      assert requeued.state == :queued
+      assert requeued.stage == :planning
+      assert requeued.runner_handle == nil
+      assert requeued.last_error == nil
+      assert requeued.interrupt_requeues == 1
+    end
+
+    test "counts consecutive re-queues", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      {:ok, task} = Ash.update(task, %{}, action: :requeue_interrupted)
+      {:ok, task} = Ash.update(task, %{}, action: :requeue_interrupted)
+
+      assert task.interrupt_requeues == 2
+    end
+
+    test "refuses a terminal stage", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+      {:ok, task} = Ash.update(task, %{}, action: :cancel)
+
+      assert {:error, _} =
+               Ash.update(task, %{}, action: :requeue_interrupted)
+    end
+
+    test "forward progress resets the counter", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+      {:ok, task} = Ash.update(task, %{}, action: :requeue_interrupted)
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+
+      assert task.interrupt_requeues == 1
+
+      {:ok, task} =
+        Ash.update(task, %{plan: "the plan"}, action: :submit_plan)
+
+      assert task.interrupt_requeues == 0
+    end
+
+    test "does not enqueue an error notification", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      {:ok, _} = Ash.update(task, %{}, action: :requeue_interrupted)
+
+      refute_enqueued(
+        worker: SendTaskStateEmail,
+        args: %{"task_id" => task.id, "kind" => "error"}
+      )
+    end
+  end
 end

@@ -12,6 +12,7 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
   use GenServer, restart: :temporary
 
   alias Camelot.Board.Task
+  alias Camelot.Runtime.Progress
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.SecretEnv
   alias Camelot.Runtime.Runner.Spec
@@ -213,6 +214,15 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
         Logger.info(
           "DockerEngine.TaskContainer #{task_id}: image #{inspect(spec.image)} " <>
             "not present locally; pulling"
+        )
+
+        # A first pull of a runner image is minutes of silence on the
+        # task page unless we say so.
+        Progress.report(
+          task_id,
+          spec.session_id,
+          :pulling_image,
+          "Pulling the runner image…"
         )
 
         with :ok <- pull_image(spec.image) do
