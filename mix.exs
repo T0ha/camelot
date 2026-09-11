@@ -84,7 +84,8 @@ defmodule Camelot.MixProject do
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:styler, "~> 1.0", only: [:dev, :test], runtime: false},
-      {:usage_rules, "~> 1.2", only: [:dev, :test], runtime: false}
+      {:usage_rules, "~> 1.2", only: [:dev, :test], runtime: false},
+      {:yaml_elixir, "~> 2.11"}
     ]
   end
 

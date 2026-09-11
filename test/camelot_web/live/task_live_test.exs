@@ -129,6 +129,51 @@ defmodule CamelotWeb.TaskLiveTest do
     end
   end
 
+  describe "model selection" do
+    test "shows the picker with humanized labels and no selection by default", %{
+      conn: conn,
+      task: task
+    } do
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ ~s(id="next-model-select")
+      assert html =~ "Use agent default"
+      assert html =~ "Claude Opus 5"
+      assert html =~ ~s(value="claude-opus-5")
+    end
+
+    test "changing the picker persists the sticky choice", %{conn: conn, task: task} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      view
+      |> element("form[phx-change='set_next_model']")
+      |> render_change(%{"next_model" => "claude-opus-5"})
+
+      assert Ash.get!(Task, task.id).next_model == "claude-opus-5"
+    end
+
+    test "hides the picker and shows a read-only summary once the task is done", %{
+      conn: conn,
+      task: task
+    } do
+      {:ok, task} = Ash.update(task, %{next_model: "claude-opus-5"}, action: :set_next_model)
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+      {:ok, task} = Ash.update(task, %{plan: "a plan"}, action: :submit_plan)
+      {:ok, task} = Ash.update(task, %{}, action: :approve_plan)
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+
+      {:ok, task} =
+        Ash.update(task, %{pr_url: "https://github.com/a/b/pull/1", pr_number: 1}, action: :pr_created)
+
+      {:ok, task} = Ash.update(task, %{}, action: :complete)
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      refute html =~ ~s(id="next-model-select")
+      assert html =~ "Claude Opus 5"
+    end
+  end
+
   describe "reset_task" do
     test "re-queues a stuck task", %{conn: conn, task: task} do
       {:ok, task} = Ash.update(task, %{}, action: :begin_work)

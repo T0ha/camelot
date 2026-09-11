@@ -93,6 +93,58 @@ defmodule CamelotWeb.ProjectLiveTest do
     end
   end
 
+  describe "runner image picker" do
+    test "suggests Camelot's built runner images and fills the field on selection", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects/new")
+
+      html =
+        view
+        |> element("#runner-image-picker-container button[phx-click=toggle_browser]")
+        |> render_click()
+
+      assert html =~ "ghcr.io/t0ha/camelot-runner-elixir:latest"
+
+      view
+      |> element(~s(#runner-image-picker-container button[phx-value-image="ghcr.io/t0ha/camelot-runner-elixir:latest"]))
+      |> render_click()
+
+      assert render(view) =~ ~s(value="ghcr.io/t0ha/camelot-runner-elixir:latest")
+    end
+  end
+
+  describe "github repo picker" do
+    test "shows an empty state when the user has no GitHub App installations", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/projects/new")
+
+      html =
+        view
+        |> element("#github-repo-picker-container button[phx-click=toggle_browser]")
+        |> render_click()
+
+      assert html =~ "No repositories found"
+    end
+
+    test "selecting a repo fills owner/repo/url on the form", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/projects/new")
+
+      repo = %{
+        owner: "acme",
+        repo: "widget",
+        full_name: "acme/widget",
+        html_url: "https://github.com/acme/widget"
+      }
+
+      send(view.pid, {:github_repo_selected, repo})
+
+      html = render(view)
+      assert html =~ ~s(value="acme")
+      assert html =~ ~s(value="widget")
+      assert html =~ ~s(value="https://github.com/acme/widget")
+    end
+  end
+
   describe "environment variables" do
     setup %{user: user} do
       {:ok, project} =

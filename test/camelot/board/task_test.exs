@@ -424,6 +424,83 @@ defmodule Camelot.Board.TaskTest do
     end
   end
 
+  describe "next_model" do
+    test "defaults to nil on create", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+      assert task.next_model == nil
+    end
+
+    test "can be set on create", ctx do
+      assert {:ok, task} =
+               create_task(ctx.project, ctx.user, %{next_model: "claude-opus-5"})
+
+      assert task.next_model == "claude-opus-5"
+    end
+
+    test "set_next_model sets the sticky choice", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      assert {:ok, updated} =
+               Ash.update(task, %{next_model: "claude-opus-5"}, action: :set_next_model)
+
+      assert updated.next_model == "claude-opus-5"
+    end
+
+    test "set_next_model clears the choice back to nil", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user, %{next_model: "claude-opus-5"})
+
+      assert {:ok, updated} =
+               Ash.update(task, %{next_model: nil}, action: :set_next_model)
+
+      assert updated.next_model == nil
+    end
+
+    test "callable regardless of stage/state", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+
+      assert {:ok, updated} =
+               Ash.update(task, %{next_model: "claude-sonnet-5"}, action: :set_next_model)
+
+      assert updated.next_model == "claude-sonnet-5"
+      assert updated.stage == :planning
+      assert updated.state == :in_progress
+    end
+
+    test "rejects a model not in the agent's available_models on create", ctx do
+      assert {:error, error} =
+               create_task(ctx.project, ctx.user, %{next_model: "not-a-real-model"})
+
+      assert Enum.any?(error.errors, &(&1.field == :next_model))
+    end
+
+    test "rejects a model not in the agent's available_models via set_next_model", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      assert {:error, error} =
+               Ash.update(task, %{next_model: "not-a-real-model"}, action: :set_next_model)
+
+      assert Enum.any?(error.errors, &(&1.field == :next_model))
+    end
+
+    test "allows any model when the agent has no available_models configured", ctx do
+      {:ok, unrestricted_agent} =
+        Ash.create(Camelot.Agents.Agent, %{
+          slug: "unrestricted-#{System.unique_integer([:positive])}",
+          name: "Unrestricted",
+          executable: "unrestricted"
+        })
+
+      assert {:ok, task} =
+               create_task(ctx.project, ctx.user, %{
+                 agent_id: unrestricted_agent.id,
+                 next_model: "anything-goes"
+               })
+
+      assert task.next_model == "anything-goes"
+    end
+  end
+
   describe "cancel" do
     test "cancel from any state", ctx do
       {:ok, task} = create_task(ctx.project, ctx.user)
