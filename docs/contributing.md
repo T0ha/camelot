@@ -45,7 +45,7 @@ feature / camelot task branch
 | `code-checks.yml` | `workflow_call` | `mix format --check-formatted`, `mix credo`, `mix dialyzer`, `mix test` |
 | `pr-base-guard.yml` | PR targeting `main` | Fails unless the PR head is this repo's `develop` |
 | `build-docker-image.yml` | push to `develop` | Checks → multi-arch image (`ghcr.io/t0ha/camelotai`) → deploy to test → open/refresh the release PR |
-| `promote-develop.yml` | last stage of the `develop` pipeline, or `workflow_dispatch` | Opens or refreshes the `develop` → `main` release PR |
+| `promote-develop.yml` | last stage of the `develop` pipeline (also `workflow_dispatch`, once the file is on `main`) | Opens or refreshes the `develop` → `main` release PR |
 | `deploy-production.yml` | push to `main` | Resolves the image built for the merged `develop` commit and deploys it to production |
 | `deploy-docs-proxy.yml` | push to `develop` touching `docs-proxy/**` | Builds and deploys the docs proxy (gated on the `DEPLOY_DOCS_PROXY` variable) |
 | `runner-images.yml` | push to `main` / `develop` touching `runner-images/**` | Builds the agent runner images |
@@ -134,5 +134,16 @@ Repository settings CI depends on:
 - `promote-develop.yml` is invoked as a job of `build-docker-image.yml`
   rather than via `workflow_run`, so it always runs the version of the file
   that is on `develop` — no waiting for it to reach the default branch.
+  `workflow_dispatch` on it, by contrast, only works once the file has
+  reached `main`: GitHub lists dispatchable workflows from the default
+  branch only.
+- **Never add a `concurrency:` key to `promote-develop.yml`** (or to any
+  other `workflow_call` workflow) that is derived from `github.workflow`.
+  In a called workflow the group is evaluated in the *caller's* context —
+  `github.workflow` is the calling workflow's name — so
+  `${{ github.workflow }}-${{ github.ref }}` resolves to the exact group
+  the calling run already holds. The job then can never be scheduled: it is
+  never created at all, and the whole run ends as a failure with every
+  visible job green. The caller's concurrency group already covers it.
 - The release PR still needs a human approval; the automation only prepares
   it.
