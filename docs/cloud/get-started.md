@@ -119,8 +119,11 @@ Camelot also polls GitHub for this PR every 2 minutes in the background:
 - Once the PR is merged, the task moves to `done` on its own.
 
 You can also act manually from the task page at any point: **Approve
-PR** marks the task done immediately, or **Request Changes** sends it
-back to the agent.
+PR** approves the pull request on GitHub and merges it (squash merge by
+default), moving the task to `done` once the merge lands — if GitHub
+refuses the merge (branch protection, a required check still failing, a
+conflict) the task stays in `pr` and the page tells you why. **Request
+Changes** sends it back to the agent instead.
 
 Merging the PR (or clicking **Approve PR**) is the finish line — that's
 your first task shipped end-to-end.

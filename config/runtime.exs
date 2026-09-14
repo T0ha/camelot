@@ -105,6 +105,23 @@ case System.get_env("PR_AUTO_FIX_MAX_ATTEMPTS") do
     config :camelot, :pr_auto_fix, max_attempts: max_attempts
 end
 
+# How "Approve PR" merges the pull request: "squash" (default), "merge"
+# or "rebase". The repository has to allow the chosen method, otherwise
+# GitHub refuses the merge with HTTP 405.
+case System.get_env("PR_MERGE_METHOD") do
+  nil ->
+    :ok
+
+  value ->
+    method =
+      case value |> String.trim() |> String.downcase() do
+        known when known in ~w(squash merge rebase) -> String.to_atom(known)
+        other -> raise "unknown PR_MERGE_METHOD: #{other}"
+      end
+
+    config :camelot, :pr_merge, method: method
+end
+
 if backend_env = System.get_env("RUNNER_BACKEND") do
   runner_backend =
     case backend_env do

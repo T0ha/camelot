@@ -31,6 +31,13 @@ On github.com, create a new GitHub App (either a personal or org App) with:
 - **Setup URL**: `https://<your-camelot-host>/github/setup`
 - **Webhook URL**: `https://<your-camelot-host>/github/webhooks`
 
+**Contents (read/write) and Pull requests (read/write) are what make
+"Approve PR" work** — 🏰 Camelot AI submits an approving review and then
+merges the PR (`PUT /repos/{owner}/{repo}/pulls/{n}/merge`). Without
+write access the merge comes back `403` and the task stays in `pr`. The
+merge is a squash merge by default; set `PR_MERGE_METHOD=merge` or
+`rebase` on the deployment if the repository disallows squash merges.
+
 **Checks (read) is required** for PR CI-status polling — 🏰 Camelot AI reads
 `commits/{sha}/check-runs` to auto-fix a task when CI fails. Without it that
 endpoint returns `403 "Resource not accessible by integration"`. 🏰 Camelot AI now
