@@ -1,6 +1,8 @@
 defmodule CamelotWeb.AuthControllerTest do
   use CamelotWeb.ConnCase, async: false
 
+  alias AshAuthentication.Errors.AuthenticationFailed
+  alias Camelot.Accounts.Errors.RegistrationDisabled
   alias Camelot.Accounts.User
   alias Camelot.Github.Installation
   alias CamelotWeb.AuthController
@@ -139,9 +141,9 @@ defmodule CamelotWeb.AuthControllerTest do
 
     test "surfaces the invite-only message", %{conn: conn} do
       reason =
-        AshAuthentication.Errors.AuthenticationFailed.exception(
+        AuthenticationFailed.exception(
           caused_by: %Ash.Error.Forbidden{
-            errors: [Camelot.Accounts.Errors.RegistrationDisabled.exception([])]
+            errors: [RegistrationDisabled.exception([])]
           }
         )
 
