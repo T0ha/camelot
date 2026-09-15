@@ -1,0 +1,33 @@
+<Layouts.flash_group flash={@flash} />
+
+<div class="grid min-h-screen place-items-center bg-base-200 px-4">
+  <div class="card bg-base-100 shadow-xl w-full max-w-md">
+    <div class="card-body space-y-4">
+      <h1 class="card-title">Your GitHub email changed</h1>
+
+      <p class="text-sm text-base-content/70">
+        GitHub now reports <span class="font-semibold break-all">{@pending_email}</span>
+        as your verified primary address. Your Camelot account
+        still uses <span class="font-semibold break-all">{@current_email}</span>.
+      </p>
+
+      <p class="text-sm text-base-content/70">
+        You're signed in either way — we only change your address
+        if you say so. Note that this is also where magic sign-in
+        links are sent.
+      </p>
+
+      <form action={~p"/github/email"} method="post" class="space-y-2">
+        <input type="hidden" name="_csrf_token" value={get_csrf_token()} />
+
+        <.button type="submit" name="decision" value="update" class="btn btn-primary w-full">
+          Update my email
+        </.button>
+
+        <.button type="submit" name="decision" value="keep" class="btn btn-ghost w-full">
+          Keep {@current_email}
+        </.button>
+      </form>
+    </div>
+  </div>
+</div>

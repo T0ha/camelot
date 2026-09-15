@@ -21,7 +21,8 @@ defmodule CamelotWeb.AdminLive.Settings do
        node_labels: DockerApi.list_node_labels_or_empty(),
        github_app_configured?: AppConfig.configured?(),
        github_setup_url: url(~p"/github/setup"),
-       github_webhook_url: url(~p"/github/webhooks")
+       github_webhook_url: url(~p"/github/webhooks"),
+       github_callback_url: url(~p"/auth/user/github/callback")
      )}
   end
 
@@ -106,7 +107,17 @@ defmodule CamelotWeb.AdminLive.Settings do
         <div class="text-sm space-y-1">
           <div>Setup URL: <code>{@github_setup_url}</code></div>
           <div>Webhook URL: <code>{@github_webhook_url}</code></div>
+          <div>Callback URL: <code>{@github_callback_url}</code></div>
         </div>
+
+        <p class="text-sm text-base-content/60">
+          "Log in with GitHub" additionally needs the account
+          permission <strong>Email addresses: Read-only</strong>, and
+          <strong>
+            Request user authorization (OAuth) during installation
+          </strong>
+          must stay <strong>off</strong>.
+        </p>
       </section>
     </div>
     """

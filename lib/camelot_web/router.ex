@@ -24,6 +24,10 @@ defmodule CamelotWeb.Router do
     plug CamelotWeb.Plugs.RegistrationGate
   end
 
+  pipeline :github_auth_gate do
+    plug CamelotWeb.Plugs.GithubAuthGate
+  end
+
   pipeline :github_webhook do
     plug :accepts, ["json"]
     plug CamelotWeb.Plugs.VerifyGithubSignature
@@ -50,6 +54,12 @@ defmodule CamelotWeb.Router do
     pipe_through :browser
 
     get "/setup", GithubSetupController, :new
+
+    # Deliberately outside /auth — auth_routes/3 forwards that
+    # whole prefix to AshAuthentication's strategy router, which
+    # would swallow this page.
+    get "/email", GithubEmailController, :edit
+    post "/email", GithubEmailController, :update
   end
 
   scope "/attachments", CamelotWeb do
@@ -72,7 +82,7 @@ defmodule CamelotWeb.Router do
   end
 
   scope "/" do
-    pipe_through [:browser, :registration_gate]
+    pipe_through [:browser, :registration_gate, :github_auth_gate]
 
     sign_in_route(
       auth_routes_prefix: "/auth",
