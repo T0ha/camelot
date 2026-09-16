@@ -64,6 +64,7 @@ defmodule Camelot.Board.PrApprovalTest do
   describe "error_message/1" do
     test "every merge failure reason gets actionable copy" do
       reasons = [
+        :missing_installation,
         :not_mergeable,
         :conflict,
         :forbidden,
@@ -90,9 +91,37 @@ defmodule Camelot.Board.PrApprovalTest do
       assert PrApproval.self_approval_error?({:http_error, 422, @self_approval_body})
     end
 
+    test "true when only the top-level message carries the refusal" do
+      body = %{"message" => "Can not approve your own pull request"}
+      assert PrApproval.self_approval_error?({:http_error, 422, body})
+    end
+
+    test "true for a plain string error entry" do
+      body = %{"errors" => ["Can not approve your own pull request"]}
+      assert PrApproval.self_approval_error?({:http_error, 422, body})
+    end
+
     test "false for any other 422" do
       body = %{"message" => "Validation Failed", "errors" => []}
       refute PrApproval.self_approval_error?({:http_error, 422, body})
+    end
+
+    test "false when an unrelated key happens to hold the wording" do
+      body = %{
+        "message" => "Validation Failed",
+        "errors" => [%{"resource" => "PullRequestReview", "field" => "body"}],
+        "documentation_url" => "https://docs.github.com/approve-your-own"
+      }
+
+      refute PrApproval.self_approval_error?({:http_error, 422, body})
+    end
+
+    # A non-JSON body arrives as a plain string; the refusal still
+    # counts, but — unlike an `inspect/1` match — an unrelated field of
+    # a structured body never can (see the test above).
+    test "true for a plain-text body carrying the refusal" do
+      body = "Can not approve your own pull request"
+      assert PrApproval.self_approval_error?({:http_error, 422, body})
     end
 
     test "false for non-HTTP failures" do
@@ -104,6 +133,7 @@ defmodule Camelot.Board.PrApprovalTest do
     setup do
       on_exit(&StubPullRequestApi.uninstall/0)
       user = user!()
+      github_installation!(user, %{account_login: "acme-org"})
 
       {:ok, project} =
         Ash.create(
@@ -164,6 +194,30 @@ defmodule Camelot.Board.PrApprovalTest do
       assert merged.stage == :done
 
       assert_receive {:merge_pull_request, _owner, _repo, _number, _opts}
+    end
+
+    test "a creator without a connected installation is reported as such", %{user: user} do
+      StubPullRequestApi.install()
+
+      {:ok, project} =
+        Ash.create(
+          Project,
+          %{
+            name: "no-install-#{System.unique_integer([:positive])}",
+            path: "/tmp/no-install",
+            github_owner: "acme-org",
+            github_repo: "widgets"
+          },
+          actor: user
+        )
+
+      task = pr_task!(%{user: user!(), project: project})
+
+      assert {:error, :missing_installation} = PrApproval.approve_and_merge(task)
+
+      assert Ash.get!(Task, task.id).stage == :pr
+      refute_receive {:merge_pull_request, _owner, _repo, _number, _opts}
+      refute_receive {:approve_pull_request, _owner, _repo, _number, _opts}
     end
 
     test "a task without a PR number completes without calling GitHub", context do

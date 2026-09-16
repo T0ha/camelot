@@ -233,8 +233,11 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   An approval alone used to complete the task and leave the PR open
   forever. A refused merge (branch protection, failing required checks,
   a conflict) is logged and leaves the task in `:pr` — the PR really is
-  still open, and the board must not claim otherwise. Always returns
-  `:ok`: PR polling reconciles state and never fails the action.
+  still open, and the board must not claim otherwise. The refusal is
+  also broadcast to the task's channel, so an open task page shows why
+  the approval did not land instead of silently staying in `:pr`.
+  Always returns `:ok`: PR polling reconciles state and never fails the
+  action.
   """
   @spec merge_approved(Task.t()) :: :ok
   def merge_approved(task) do
@@ -248,6 +251,8 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
           "Failed to merge approved PR for task #{task.id}: " <>
             "#{inspect(reason)}"
         )
+
+        broadcast_merge_failure(task, reason)
     end
   end
 
@@ -494,6 +499,17 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
             "task #{task.id}: #{inspect(error)}"
         )
     end
+  end
+
+  # The poller runs outside any LiveView, and a refused merge changes
+  # no attribute, so there is nothing for `broadcast/1` to carry. Send
+  # the reason itself; `CamelotWeb.TaskLive` turns it into a flash.
+  defp broadcast_merge_failure(task, reason) do
+    Phoenix.PubSub.broadcast(
+      Camelot.PubSub,
+      "task:#{task.id}",
+      {:pr_merge_failed, task.id, PrApproval.error_message(reason)}
+    )
   end
 
   defp broadcast(task) do

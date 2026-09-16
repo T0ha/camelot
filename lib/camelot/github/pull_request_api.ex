@@ -8,8 +8,13 @@ defmodule Camelot.Github.PullRequestApi do
 
       config :camelot, :github_pull_request_api, MyStub
 
-  Only the write half of the PR surface lives here — the read calls
-  are plain `Client` functions, since nothing needs to fake them.
+  Only the write half of the PR surface lives here: the writes are the
+  calls that must never reach github.com from a test, while the reads
+  are already exercised against the live API by
+  `Camelot.Github.ClientTest`. Widening the behaviour to the read calls
+  (so PR polling can be driven entirely from fixtures) is a worthwhile
+  follow-up, but it would touch every `Client` reader and is kept out
+  of this change.
   """
 
   @typedoc "Options forwarded to the client (`installation_id:`, …)."

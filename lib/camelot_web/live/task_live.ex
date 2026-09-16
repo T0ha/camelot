@@ -100,6 +100,13 @@ defmodule CamelotWeb.TaskLive do
     {:noreply, refresh_elapsed(socket)}
   end
 
+  # A merge the 2-minute PR poller could not land. The task keeps its
+  # stage (the PR is still open), so the reason would otherwise never
+  # reach the page.
+  def handle_info({:pr_merge_failed, _task_id, message}, socket) do
+    {:noreply, put_flash(socket, :error, message)}
+  end
+
   # Never crash the card on an unexpected PubSub message.
   def handle_info(_msg, socket), do: {:noreply, socket}
 
@@ -121,7 +128,9 @@ defmodule CamelotWeb.TaskLive do
 
   # "Approve PR" is not a local state change: it approves and merges
   # the PR on GitHub first, and the task only reaches done when the
-  # merge actually landed.
+  # merge actually landed. The `:complete` action itself is untouched —
+  # `PrApproval` runs it through Ash exactly as the generic clause
+  # below does, so its validations, changes and notifiers still apply.
   @impl true
   def handle_event("transition", %{"action" => "complete"}, socket) do
     case PrApproval.approve_and_merge(socket.assigns.task) do

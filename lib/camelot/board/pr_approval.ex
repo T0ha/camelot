@@ -15,7 +15,10 @@ defmodule Camelot.Board.PrApproval do
   `Camelot.Board.Changes.CheckPrStatus.best_effort_check_runs/1`.
 
   Tasks with no PR (local projects, or a project not linked to a GitHub
-  repo) skip GitHub entirely and just complete.
+  repo) skip GitHub entirely and just complete. A task whose creator
+  has no connected App installation fails fast with
+  `:missing_installation` rather than sending an unauthenticated
+  request GitHub would answer with a confusing 403/404.
   """
 
   alias Camelot.Board.Changes.CheckPrStatus
@@ -26,8 +29,12 @@ defmodule Camelot.Board.PrApproval do
 
   @default_merge_method :squash
 
+  # GitHub's wording for "Can not approve your own pull request".
+  @self_approval_message "approve your own"
+
   @type reason ::
-          :not_mergeable
+          :missing_installation
+          | :not_mergeable
           | :conflict
           | :forbidden
           | :not_found
@@ -85,6 +92,11 @@ defmodule Camelot.Board.PrApproval do
 
   @doc "Actionable flash copy for a failed approve-and-merge."
   @spec error_message(reason()) :: String.t()
+  def error_message(:missing_installation) do
+    "No GitHub App installation is connected for this repository — " <>
+      "connect it in your profile, then approve the PR again."
+  end
+
   def error_message(:not_mergeable) do
     "GitHub refused the merge — branch protection, required checks, " <>
       "or the repository not allowing this merge method."
@@ -122,11 +134,16 @@ defmodule Camelot.Board.PrApproval do
 
   Matched on the message text rather than the status alone: a `422`
   from this endpoint can also mean a genuinely invalid review, which is
-  worth a warning, while self-approval is expected and routine.
+  worth a warning, while self-approval is expected and routine. The
+  parsed body is walked key by key — GitHub reports the refusal in the
+  top-level `message` and/or in the per-error entries — so the check
+  does not depend on how a body happens to be encoded.
   """
   @spec self_approval_error?(term()) :: boolean()
   def self_approval_error?({:http_error, 422, body}) do
-    body |> inspect() |> String.contains?("approve your own")
+    body
+    |> message_texts()
+    |> Enum.any?(&String.contains?(&1, @self_approval_message))
   end
 
   def self_approval_error?(_reason), do: false
@@ -146,7 +163,28 @@ defmodule Camelot.Board.PrApproval do
   defp merge_and_complete(task, :none), do: complete(task)
 
   defp merge_and_complete(task, {owner, repo, pr_number}) do
-    opts = [installation_id: CheckPrStatus.installation_id(task)]
+    merge_as_installation(
+      CheckPrStatus.installation_id(task),
+      task,
+      {owner, repo, pr_number}
+    )
+  end
+
+  # Without an installation the client would fall back to an
+  # unauthenticated request and GitHub would answer 403/404, which
+  # reads as a permission problem on the repository. Say what is
+  # actually wrong instead.
+  defp merge_as_installation(nil, task, _pull_request) do
+    Logger.warning(
+      "Task #{task.id}: no GitHub App installation connected for the " <>
+        "creator; not attempting the merge"
+    )
+
+    {:error, :missing_installation}
+  end
+
+  defp merge_as_installation(installation_id, task, {owner, repo, pr_number}) do
+    opts = [installation_id: installation_id]
     approve(owner, repo, pr_number, opts)
 
     owner
@@ -207,4 +245,17 @@ defmodule Camelot.Board.PrApproval do
         "merging anyway"
     )
   end
+
+  # Every human-readable string in an error body: GitHub puts the
+  # detail in `errors[].message` and a summary in the top-level
+  # `message`, and older endpoints use only one of the two.
+  defp message_texts(%{"errors" => errors} = body) do
+    [message_text(body) | Enum.map(List.wrap(errors), &message_text/1)]
+  end
+
+  defp message_texts(body), do: [message_text(body)]
+
+  defp message_text(%{"message" => message}), do: message_text(message)
+  defp message_text(<<message::binary>>), do: message
+  defp message_text(_value), do: ""
 end

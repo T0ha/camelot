@@ -24,7 +24,7 @@ defmodule CamelotWeb.ConnCase do
     quote do
       use CamelotWeb, :verified_routes
 
-      import Camelot.DataCase, only: [agent!: 1]
+      import Camelot.DataCase, only: [agent!: 1, github_installation!: 2]
       import CamelotWeb.ConnCase
       import Phoenix.ConnTest
       import Plug.Conn

@@ -11,6 +11,7 @@ defmodule Camelot.Board.Changes.CheckPrStatusMergeTest do
   setup do
     on_exit(&StubPullRequestApi.uninstall/0)
     user = user!()
+    github_installation!(user, %{account_login: "acme-org"})
 
     {:ok, project} =
       Ash.create(
@@ -56,6 +57,17 @@ defmodule Camelot.Board.Changes.CheckPrStatusMergeTest do
       reloaded = Ash.get!(Task, task.id)
       assert reloaded.stage == :pr
       assert reloaded.state == :waiting_for_input
+    end
+
+    test "a refusal is broadcast to the task channel", %{task: task} do
+      Phoenix.PubSub.subscribe(Camelot.PubSub, "task:#{task.id}")
+      StubPullRequestApi.install(merge: {:error, {:http_error, 405, %{}}})
+
+      assert :ok = CheckPrStatus.merge_approved(task)
+
+      task_id = task.id
+      assert_receive {:pr_merge_failed, ^task_id, message}
+      assert message =~ "branch protection"
     end
   end
 end

@@ -14,6 +14,7 @@ defmodule CamelotWeb.TaskLiveApprovePrTest do
 
   setup %{user: user} do
     on_exit(&StubPullRequestApi.uninstall/0)
+    github_installation!(user, %{account_login: "acme-org"})
 
     {:ok, project} =
       Ash.create(
@@ -57,6 +58,18 @@ defmodule CamelotWeb.TaskLiveApprovePrTest do
       assert html =~ "done"
       assert html =~ "PR merged"
       assert Ash.get!(Task, task.id).stage == :done
+    end
+
+    test "a poller-side merge refusal reaches the open page", %{conn: conn, task: task} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      Phoenix.PubSub.broadcast(
+        Camelot.PubSub,
+        "task:#{task.id}",
+        {:pr_merge_failed, task.id, "GitHub refused the merge — branch protection"}
+      )
+
+      assert render(view) =~ "branch protection"
     end
 
     test "a refused merge flashes an error and keeps the task in pr", %{conn: conn, task: task} do
