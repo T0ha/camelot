@@ -10,7 +10,7 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   - failing CI checks → queued for agent fix (via request_pr_changes)
   - changes_requested → queued for agent fix (via request_pr_changes)
   - new comments after last commit → queued for agent fix
-  - approved → done (via complete)
+  - approved → PR merged on GitHub, then done (via complete)
 
   "Comments" covers three GitHub surfaces: top-level issue comments,
   inline review comments on the diff (`pulls/{n}/comments`), and the
@@ -40,6 +40,7 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   """
   use Ash.Resource.Change
 
+  alias Camelot.Board.PrApproval
   alias Camelot.Board.Task
   alias Camelot.Github.Client
   alias Camelot.Github.Resolver
@@ -216,13 +217,42 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
         request_changes(task, comments, reviews, 0)
 
       approved?(reviews) ->
-        transition(task, :complete)
+        merge_approved(task)
 
       new_comments?(comments, commit_date, seen_at) ->
         request_changes(task, comments, reviews, 0)
 
       true ->
         :ok
+    end
+  end
+
+  @doc """
+  Merges a PR a reviewer approved on GitHub, then completes the task.
+
+  An approval alone used to complete the task and leave the PR open
+  forever. A refused merge (branch protection, failing required checks,
+  a conflict) is logged and leaves the task in `:pr` — the PR really is
+  still open, and the board must not claim otherwise. The refusal is
+  also broadcast to the task's channel, so an open task page shows why
+  the approval did not land instead of silently staying in `:pr`.
+  Always returns `:ok`: PR polling reconciles state and never fails the
+  action.
+  """
+  @spec merge_approved(Task.t()) :: :ok
+  def merge_approved(task) do
+    case PrApproval.approve_and_merge(task) do
+      {:ok, updated} ->
+        broadcast(updated)
+        Logger.info("Task #{task.id} → complete (PR merged)")
+
+      {:error, reason} ->
+        Logger.warning(
+          "Failed to merge approved PR for task #{task.id}: " <>
+            "#{inspect(reason)}"
+        )
+
+        broadcast_merge_failure(task, reason)
     end
   end
 
@@ -469,6 +499,17 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
             "task #{task.id}: #{inspect(error)}"
         )
     end
+  end
+
+  # The poller runs outside any LiveView, and a refused merge changes
+  # no attribute, so there is nothing for `broadcast/1` to carry. Send
+  # the reason itself; `CamelotWeb.TaskLive` turns it into a flash.
+  defp broadcast_merge_failure(task, reason) do
+    Phoenix.PubSub.broadcast(
+      Camelot.PubSub,
+      "task:#{task.id}",
+      {:pr_merge_failed, task.id, PrApproval.error_message(reason)}
+    )
   end
 
   defp broadcast(task) do

@@ -80,6 +80,12 @@ config :camelot, :mail,
 # at runtime via PR_AUTO_FIX_MAX_ATTEMPTS.
 config :camelot, :pr_auto_fix, max_attempts: 2
 
+# How "Approve PR" merges the pull request on GitHub: `:squash`,
+# `:merge` or `:rebase`. The repository must allow the chosen method,
+# otherwise GitHub refuses the merge with HTTP 405. Overridable at
+# runtime via PR_MERGE_METHOD.
+config :camelot, :pr_merge, method: :squash
+
 # Runner backend for agent CLI execution. Overridden in
 # config/runtime.exs for prod. Dev/test default to LocalPort
 # which preserves the legacy Port.open behaviour.

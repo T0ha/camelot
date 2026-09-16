@@ -54,6 +54,24 @@ defmodule Camelot.DataCase do
     Ash.Seed.seed!(Camelot.Accounts.User, Map.merge(defaults, attrs))
   end
 
+  @doc """
+  Seeds a `Camelot.Github.Installation` connected to `user`.
+
+  Needed by anything that talks to GitHub as an App installation:
+  without a linked installation the requests would go out
+  unauthenticated (see `Camelot.Github.Resolver.installation_id/2`).
+  """
+  def github_installation!(user, attrs \\ %{}) do
+    defaults = %{
+      installation_id: System.unique_integer([:positive]),
+      account_login: "acme-org",
+      account_type: :organization,
+      user_id: user.id
+    }
+
+    Ash.Seed.seed!(Camelot.Github.Installation, Map.merge(defaults, attrs))
+  end
+
   setup tags do
     Camelot.DataCase.setup_sandbox(tags)
     :ok

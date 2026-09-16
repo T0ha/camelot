@@ -51,6 +51,19 @@ as *verified*.
 > `/auth/user/github/callback` carrying a `state` the app never issued, and
 > the sign-in fails with a CSRF error.
 
+**Contents (read/write) and Pull requests (read/write) are what make
+"Approve PR" work** — 🏰 Camelot AI submits an approving review and then
+merges the PR (`PUT /repos/{owner}/{repo}/pulls/{n}/merge`). Without
+write access the merge comes back `403` and the task stays in `pr`. The
+merge is a squash merge by default; set `PR_MERGE_METHOD=merge` or
+`rebase` on the deployment if the repository disallows squash merges.
+An unrecognised value warns on boot and falls back to squash.
+
+The merge also needs the task creator to have the App installation
+connected to their 🏰 Camelot AI account (Profile → GitHub). Without it
+the task stays in `pr` with "No GitHub App installation is connected
+for this repository".
+
 **Checks (read) is required** for PR CI-status polling — 🏰 Camelot AI reads
 `commits/{sha}/check-runs` to auto-fix a task when CI fails. Without it that
 endpoint returns `403 "Resource not accessible by integration"`. 🏰 Camelot AI now
