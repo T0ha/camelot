@@ -89,8 +89,6 @@ docker node update --label-add otel_role=gateway vmic-camelotai-arm-01
 **`otel-agent`** — one per node. Under *Service Update Override*:
 
 ```yaml
-Mode:
-    Global: {}
 TaskTemplate:
     ContainerSpec:
       Mounts:
@@ -116,8 +114,11 @@ TaskTemplate:
         MemoryBytes: 67108864
 ```
 
-`Mode: Global: {}` is how the existing `docker-socket-proxy` app runs on
-every node; CapRover's instance count is ignored once it is set.
+**Do not add a `Mode: Global: {}` block here — it cannot work.** CapRover
+merges the override additively, so `Global` lands next to the generated
+`Mode: Replicated` and docker rejects the spec with *"must specify only
+one service mode"*. Saving it fails outright. The service is made Global
+after the first deploy instead, with `bootstrap-global-agent.sh` below.
 
 The mounts are all read-only except the offset directory. `/` at
 `/hostfs` is what `host_metrics` measures — without it the scrapers
@@ -130,7 +131,27 @@ hold up a task:
 sudo mkdir -p /var/lib/otelcol-agent
 ```
 
-### 2. App environment variables
+### 2. Make the agent Global (once, after the first deploy)
+
+CapRover deploys the agent as an ordinary single-replica service, which
+collects logs from one node only. A swarm service cannot be converted in
+place — the daemon answers `service mode change is not allowed` — so it
+has to be recreated. On a swarm manager:
+
+```sh
+./bootstrap-global-agent.sh otel-agent
+```
+
+It reuses the spec CapRover generated and changes only the mode, so every
+label, network, mount and limit is preserved. It is idempotent, and safe
+to re-run: it exits immediately if the service is already Global. Verify
+with `docker service ls` — the agent should read `global   2/2`.
+
+CapRover manages the service normally afterwards; its override merge is a
+no-op against an already-Global spec. **Re-run this if the app is ever
+deleted and recreated.**
+
+### 3. App environment variables
 
 On **`otel-gateway`**:
 
@@ -152,7 +173,7 @@ If you deploy the gateway under a different name via
 `OTEL_GATEWAY_ENDPOINT` on the agent app to match, or the agents export
 into nothing.
 
-### 3. GitHub configuration
+### 4. GitHub configuration
 
 `test` environment secrets: `OTEL_GATEWAY_APP_TOKEN`,
 `OTEL_AGENT_APP_TOKEN` (CapRover app deploy tokens).
