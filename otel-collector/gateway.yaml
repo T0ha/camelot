@@ -53,6 +53,10 @@ exporters:
     headers:
       Authorization: Bearer ${env:POSTHOG_PROJECT_API_KEY}
     compression: gzip
+    # Above the 30s default: batches are small, but the first start
+    # ships an accumulated backlog and a slow-but-successful request
+    # should not be abandoned into a retry.
+    timeout: 60s
     retry_on_failure:
       enabled: true
       initial_interval: 5s
@@ -68,6 +72,10 @@ exporters:
     headers:
       Authorization: Bearer ${env:BETTERSTACK_SOURCE_TOKEN}
     compression: gzip
+    # Above the 30s default: batches are small, but the first start
+    # ships an accumulated backlog and a slow-but-successful request
+    # should not be abandoned into a retry.
+    timeout: 60s
     retry_on_failure:
       enabled: true
       initial_interval: 5s

@@ -30,11 +30,25 @@ place and the backend has one stable endpoint to push traces at.
 | Metrics | `docker_stats` per container, labelled with its swarm service and task | Better Stack |
 | Traces  | OTLP in on 4317/4318 — nothing produces them yet; the backend will | PostHog |
 
-Every record carries `host.name` (the swarm node), `container.name`,
+Every log record carries `host.name` (the swarm node), `container.name`,
 `container.id`, `container.image.name` and `service.name`. For swarm
 containers `service.name` is the swarm service (`srv-captain--camelotai`,
 `camelot-task-<uuid>`, …); everything else falls back to the container
 name.
+
+**The swarm service is named differently per signal**, which matters when
+building dashboards that span both:
+
+| Signal  | Attribute            | Kind               |
+|---------|----------------------|--------------------|
+| Logs    | `service.name`       | resource attribute |
+| Metrics | `docker.service.name` | metric label      |
+
+Metrics additionally carry `docker.task.name` and `docker.node.id`, which
+logs do not. They are kept distinct rather than aligned because
+`service.name` is a resource-level convention, and forcing it onto
+`docker_stats` data points would misrepresent a per-container metric as a
+per-service one.
 
 ## Deploying
 
@@ -64,7 +78,9 @@ TaskTemplate:
 ```
 
 Pinned by node label rather than hostname, because placement here floats
-and the manager is a 1 GB node. Label the node that should carry it:
+and the manager is a 1 GB node. The node carrying the gateway needs
+roughly **1 GB free** — it runs the 384 MiB gateway *and* its own 256 MiB
+agent, on top of whatever else it is scheduled. Label it:
 
 ```sh
 docker node update --label-add otel_role=gateway vmic-camelotai-arm-01
@@ -130,6 +146,12 @@ On **`otel-agent`**: nothing is required. `OTEL_GATEWAY_ENDPOINT`
 defaults to `srv-captain--otel-gateway:4317`, and `OTEL_LOG_LEVEL`
 to `warn`.
 
+If you deploy the gateway under a different name via
+`OTEL_GATEWAY_APP_NAME`, its CapRover service becomes
+`srv-captain--<that name>` and the agent's default stops resolving — set
+`OTEL_GATEWAY_ENDPOINT` on the agent app to match, or the agents export
+into nothing.
+
 ### 3. GitHub configuration
 
 `test` environment secrets: `OTEL_GATEWAY_APP_TOKEN`,
@@ -163,18 +185,36 @@ Raise `OTEL_LOG_LEVEL` to `info` on either app to see pipeline activity.
   the first time it is seen, so its startup logs are not lost. Offsets
   are checkpointed to `/var/lib/otelcol/storage`, so this happens once,
   not on every restart. At the time of writing the existing backlog was
-  ~106 MB on the manager and ~41 MB on the arm node.
+  ~106 MB on the manager and ~41 MB on the arm node. The gateway's send
+  queue is in memory and bounded (1000 batches), so a vendor outage
+  lasting past that point drops the oldest data rather than growing
+  without limit. Surviving a longer outage would need a disk-backed
+  queue, which needs another mount — not worth it for test.
 - **Docker has no log rotation configured here** (no `/etc/docker/daemon.json`),
   so container logs grow without bound. That is a pre-existing disk
   issue rather than one this pipeline creates, but it also sets the size
   of the first-start backlog. Adding `max-size`/`max-file` to the daemon
   config would bound both — it needs a `dockerd` restart per node.
-- **The agent excludes its own image** from discovery. Without that it
-  tails its own log, and anything it prints about a log record becomes
-  another log record.
+- **The agent excludes both collector images** from discovery. Without
+  that it tails its own log, and anything it prints about a log record
+  becomes another log record. The gateway is excluded for the same
+  reason in reverse: a failing export makes it log, and shipping that
+  log back through it amplifies the failure it is reporting. Both stay
+  readable with `docker service logs`.
 - **The agent runs as root** (the upstream image runs as uid 10001)
   because the docker socket and the container log directory are
   root-owned on the host. The gateway keeps the unprivileged user.
+- **Corrupt log lines are forwarded, not dropped.** A disk-full event on
+  2026-09-02 left a handful of truncated, spliced-together records in
+  these files, and docker will do it again the next time a node fills
+  up. The container parser is set to `on_error: send_quiet`, so what it
+  cannot parse still reaches PostHog as a raw line instead of becoming
+  one collector error per occurrence.
+- **Agent memory was sized by measurement, not by guess.** At
+  `limit_mib: 128` the limiter refused data throughout the first-start
+  backlog; at 160 a real node settles around 137 MiB with nothing
+  refused. The filelog receivers also retry rather than drop, so if the
+  limiter ever does bite they stop reading and wait.
 - **Short-lived containers may be missed.** Discovery happens on a
   docker event, so a container that starts and exits within roughly a
   second can be gone before its receiver starts.

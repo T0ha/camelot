@@ -91,7 +91,8 @@ jobs:
       # it after would leave the fresh agents retrying against an old
       # gateway for the length of the second deploy.
       #
-      # Pin the caprover CLI to 2.3.1 (2.4.0 crashes on deploy).
+      # Pin the caprover CLI to 2.3.1 (2.4.0 crashes on deploy - see
+      # deploy-production.yml for what breaks and why).
       - name: Deploy gateway to CapRover (test)
         if: steps.gate.outputs.go == 'true'
         env:
