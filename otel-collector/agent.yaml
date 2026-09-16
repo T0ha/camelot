@@ -1,0 +1,167 @@
+# Per-node OpenTelemetry agent.
+#
+# Deployed as a global-mode swarm service, so every node runs exactly one
+# instance. It is the only component that needs host access:
+#
+#   logs    - one filelog receiver per running container, discovered over
+#             the docker socket. Docker only encodes the container id in
+#             the log file path, so the readable name and the swarm
+#             service come from the observer, not the path.
+#   metrics - node level (hostmetrics) and per container (docker_stats).
+#
+# Nothing is exported to a vendor from here: everything goes over
+# OTLP/gRPC to the gateway, which owns the credentials and fans out.
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+  # Persists each filelog receiver's read offset. Without it the agent
+  # must choose between losing every container's startup logs (start_at:
+  # end) and re-sending whole files after every restart (start_at:
+  # beginning). The directory is a per-node volume - see README.md.
+  file_storage/filelog:
+    directory: /var/lib/otelcol/storage
+    timeout: 10s
+
+  # Emits an endpoint per running container. include_all_containers is
+  # required: almost nothing in this cluster publishes a port, and
+  # without it those containers are never discovered at all.
+  docker_observer:
+    endpoint: unix:///var/run/docker.sock
+    include_all_containers: true
+    cache_sync_interval: 1m
+    # The 5s default is not enough on these nodes: listing containers
+    # times out while the host is swapping, and a failed observer start
+    # aborts the whole collector.
+    timeout: 20s
+    # Never collect our own logs. Without this the agent tails its own
+    # json log, so anything it prints about a log record becomes another
+    # log record - a feedback loop that fills the disk. Globs, because
+    # the deployed tag is a commit sha.
+    excluded_images:
+      - "*camelotai-otel-agent*"
+      - "*opentelemetry-collector-contrib*"
+
+receivers:
+  # root_path points at the host filesystem bind-mounted read-only at
+  # /hostfs. Without it the scrapers describe the collector's own
+  # container instead of the node.
+  host_metrics:
+    collection_interval: 60s
+    root_path: /hostfs
+    scrapers:
+      cpu: {}
+      load: {}
+      memory: {}
+      paging: {}
+      network: {}
+      processes: {}
+      disk: {}
+      filesystem:
+        exclude_mount_points:
+          match_type: regexp
+          mount_points:
+            - /hostfs/var/lib/docker/.*
+            - /var/lib/docker/.*
+        exclude_fs_types:
+          match_type: strict
+          fs_types: [overlay, tmpfs, devtmpfs, squashfs, nsfs, autofs]
+
+  # Per-container metrics, carrying the swarm service and task they
+  # belong to so they can be grouped per service downstream.
+  docker_stats:
+    endpoint: unix:///var/run/docker.sock
+    collection_interval: 60s
+    timeout: 20s
+    container_labels_to_metric_labels:
+      com.docker.swarm.service.name: docker.service.name
+      com.docker.swarm.task.name: docker.task.name
+      com.docker.swarm.node.id: docker.node.id
+
+  # One filelog receiver per discovered container. Backticked values are
+  # evaluated against the observer endpoint; the rest is static.
+  receiver_creator/logs:
+    watch_observers: [docker_observer]
+    receivers:
+      filelog:
+        # port == 0 selects the single port-less endpoint. Without it a
+        # container exposing N ports is matched N+1 times and every one
+        # of its log lines is shipped that many times over.
+        rule: type == "container" && port == 0
+        config:
+          include:
+            - /var/lib/docker/containers/`container_id`/`container_id`-json.log
+          # Safe because offsets are checkpointed: a container is read
+          # from the top the first time it is seen, which keeps its
+          # startup logs, and resumed in place afterwards.
+          start_at: beginning
+          storage: file_storage/filelog
+          operators:
+            - id: container-parser
+              type: container
+              format: docker
+              # The path carries no metadata outside Kubernetes.
+              add_metadata_from_filepath: false
+        resource_attributes:
+          container.id: '`container_id`'
+          # Swarm names containers <service>.<slot>.<taskid>, so fall back
+          # to the container name only for non-swarm containers.
+          service.name: >-
+            `"com.docker.swarm.service.name" in labels
+              ? labels["com.docker.swarm.service.name"]
+              : name`
+
+processors:
+  # First in every pipeline: these nodes are small and already OOM-prone,
+  # so the collector must shed load before the kernel does.
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 160
+    spike_limit_mib: 40
+
+  # Tags every signal with the node it came from. The docker detector
+  # asks the daemon for the host's name; the container's own hostname is
+  # just a swarm task id and useless for grouping.
+  resource_detection:
+    detectors: [env, docker, system]
+    timeout: 5s
+    override: false
+    system:
+      hostname_sources: [os]
+
+  batch:
+    timeout: 10s
+    send_batch_size: 512
+    send_batch_max_size: 1024
+
+exporters:
+  otlp/gateway:
+    endpoint: ${env:OTEL_GATEWAY_ENDPOINT:-srv-captain--otel-gateway:4317}
+    # Plaintext on the captain overlay network, which never leaves the
+    # cluster. Credentials live on the gateway, not here.
+    tls:
+      insecure: true
+    compression: gzip
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 60s
+    sending_queue:
+      enabled: true
+      queue_size: 512
+
+service:
+  extensions: [health_check, docker_observer, file_storage/filelog]
+  telemetry:
+    logs:
+      level: ${env:OTEL_LOG_LEVEL:-warn}
+  pipelines:
+    logs:
+      receivers: [receiver_creator/logs]
+      processors: [memory_limiter, resource_detection, batch]
+      exporters: [otlp/gateway]
+    metrics:
+      receivers: [host_metrics, docker_stats]
+      processors: [memory_limiter, resource_detection, batch]
+      exporters: [otlp/gateway]

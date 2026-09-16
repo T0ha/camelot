@@ -1,0 +1,9 @@
+# Per-node agent. Reads the docker socket and every container's json-file
+# log, both root-owned on the host, so this image runs as root - unlike
+# the upstream image (uid 10001) and unlike the gateway.
+ARG OTELCOL_VERSION=0.160.0
+FROM otel/opentelemetry-collector-contrib:${OTELCOL_VERSION}
+
+COPY agent.yaml /etc/otelcol-contrib/config.yaml
+
+USER 0:0

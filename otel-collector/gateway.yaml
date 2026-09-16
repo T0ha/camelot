@@ -1,0 +1,96 @@
+# Cluster gateway: the single egress point for telemetry.
+#
+# Receives OTLP from the per-node agents and, later, directly from the
+# Camelot backend (traces). It is the only component holding vendor
+# credentials, and the only place routing changes have to be made.
+#
+#   logs   -> PostHog
+#   traces -> PostHog
+#   metrics -> Better Stack
+#
+# Runs as a single replica, pinned by node label to a node with enough
+# memory - see README.md.
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 256
+    spike_limit_mib: 64
+
+  batch:
+    timeout: 10s
+    send_batch_size: 512
+    send_batch_max_size: 1024
+
+  # Marks which cluster the telemetry came from, so test and production
+  # stay distinguishable once both report into the same PostHog project.
+  resource/deployment:
+    attributes:
+      - key: deployment.environment.name
+        value: ${env:DEPLOYMENT_ENV:-test}
+        action: upsert
+
+exporters:
+  # PostHog speaks OTLP/HTTP but on non-standard paths (/i/v1/...). The
+  # per-signal *_endpoint overrides are mandatory: the plain `endpoint`
+  # field would append the spec paths /v1/logs and /v1/traces and 404.
+  otlphttp/posthog:
+    logs_endpoint: ${env:POSTHOG_HOST:-https://us.i.posthog.com}/i/v1/logs
+    traces_endpoint: ${env:POSTHOG_HOST:-https://us.i.posthog.com}/i/v1/traces
+    # The project token (phc_...), not a personal API key.
+    headers:
+      Authorization: Bearer ${env:POSTHOG_PROJECT_API_KEY}
+    compression: gzip
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 120s
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+
+  # Better Stack is plain OTLP/HTTP, so the base endpoint is enough - it
+  # appends /v1/metrics itself.
+  otlphttp/betterstack:
+    metrics_endpoint: ${env:BETTERSTACK_INGEST_URL}/v1/metrics
+    headers:
+      Authorization: Bearer ${env:BETTERSTACK_SOURCE_TOKEN}
+    compression: gzip
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 120s
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+
+service:
+  extensions: [health_check]
+  telemetry:
+    logs:
+      level: ${env:OTEL_LOG_LEVEL:-warn}
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/deployment, batch]
+      exporters: [otlphttp/posthog]
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/deployment, batch]
+      exporters: [otlphttp/posthog]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/deployment, batch]
+      exporters: [otlphttp/betterstack]
