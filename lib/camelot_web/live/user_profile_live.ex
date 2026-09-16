@@ -389,7 +389,7 @@ defmodule CamelotWeb.UserProfileLive do
         </p>
       </section>
 
-      <section class="rounded border p-4 space-y-2">
+      <section id="github-app" class="rounded border p-4 space-y-2">
         <h2 class="text-lg font-semibold">GitHub App</h2>
 
         <p class="text-sm text-base-content/60">
@@ -442,7 +442,7 @@ defmodule CamelotWeb.UserProfileLive do
         </a>
       </section>
 
-      <section class="rounded border p-4 space-y-3">
+      <section id="credentials" class="rounded border p-4 space-y-3">
         <h2 class="text-lg font-semibold">Credentials</h2>
 
         <p class="text-sm text-base-content/60">

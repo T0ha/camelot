@@ -68,6 +68,14 @@
   </div>
 </header>
 
+<%= if assigns[:onboarding] do %>
+  <.welcome_modal
+    onboarding={@onboarding}
+    show={assigns[:onboarding_modal?] == true}
+  />
+  <.setup_bar onboarding={@onboarding} />
+<% end %>
+
 <main class="px-4 py-8 sm:px-6 lg:px-8">
   <div class="mx-auto max-w-6xl space-y-4">
     {@inner_content}

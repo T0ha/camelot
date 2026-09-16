@@ -4,6 +4,8 @@ defmodule CamelotWeb.ProjectLive.Index do
   """
   use CamelotWeb, :live_view
 
+  import CamelotWeb.OnboardingComponents
+
   alias Camelot.Projects.Project
   alias CamelotWeb.Components.FolderPicker
   alias CamelotWeb.Components.GithubRepoPicker
@@ -17,7 +19,12 @@ defmodule CamelotWeb.ProjectLive.Index do
   @spec mount(map(), map(), Socket.t()) ::
           {:ok, Socket.t()}
   def mount(params, _session, socket) do
-    {:ok, socket |> assign(see_all: params["scope"] == "all") |> load_projects()}
+    socket =
+      socket
+      |> assign(see_all: params["scope"] == "all", advanced_open?: false)
+      |> load_projects()
+
+    {:ok, socket}
   end
 
   @impl true
@@ -36,17 +43,22 @@ defmodule CamelotWeb.ProjectLive.Index do
     assign(socket,
       page_title: "New Project",
       project: nil,
+      advanced_open?: false,
       form: to_form(project_create_params())
     )
   end
 
   defp apply_action(socket, :edit, %{"id" => id}) do
     project = Ash.get!(Project, id)
+    params = project_update_params(project)
 
     assign(socket,
       page_title: "Edit Project",
       project: project,
-      form: to_form(project_update_params(project))
+      # A project that already leans on the advanced fields
+      # shouldn't hide them behind a click on every edit.
+      advanced_open?: advanced_filled?(params),
+      form: to_form(params)
     )
   end
 
@@ -90,6 +102,10 @@ defmodule CamelotWeb.ProjectLive.Index do
 
   def handle_event("toggle_scope", _params, socket) do
     {:noreply, socket |> assign(see_all: !socket.assigns.see_all) |> load_projects()}
+  end
+
+  def handle_event("toggle_advanced", _params, socket) do
+    {:noreply, assign(socket, advanced_open?: !socket.assigns.advanced_open?)}
   end
 
   @impl true
@@ -208,6 +224,24 @@ defmodule CamelotWeb.ProjectLive.Index do
   defp extract_project_params(params) do
     Map.take(params, @project_fields)
   end
+
+  # Everything the create/edit form tucks behind "Advanced
+  # settings". `path` is deliberately absent: it's derived
+  # from the name for new projects, so it's filled on every
+  # form and would keep the section permanently expanded.
+  @advanced_fields ~w(github_owner github_repo
+                      command_prefix_override executable_override
+                      base_args_override env_vars_override
+                      permission_args_by_stage_override
+                      internal_tools_override base_retry_delay_ms_override)
+
+  defp advanced_filled?(params) do
+    Enum.any?(@advanced_fields, &filled?(params[&1]))
+  end
+
+  defp filled?(nil), do: false
+  defp filled?(""), do: false
+  defp filled?(_value), do: true
 
   # The 7 project-level overrides mirror the array/map/integer field
   # editing conventions already used in `CamelotWeb.AgentLive.Index` for
@@ -437,6 +471,11 @@ defmodule CamelotWeb.ProjectLive.Index do
             {@page_title}
           </.header>
 
+          <.step_hint_callout onboarding={assigns[:onboarding]} step={:project}>
+            Give the project a name and pick the GitHub repository you want
+            Camelot to work in — the rest already has sensible defaults.
+          </.step_hint_callout>
+
           <.simple_form
             for={@form}
             id="project-form"
@@ -448,15 +487,6 @@ defmodule CamelotWeb.ProjectLive.Index do
               type="text"
               label="Name"
             />
-            <%= if @live_action == :new do %>
-              <.live_component
-                module={FolderPicker}
-                id="path-picker"
-                name={@form[:path].name}
-                value={@form[:path].value}
-                label="Path"
-              />
-            <% end %>
             <.input
               field={@form[:description]}
               type="textarea"
@@ -470,84 +500,119 @@ defmodule CamelotWeb.ProjectLive.Index do
               label="GitHub Repository"
               current_user={@current_user}
             />
-            <.input
-              field={@form[:github_owner]}
-              type="text"
-              label="GitHub Owner"
-            />
-            <.input
-              field={@form[:github_repo]}
-              type="text"
-              label="GitHub Repo"
-            />
             <.live_component
               module={RunnerImagePicker}
               id="runner-image-picker"
               name={@form[:runner_image_override].name}
               value={@form[:runner_image_override].value}
-              label="Runner Image Override"
+              label="Runner Image"
             />
-
-            <hr class="my-2 border-base-content/20" />
-            <p class="text-sm font-semibold">
-              Agent CLI overrides
-            </p>
             <p class="text-xs text-base-content/50 -mt-2">
-              Applied to every task in this project, on top of the chosen
-              agent CLI's defaults. Leave blank to use the agent CLI default.
+              Leave blank to use the deployment's default runner image.
             </p>
 
-            <.input
-              field={@form[:command_prefix_override]}
-              type="text"
-              label="Command prefix override"
-            />
-            <.input
-              field={@form[:executable_override]}
-              type="text"
-              label="Executable override"
-            />
-            <.input
-              field={@form[:base_args_override]}
-              type="textarea"
-              label="Base args override (one per line)"
-              rows="3"
-            />
-            <.input
-              field={@form[:env_vars_override]}
-              type="textarea"
-              label="Environment variables override (JSON object)"
-              rows="3"
-            />
-            <.input
-              field={@form[:permission_args_by_stage_override]}
-              type="textarea"
-              label="Permission args by stage override (JSON)"
-              rows="3"
-            />
-            <.input
-              field={@form[:internal_tools_override]}
-              type="textarea"
-              label="Internal tools override (one per line)"
-              rows="3"
-            />
-            <.input
-              field={@form[:base_retry_delay_ms_override]}
-              type="number"
-              label="Base retry delay override (ms)"
-            />
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm gap-1 px-0"
+              phx-click="toggle_advanced"
+            >
+              <.icon
+                name={if @advanced_open?, do: "hero-chevron-down", else: "hero-chevron-right"}
+                class="size-4"
+              /> Advanced settings
+            </button>
 
-            <%= if @live_action == :edit do %>
+            <%!--
+              Hidden rather than removed: this form is a bare
+              `to_form(params)`, so `save` reads whatever the DOM
+              serializes. A `display: none` input still submits; a
+              missing one would silently drop the field. Collapsed
+              state is server-side because `phx-change="validate"`
+              re-renders on every keystroke and would strip a
+              browser-set `open` attribute.
+            --%>
+            <div id="project-advanced" class={["space-y-4", !@advanced_open? && "hidden"]}>
+              <%= if @live_action == :new do %>
+                <.live_component
+                  module={FolderPicker}
+                  id="path-picker"
+                  name={@form[:path].name}
+                  value={@form[:path].value}
+                  label="Path"
+                />
+              <% end %>
               <.input
-                field={@form[:status]}
-                type="select"
-                label="Status"
-                options={[
-                  {"Active", "active"},
-                  {"Archived", "archived"}
-                ]}
+                field={@form[:github_owner]}
+                type="text"
+                label="GitHub Owner"
               />
-            <% end %>
+              <.input
+                field={@form[:github_repo]}
+                type="text"
+                label="GitHub Repo"
+              />
+
+              <hr class="my-2 border-base-content/20" />
+              <p class="text-sm font-semibold">
+                Agent CLI overrides
+              </p>
+              <p class="text-xs text-base-content/50 -mt-2">
+                Applied to every task in this project, on top of the chosen
+                agent CLI's defaults. Leave blank to use the agent CLI default.
+              </p>
+
+              <.input
+                field={@form[:command_prefix_override]}
+                type="text"
+                label="Command prefix override"
+              />
+              <.input
+                field={@form[:executable_override]}
+                type="text"
+                label="Executable override"
+              />
+              <.input
+                field={@form[:base_args_override]}
+                type="textarea"
+                label="Base args override (one per line)"
+                rows="3"
+              />
+              <.input
+                field={@form[:env_vars_override]}
+                type="textarea"
+                label="Environment variables override (JSON object)"
+                rows="3"
+              />
+              <.input
+                field={@form[:permission_args_by_stage_override]}
+                type="textarea"
+                label="Permission args by stage override (JSON)"
+                rows="3"
+              />
+              <.input
+                field={@form[:internal_tools_override]}
+                type="textarea"
+                label="Internal tools override (one per line)"
+                rows="3"
+              />
+              <.input
+                field={@form[:base_retry_delay_ms_override]}
+                type="number"
+                label="Base retry delay override (ms)"
+              />
+
+              <%= if @live_action == :edit do %>
+                <.input
+                  field={@form[:status]}
+                  type="select"
+                  label="Status"
+                  options={[
+                    {"Active", "active"},
+                    {"Archived", "archived"}
+                  ]}
+                />
+              <% end %>
+            </div>
             <:actions>
               <.button
                 phx-disable-with="Saving..."
