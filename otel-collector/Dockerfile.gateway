@@ -1,0 +1,6 @@
+# Cluster gateway. Talks to nothing but the network, so it keeps the
+# upstream image's unprivileged user.
+ARG OTELCOL_VERSION=0.160.0
+FROM otel/opentelemetry-collector-contrib:${OTELCOL_VERSION}
+
+COPY gateway.yaml /etc/otelcol-contrib/config.yaml
