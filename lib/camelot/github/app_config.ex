@@ -63,6 +63,29 @@ defmodule Camelot.Github.AppConfig do
     match?({:ok, _}, fetch())
   end
 
+  @doc """
+  github.com URL that starts an installation of this App.
+
+  Takes the already-signed opaque `state` string (see
+  `CamelotWeb.GithubSetupController.state_token/1`) so this
+  module stays free of web concerns. GitHub hands the state
+  straight back to the Setup URL, which is how the callback
+  knows who asked.
+
+  Returns `nil` when the App isn't configured.
+  """
+  @spec install_url(String.t()) :: String.t() | nil
+  def install_url(state) do
+    case fetch() do
+      {:ok, %{slug: slug}} ->
+        "https://github.com/apps/#{slug}/installations/new?" <>
+          URI.encode_query(state: state)
+
+      :not_configured ->
+        nil
+    end
+  end
+
   defp all_present?(raw) do
     Enum.all?(@required_keys, fn key ->
       case raw[key] do

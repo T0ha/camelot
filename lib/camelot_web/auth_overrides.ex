@@ -55,20 +55,21 @@ defmodule CamelotWeb.AuthOverrides do
     set(:error_ul, "text-error font-light my-3 italic text-sm")
   end
 
-  override Components.Password.Input do
-    set(:field_class, "mt-2 mb-2")
-    set(:label_class, "label text-sm font-medium")
+  # "Log in with GitHub". Declaring the :github strategy on
+  # Camelot.Accounts.User is what puts the button on /sign-in;
+  # this only skins it. The GitHub SVG ships with the component,
+  # so :icon_src stays unset.
+  override Components.OAuth2 do
+    set(:root_class, "w-full")
+    set(:link_class, "btn btn-outline w-full gap-2 mt-2")
+    set(:icon_class, "w-5 h-5")
+  end
 
-    set(:input_class, """
-    input input-bordered w-full
-    """)
-
-    set(:input_class_with_error, """
-    input input-bordered input-error w-full
-    """)
-
-    set(:submit_class, "btn btn-primary w-full mt-4 mb-4")
-    set(:error_ul, "text-error font-light my-3 italic text-sm")
+  # Rendered automatically once a resource has both a form-style
+  # and a link-style strategy — without this it appears unstyled.
+  override Components.HorizontalRule do
+    set(:root_class, "divider")
+    set(:text, "or")
   end
 
   override Components.Flash do

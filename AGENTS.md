@@ -60,6 +60,7 @@ Follow the [Elixir Style Guide](https://github.com/christopheradams/elixir_style
 ## Project Guidelines
 
 - Use `mix precommit` alias when you are done with all changes and fix any pending issues
+- `Camelot.Accounts.User` has **two** auth strategies: `magic_link` and `github` ("Log in with GitHub"). GitHub sign-in reuses the GitHub App's OAuth credentials (`GITHUB_APP_CLIENT_ID` / `GITHUB_APP_CLIENT_SECRET`), identifies returning accounts by `github_user_id` (not email), and installs the App as part of the login round-trip — see `docs/self-hosting/github-app.md`
 - Use the already included `:req` (`Req`) library for HTTP requests
 - `POSTHOG_API_KEY` / `POSTHOG_API_HOST` drive both server-side capture (`Camelot.Telemetry.PostHogHandler`) and browser-side capture (`CamelotWeb.PostHogConfig`, `posthog-js` in `assets/js/app.js`) — both are disabled unless the key is set
 - `AHREFS_ANALYTICS_KEY` renders the Ahrefs Web Analytics snippet in the app and docs layouts (`CamelotWeb.AhrefsConfig`) — set it on the production app only, since the test cluster runs the same `MIX_ENV=prod` release

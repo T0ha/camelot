@@ -10,6 +10,7 @@ defmodule CamelotWeb.TaskLive do
   alias Camelot.Accounts.User
   alias Camelot.Agents.ModelLabel
   alias Camelot.Agents.Session
+  alias Camelot.Board.PrApproval
   alias Camelot.Board.Task
   alias Camelot.Board.TaskAttachment
   alias Camelot.Board.TaskLink
@@ -126,6 +127,13 @@ defmodule CamelotWeb.TaskLive do
     {:noreply, assign(socket, link_task: nil)}
   end
 
+  # A merge the 2-minute PR poller could not land. The task keeps its
+  # stage (the PR is still open), so the reason would otherwise never
+  # reach the page.
+  def handle_info({:pr_merge_failed, _task_id, message}, socket) do
+    {:noreply, put_flash(socket, :error, message)}
+  end
+
   # Never crash the card on an unexpected PubSub message.
   def handle_info(_msg, socket), do: {:noreply, socket}
 
@@ -145,7 +153,27 @@ defmodule CamelotWeb.TaskLive do
 
   defp provisioning?(_task, _live_output), do: false
 
+  # "Approve PR" is not a local state change: it approves and merges
+  # the PR on GitHub first, and the task only reaches done when the
+  # merge actually landed. The `:complete` action itself is untouched —
+  # `PrApproval` runs it through Ash exactly as the generic clause
+  # below does, so its validations, changes and notifiers still apply.
   @impl true
+  def handle_event("transition", %{"action" => "complete"}, socket) do
+    case PrApproval.approve_and_merge(socket.assigns.task) do
+      {:ok, updated} ->
+        broadcast_update(updated)
+
+        {:noreply,
+         socket
+         |> assign(task: Ash.load!(updated, @task_load))
+         |> put_flash(:info, "PR merged — task done")}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, PrApproval.error_message(reason))}
+    end
+  end
+
   def handle_event("transition", %{"action" => action}, socket) do
     task = socket.assigns.task
     action = String.to_existing_atom(action)
@@ -484,6 +512,12 @@ defmodule CamelotWeb.TaskLive do
 
   defp model_summary(_task), do: "Agent default"
 
+  # Approving a PR round-trips to GitHub twice (review, merge), so the
+  # button has to say it is working; the other transitions are local
+  # and instant.
+  defp transition_disable_label(:complete), do: "Merging…"
+  defp transition_disable_label(_action), do: nil
+
   defp stage_class(:draft), do: "badge-ghost"
   defp stage_class(:todo), do: "badge-ghost"
   defp stage_class(:planning), do: "badge-info"
@@ -545,6 +579,7 @@ defmodule CamelotWeb.TaskLive do
             :for={{action, label} <- @transitions}
             phx-click="transition"
             phx-value-action={action}
+            phx-disable-with={transition_disable_label(action)}
             class="btn btn-sm btn-primary"
           >
             {label}

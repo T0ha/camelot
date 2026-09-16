@@ -1,7 +1,7 @@
 defmodule Camelot.Github.Client do
   @moduledoc """
-  Req-based GitHub API client for PR status polling and
-  issue sync.
+  Req-based GitHub API client for PR status polling,
+  issue sync, and the PR write calls (approve, merge).
 
   Authenticates as a GitHub App installation when an
   `installation_id:` opt is given and the App is
@@ -11,12 +11,15 @@ defmodule Camelot.Github.Client do
   unauthenticated — there is no PAT to fall back to.
   """
 
+  @behaviour Camelot.Github.PullRequestApi
+
   alias Camelot.Github.InstallationTokenCache
 
   require Logger
 
   @base_url "https://api.github.com"
   @max_pages 20
+  @default_merge_method :squash
 
   @spec get_pull_request(String.t(), String.t(), integer(), keyword()) ::
           {:ok, map()} | {:error, term()}
@@ -127,6 +130,48 @@ defmodule Camelot.Github.Client do
   end
 
   @doc """
+  Merges a pull request.
+
+  The merge method comes from `merge_method:` (`:squash`, `:merge` or
+  `:rebase`, default `:squash`). GitHub answers `405` when the PR is
+  not in a mergeable state (branch protection, required checks still
+  failing, a draft PR, or the repo disallowing that merge method) and
+  `409` when the head moved or the branches conflict — both surface as
+  `{:error, {:http_error, status, body}}`.
+
+  Requires the App installation to hold Contents: write.
+  """
+  @spec merge_pull_request(String.t(), String.t(), integer(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def merge_pull_request(owner, repo, pr_number, opts \\ []) do
+    method = Keyword.get(opts, :merge_method, @default_merge_method)
+
+    request(
+      :put,
+      "/repos/#{owner}/#{repo}/pulls/#{pr_number}/merge",
+      Keyword.put(opts, :json, %{merge_method: to_string(method)})
+    )
+  end
+
+  @doc """
+  Submits an approving review on a pull request.
+
+  GitHub refuses with `422 "Can not approve your own pull request"`
+  when the review would come from the PR's own author — which is the
+  common case here, since the runner opens the PR with the same
+  installation token. Callers treat the approval as best effort.
+  """
+  @spec approve_pull_request(String.t(), String.t(), integer(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def approve_pull_request(owner, repo, pr_number, opts \\ []) do
+    request(
+      :post,
+      "/repos/#{owner}/#{repo}/pulls/#{pr_number}/reviews",
+      Keyword.put(opts, :json, %{event: "APPROVE"})
+    )
+  end
+
+  @doc """
   Lists repositories accessible to a GitHub App
   installation, for autocomplete-style pickers.
 
@@ -207,7 +252,10 @@ defmodule Camelot.Github.Client do
   defp request_with_headers(method, url_or_path, opts) do
     url = full_url(url_or_path)
 
-    req_opts = maybe_add_auth([method: method, url: url], Keyword.get(opts, :installation_id))
+    req_opts =
+      [method: method, url: url]
+      |> maybe_add_json(Keyword.get(opts, :json))
+      |> maybe_add_auth(Keyword.get(opts, :installation_id))
 
     case Req.request(req_opts) do
       {:ok, %Req.Response{status: status, body: body, headers: headers}}
@@ -228,6 +276,9 @@ defmodule Camelot.Github.Client do
 
   defp full_url("https://" <> _rest = url), do: url
   defp full_url(path), do: @base_url <> path
+
+  defp maybe_add_json(req_opts, nil), do: req_opts
+  defp maybe_add_json(req_opts, body), do: Keyword.put(req_opts, :json, body)
 
   defp maybe_add_auth(req_opts, nil), do: req_opts
 

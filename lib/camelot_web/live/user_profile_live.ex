@@ -176,14 +176,7 @@ defmodule CamelotWeb.UserProfileLive do
   end
 
   defp github_connect_url(user) do
-    case AppConfig.fetch() do
-      {:ok, %{slug: slug}} ->
-        state = GithubSetupController.state_token(user.id)
-        "https://github.com/apps/#{slug}/installations/new?state=#{state}"
-
-      :not_configured ->
-        nil
-    end
+    AppConfig.install_url(GithubSetupController.state_token(user.id))
   end
 
   defp rotate_default_ssh_key(socket) do

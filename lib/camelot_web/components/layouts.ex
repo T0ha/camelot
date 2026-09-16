@@ -55,12 +55,29 @@ defmodule CamelotWeb.Layouts do
   end
 
   @doc """
-  Builds the docs site URL by prefixing the endpoint host with `docs.`.
+  Builds the docs site URL for the current endpoint.
   """
   @spec docs_url() :: String.t()
-  def docs_url do
-    String.replace(CamelotWeb.Endpoint.url(), "://", "://docs.")
+  def docs_url, do: docs_url(CamelotWeb.Endpoint.url())
+
+  @doc """
+  Builds the docs site URL from a base URL.
+
+  The docs live on the `docs.` subdomain of the deployment's base domain.
+  Production serves the app from `app.camelotai.tech` while the docs are on
+  `docs.camelotai.tech`, so a leading `app.` label is replaced rather than
+  prefixed.
+  """
+  @spec docs_url(String.t()) :: String.t()
+  def docs_url(base_url) do
+    uri = URI.parse(base_url)
+
+    URI.to_string(%{uri | host: docs_host(uri.host)})
   end
+
+  @spec docs_host(String.t()) :: String.t()
+  defp docs_host("app." <> base), do: "docs." <> base
+  defp docs_host(host), do: "docs." <> host
 
   @doc """
   Provides dark vs light theme toggle based on themes defined in app.css.
