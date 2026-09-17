@@ -4,14 +4,17 @@ defmodule CamelotWeb.Plugs.RegistrationGate do
   `:registration_enabled` is `false`. Existing users still
   receive sign-in links normally — only first-time email
   submissions get rejected.
+
+  The GitHub sign-in equivalent lives in
+  `Camelot.Accounts.User.Changes.GateGithubRegistration`;
+  both report the same wording.
   """
 
   import Phoenix.Controller, only: [put_flash: 3, redirect: 2]
   import Plug.Conn
 
-  alias Camelot.Accounts.User
-
-  require Ash.Query
+  alias Camelot.Accounts.Errors.RegistrationDisabled
+  alias Camelot.Accounts.UserLookup
 
   @magic_link_request_path ["auth", "user", "magic_link", "request"]
 
@@ -34,26 +37,16 @@ defmodule CamelotWeb.Plugs.RegistrationGate do
     email |> to_string() |> String.downcase()
   end
 
-  defp gate(conn, "") do
-    deny(conn)
-  end
-
   defp gate(conn, email) do
-    User
-    |> Ash.Query.filter(email == ^email)
-    |> Ash.read_one(authorize?: false)
-    |> case do
-      {:ok, %User{}} -> conn
-      _ -> deny(conn)
+    case UserLookup.fetch_by_email(email) do
+      {:ok, _user} -> conn
+      :not_found -> deny(conn)
     end
   end
 
   defp deny(conn) do
     conn
-    |> put_flash(
-      :error,
-      "Registration is invite-only. Contact your administrator."
-    )
+    |> put_flash(:error, RegistrationDisabled.text())
     |> redirect(to: "/sign-in")
     |> halt()
   end

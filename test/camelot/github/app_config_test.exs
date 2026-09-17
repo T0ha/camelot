@@ -49,6 +49,27 @@ defmodule Camelot.Github.AppConfigTest do
     end
   end
 
+  describe "install_url/1" do
+    test "builds the App install URL with the state query param" do
+      Application.put_env(:camelot, :github_app, @valid)
+
+      assert AppConfig.install_url("st.ate") ==
+               "https://github.com/apps/camelot-dev/installations/new?state=st.ate"
+    end
+
+    test "encodes the state" do
+      Application.put_env(:camelot, :github_app, @valid)
+
+      assert AppConfig.install_url("a b/c") =~ "state=a+b%2Fc"
+    end
+
+    test "returns nil when the app is not configured" do
+      Application.put_env(:camelot, :github_app, [])
+
+      refute AppConfig.install_url("st.ate")
+    end
+  end
+
   describe "configured?/0" do
     test "true when fetch/0 succeeds" do
       Application.put_env(:camelot, :github_app, @valid)

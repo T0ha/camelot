@@ -46,6 +46,16 @@ defmodule CamelotWeb.AdminLive.SettingsTest do
       assert html =~ "gpu-new"
       assert Camelot.Settings.default_swarm_node_label() == "gpu-new"
     end
+
+    test "lists the three URLs the GitHub App registration needs", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/admin/settings")
+
+      assert html =~ "Setup URL"
+      assert html =~ "Webhook URL"
+      assert html =~ "Callback URL"
+      assert html =~ "/auth/user/github/callback"
+      assert html =~ "Email addresses: Read-only"
+    end
   end
 
   describe "as a non-admin user" do

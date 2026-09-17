@@ -1,0 +1,237 @@
+# Per-node OpenTelemetry agent.
+#
+# Deployed as a global-mode swarm service, so every node runs exactly one
+# instance. It is the only component that needs host access:
+#
+#   logs    - one filelog receiver per running container, discovered over
+#             the docker socket. Docker only encodes the container id in
+#             the log file path, so the readable name and the swarm
+#             service come from the observer, not the path.
+#   metrics - node level (hostmetrics) and per container (docker_stats).
+#
+# Nothing is exported to a vendor from here: everything goes over
+# OTLP/gRPC to the gateway, which owns the credentials and fans out.
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+  # Persists each filelog receiver's read offset. Without it the agent
+  # must choose between losing every container's startup logs (start_at:
+  # end) and re-sending whole files after every restart (start_at:
+  # beginning). Offsets are keyed by container id, so they stay valid
+  # across an agent restart - but only if this directory outlives the
+  # container. It must be the bind mount from README.md; on a plain
+  # container filesystem every restart replays every log file.
+  file_storage/filelog:
+    directory: /var/lib/otelcol/storage
+    timeout: 10s
+
+  # Emits an endpoint per running container. include_all_containers is
+  # required: almost nothing in this cluster publishes a port, and
+  # without it those containers are never discovered at all.
+  docker_observer:
+    endpoint: unix:///var/run/docker.sock
+    include_all_containers: true
+    # Discovery is event-driven: the observer watches the docker event
+    # stream, so containers are picked up as they start. This is only
+    # the periodic resync that repairs a missed event, hence generous -
+    # the default is 60m, and a short interval would just add API load
+    # to a node that already times out on container listings.
+    cache_sync_interval: 10m
+    # The 5s default is not enough on these nodes: listing containers
+    # times out while the host is swapping, and a failed observer start
+    # aborts the whole collector.
+    timeout: 20s
+    # Never collect our own logs. Without this the agent tails its own
+    # json log, so anything it prints about a log record becomes another
+    # log record - a feedback loop that fills the disk. Globs, because
+    # the deployed tag is a commit sha.
+    # The gateway is excluded for the same reason: a failing export
+    # makes it log, and shipping that log back through it amplifies the
+    # failure it is reporting. Both collectors stay readable with
+    # `docker service logs`.
+    excluded_images:
+      - "*camelotai-otel-agent*"
+      - "*camelotai-otel-gateway*"
+      - "*opentelemetry-collector-contrib*"
+
+receivers:
+  # root_path points at the host filesystem bind-mounted read-only at
+  # /hostfs. Without it the scrapers describe the collector's own
+  # container instead of the node.
+  host_metrics:
+    collection_interval: 60s
+    root_path: /hostfs
+    scrapers:
+      cpu: {}
+      load: {}
+      memory: {}
+      paging: {}
+      network: {}
+      processes: {}
+      disk: {}
+      filesystem:
+        exclude_mount_points:
+          match_type: regexp
+          mount_points:
+            - /hostfs/var/lib/docker/.*
+            - /var/lib/docker/.*
+        exclude_fs_types:
+          match_type: strict
+          fs_types: [overlay, tmpfs, devtmpfs, squashfs, nsfs, autofs]
+
+  # Per-container metrics, carrying the swarm service and task they
+  # belong to so they can be grouped per service downstream.
+  docker_stats:
+    endpoint: unix:///var/run/docker.sock
+    collection_interval: 60s
+    timeout: 20s
+    container_labels_to_metric_labels:
+      com.docker.swarm.service.name: docker.service.name
+      com.docker.swarm.task.name: docker.task.name
+      com.docker.swarm.node.id: docker.node.id
+
+  # One filelog receiver per discovered container. Backticked values are
+  # evaluated against the observer endpoint; the rest is static.
+  receiver_creator/logs:
+    watch_observers: [docker_observer]
+    receivers:
+      filelog:
+        # port == 0 selects the single port-less endpoint. Without it a
+        # container exposing N ports is matched N+1 times and every one
+        # of its log lines is shipped that many times over.
+        rule: type == "container" && port == 0
+        config:
+          include:
+            - /var/lib/docker/containers/`container_id`/`container_id`-json.log
+          # Safe because offsets are checkpointed: a container is read
+          # from the top the first time it is seen, which keeps its
+          # startup logs, and resumed in place afterwards.
+          start_at: beginning
+          storage: file_storage/filelog
+          # Without this the receiver drops records outright whenever
+          # memory_limiter refuses a batch, which it does while working
+          # through the first-start backlog. Retrying makes it stop
+          # reading and wait instead, trading tailing speed for not
+          # losing lines.
+          retry_on_failure:
+            enabled: true
+            initial_interval: 1s
+            max_interval: 30s
+          operators:
+            - id: container-parser
+              type: container
+              format: docker
+              # The path carries no metadata outside Kubernetes.
+              add_metadata_from_filepath: false
+              # A disk-full event on 2026-09-02 left a handful of
+              # truncated, spliced-together records in these files, and
+              # docker will do it again the next time a node fills up.
+              # Forward what cannot be parsed as a raw line instead of
+              # logging an error per occurrence: the data still reaches
+              # PostHog, where it is visible, rather than only showing
+              # up as collector noise.
+              on_error: send_quiet
+        resource_attributes:
+          container.id: '`container_id`'
+          # Swarm names containers <service>.<slot>.<taskid>, so fall back
+          # to the container name only for non-swarm containers.
+          service.name: >-
+            `"com.docker.swarm.service.name" in labels
+              ? labels["com.docker.swarm.service.name"]
+              : name`
+
+processors:
+  # First in every pipeline: these nodes are small and already OOM-prone,
+  # so the collector must shed load before the kernel does.
+  memory_limiter:
+    check_interval: 5s
+    # Under the 256 MiB swarm limit, with room for the binary, the Go
+    # runtime and the observer cache on top. Measured on a node: 128
+    # was too tight - the limiter refused data throughout the
+    # first-start backlog, which the receiver then had to retry.
+    limit_mib: 160
+    spike_limit_mib: 40
+
+  # Tags every signal with the node it came from. Order matters, and
+  # override: false means first detector wins: docker must come before
+  # system, because it asks the daemon for the node's name while system
+  # would fall back to the container's own hostname - a swarm task id
+  # that would scatter every service across meaningless host names.
+  resource_detection:
+    detectors: [env, docker, system]
+    timeout: 5s
+    override: false
+    system:
+      hostname_sources: [os]
+
+  # Metrics arrive with no service.name at all: docker_stats puts the
+  # swarm service on the data points, host_metrics knows only the node.
+  # Without this every metric lands in PostHog as "unknown", since that
+  # is what a backend shows when service.name is absent. Logs already
+  # carry it, set by the receiver_creator.
+  transform/metrics_service_name:
+    error_mode: ignore
+    metric_statements:
+      - context: resource
+        statements:
+          # The swarm label first. It is authoritative, and it is the
+          # only thing that works for global services, whose container
+          # names read <service>.<node-id>.<task-id> rather than
+          # .<slot>. - so trimming the container name cannot recover
+          # them. docker_stats promotes it to a *resource* attribute
+          # despite the option being called
+          # container_labels_to_metric_labels.
+          - set(resource.attributes["service.name"], resource.attributes["docker.service.name"]) where resource.attributes["docker.service.name"] != nil
+          # Containers outside swarm (captain-netdata, captain-goaccess)
+          # carry no label, but their name is already the plain thing.
+          - set(resource.attributes["service.name"], resource.attributes["container.name"]) where resource.attributes["service.name"] == nil and resource.attributes["container.name"] != nil
+          # host_metrics has no container at all, so the node is the
+          # subject - it appears in PostHog under its own hostname.
+          - set(resource.attributes["service.name"], resource.attributes["host.name"]) where resource.attributes["service.name"] == nil
+
+  batch:
+    timeout: 10s
+    send_batch_size: 512
+    send_batch_max_size: 1024
+
+exporters:
+  otlp/gateway:
+    endpoint: ${env:OTEL_GATEWAY_ENDPOINT:-srv-captain--otel-gateway:4317}
+    # Plaintext on the captain overlay network, which never leaves the
+    # cluster. Credentials live on the gateway, not here.
+    tls:
+      insecure: true
+    compression: gzip
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 60s
+    sending_queue:
+      enabled: true
+      # Deliberately small. The gateway is one hop away on the same
+      # overlay network, so the agent's job is to shed load rather than
+      # hold it: a deep queue here is memory the node does not have.
+      queue_size: 128
+
+service:
+  extensions: [health_check, docker_observer, file_storage/filelog]
+  telemetry:
+    logs:
+      level: ${env:OTEL_LOG_LEVEL:-warn}
+  pipelines:
+    logs:
+      receivers: [receiver_creator/logs]
+      processors: [memory_limiter, resource_detection, batch]
+      exporters: [otlp/gateway]
+    metrics:
+      receivers: [host_metrics, docker_stats]
+      processors:
+        - memory_limiter
+        # must precede the transform: it supplies host.name, which is
+        # the fallback service.name for node metrics
+        - resource_detection
+        - transform/metrics_service_name
+        - batch
+      exporters: [otlp/gateway]

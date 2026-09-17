@@ -119,8 +119,11 @@ Repository settings CI depends on:
   Repository admins are bypass actors, so an emergency merge is still
   possible — at the cost of the production deploy failing to resolve an
   image (see above).
-- **Actions → Workflow permissions**: "Read and write permissions". The
-  release-PR job needs `pull-requests: write` and `statuses: write`.
+- **Actions → General → Workflow permissions**: "Read and write
+  permissions" *and* "Allow GitHub Actions to create and approve pull
+  requests". The release-PR job needs `pull-requests: write` and
+  `statuses: write`; without the second checkbox `gh pr create` fails with
+  `GitHub Actions is not permitted to create or approve pull requests`.
 - **Environments** `test` and `production` hold the CapRover credentials
   (`APP_TOKEN`, `CAPROVER_SERVER`, `APP_NAME`) and the docs CDN variables.
 

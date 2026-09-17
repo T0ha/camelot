@@ -74,6 +74,38 @@ defmodule Camelot.Github.ClientTest do
     end
   end
 
+  describe "merge_pull_request/4" do
+    test "handles API errors gracefully" do
+      assert {:error, _} =
+               Client.merge_pull_request(
+                 "nonexistent-owner",
+                 "nonexistent-repo",
+                 999_999
+               )
+    end
+
+    test "handles API errors gracefully for an explicit merge method" do
+      assert {:error, _} =
+               Client.merge_pull_request(
+                 "nonexistent-owner",
+                 "nonexistent-repo",
+                 999_999,
+                 merge_method: :rebase
+               )
+    end
+  end
+
+  describe "approve_pull_request/4" do
+    test "handles API errors gracefully" do
+      assert {:error, _} =
+               Client.approve_pull_request(
+                 "nonexistent-owner",
+                 "nonexistent-repo",
+                 999_999
+               )
+    end
+  end
+
   describe "installation_id: opt" do
     test "proceeds unauthenticated (no crash) when the App isn't configured" do
       assert {:error, _} =

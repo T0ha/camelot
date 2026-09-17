@@ -20,12 +20,26 @@ assumes you're signed in there.
 
 ## 1. Sign in
 
-Camelot uses passwordless magic-link auth — there's no signup form and no
-password to set. Go to
-[app.camelotai.tech/sign-in](https://app.camelotai.tech/sign-in) and enter
-your email. Camelot emails you a magic link that's valid for 10 minutes —
-click it to sign in. On first sign-in, Camelot also generates an SSH
-keypair for you automatically (more on that in
+There's no signup form and no password to set. Go to
+[app.camelotai.tech/sign-in](https://app.camelotai.tech/sign-in) and pick
+either way in:
+
+- **Sign in with Github** (recommended) — the fastest path. One
+  authorization on GitHub signs you in *and* connects the Camelot GitHub App
+  to the repos you pick, so you land on the board ready to create projects
+  with no extra setup step. If you haven't installed the app yet, GitHub
+  offers *Install & Authorize* right on that screen.
+- **Magic link** — enter your email and Camelot sends you a sign-in link
+  that's valid for 10 minutes.
+
+Both end up at the same account: if the verified primary email on your
+GitHub account matches an existing Camelot user, that's you — no second
+account is created, and you can keep using either method. Changing your
+primary email on GitHub later doesn't fork your account either; Camelot asks
+whether you want to move your address over.
+
+On first sign-in, Camelot also generates an SSH keypair for you
+automatically (more on that in
 [Set up your profile](#2-set-up-your-profile)).
 
 ## 2. Set up your profile
@@ -38,12 +52,13 @@ Visit `/profile` to finish your personal setup:
   want a runner to reach a repo that isn't covered by the GitHub App
   below (e.g. a private repo on another git host); in that case, copy
   the public key shown here and add it to that host.
-- **GitHub App** — if your workspace has a GitHub App configured,
-  **Connect GitHub App** sends you to GitHub's installation flow;
-  once installed, runners push over HTTPS using your installation
-  and Camelot can poll PR/issue status for tasks you create. This is
-  the recommended way to connect GitHub — most users don't need to
-  touch the SSH key at all. **Disconnect** removes it any time.
+- **GitHub App** — already done if you signed in with GitHub; the
+  installation you authorized is listed here. Otherwise **Connect
+  GitHub App** sends you to GitHub's installation flow; once
+  installed, runners push over HTTPS using your installation and
+  Camelot can poll PR/issue status for tasks you create. This is the
+  recommended way to connect GitHub — most users don't need to touch
+  the SSH key at all. **Disconnect** removes it any time.
 - **Credentials** — add any API keys your agents need: a Claude,
   OpenAI, or Codex API key, or a generic secret. Pick a **Kind**, give
   it a **Name**, and paste the **Value**. These are encrypted at rest
@@ -119,8 +134,11 @@ Camelot also polls GitHub for this PR every 2 minutes in the background:
 - Once the PR is merged, the task moves to `done` on its own.
 
 You can also act manually from the task page at any point: **Approve
-PR** marks the task done immediately, or **Request Changes** sends it
-back to the agent.
+PR** approves the pull request on GitHub and merges it (squash merge by
+default), moving the task to `done` once the merge lands — if GitHub
+refuses the merge (branch protection, a required check still failing, a
+conflict) the task stays in `pr` and the page tells you why. **Request
+Changes** sends it back to the agent instead.
 
 Merging the PR (or clicking **Approve PR**) is the finish line — that's
 your first task shipped end-to-end.
