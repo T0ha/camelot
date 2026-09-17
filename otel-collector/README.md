@@ -8,10 +8,10 @@ the config is versioned and reviewed like any other code.
    every node                          one node
  ┌──────────────────────┐          ┌──────────────────┐
  │ otel-agent (global)  │          │ otel-gateway     │
- │  container logs      │  OTLP    │                  │ logs+traces  PostHog
- │  node metrics        │ ───────► │  the only place  │ ───────────►
- │  container metrics   │  gRPC    │  holding vendor  │ metrics      Better Stack
- └──────────────────────┘          │  credentials     │ ───────────►
+ │  container logs      │  OTLP    │                  │  logs
+ │  node metrics        │ ───────► │  the only place  │  traces      PostHog
+ │  container metrics   │  gRPC    │  holding vendor  │  metrics ───────────►
+ └──────────────────────┘          │  credentials     │
    Camelot backend  ──────────────►│                  │
    (traces, later)      OTLP       └──────────────────┘
 ```
@@ -26,8 +26,8 @@ place and the backend has one stable endpoint to push traces at.
 | Signal  | Source                                   | Destination  |
 |---------|------------------------------------------|--------------|
 | Logs    | every container, via `docker_observer` + one `filelog` receiver per container | PostHog |
-| Metrics | `host_metrics` (CPU, memory, disk, network, load, paging, processes) | Better Stack |
-| Metrics | `docker_stats` per container, labelled with its swarm service and task | Better Stack |
+| Metrics | `host_metrics` (CPU, memory, disk, network, load, paging, processes) | PostHog |
+| Metrics | `docker_stats` per container, labelled with its swarm service and task | PostHog |
 | Traces  | OTLP in on 4317/4318 — nothing produces them yet; the backend will | PostHog |
 
 Every log record carries `host.name` (the swarm node), `container.name`,
@@ -159,8 +159,6 @@ On **`otel-gateway`**:
 |----------|-------|
 | `POSTHOG_PROJECT_API_KEY` | project token, `phc_…` — *not* a personal API key |
 | `POSTHOG_HOST` | `https://us.i.posthog.com` or `https://eu.i.posthog.com` |
-| `BETTERSTACK_INGEST_URL` | the source's ingesting host, `https://<id>.betterstackdata.com` |
-| `BETTERSTACK_SOURCE_TOKEN` | source token from the Better Stack dashboard |
 | `DEPLOYMENT_ENV` | `test` (tags everything, so test and prod stay apart in one PostHog project) |
 
 On **`otel-agent`**: nothing is required. `OTEL_GATEWAY_ENDPOINT`
@@ -207,7 +205,7 @@ Raise `OTEL_LOG_LEVEL` to `info` on either app to see pipeline activity.
   are checkpointed to `/var/lib/otelcol/storage`, so this happens once,
   not on every restart. At the time of writing the existing backlog was
   ~106 MB on the manager and ~41 MB on the arm node. The gateway's send
-  queue is in memory and bounded (1000 batches), so a vendor outage
+  queue is in memory and bounded (1000 batches), so a PostHog outage
   lasting past that point drops the oldest data rather than growing
   without limit. Surviving a longer outage would need a disk-backed
   queue, which needs another mount — not worth it for test.
@@ -225,6 +223,15 @@ Raise `OTEL_LOG_LEVEL` to `info` on either app to see pipeline activity.
 - **The agent runs as root** (the upstream image runs as uid 10001)
   because the docker socket and the container log directory are
   root-owned on the host. The gateway keeps the unprivileged user.
+- **PostHog metrics are in private alpha.** Ingest is live — the EU
+  endpoint returns 200 for this project — but the metrics *viewer* is
+  enabled per team, so data can be accepted and still not be visible
+  yet. Nothing else in the pipeline depends on it.
+- **Metrics are sent with the temporality the receivers declare**
+  (cumulative for `host_metrics` and `docker_stats`). PostHog reads the
+  declared temporality rather than differencing, so if counters read as
+  ever-growing totals in the viewer, insert a `cumulativetodelta`
+  processor ahead of the exporter rather than changing the receivers.
 - **Corrupt log lines are forwarded, not dropped.** A disk-full event on
   2026-09-02 left a handful of truncated, spliced-together records in
   these files, and docker will do it again the next time a node fills
