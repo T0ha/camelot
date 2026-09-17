@@ -137,6 +137,26 @@ defmodule Camelot.Accounts.User do
       description("Email this user when one of their task cards is done.")
     end
 
+    attribute :onboarding_dismissed_at, :utc_datetime_usec do
+      allow_nil?(true)
+
+      description(
+        "Set when the user closed the first-login setup guide. " <>
+          "Stops the welcome modal from auto-opening again; the " <>
+          "setup checklist keeps showing until setup is done."
+      )
+    end
+
+    attribute :onboarding_completed_at, :utc_datetime_usec do
+      allow_nil?(true)
+
+      description(
+        "Set the first time every applicable setup step was " <>
+          "observed done. Short-circuits the onboarding on_mount " <>
+          "hook so settled accounts pay no per-navigation queries."
+      )
+    end
+
     timestamps()
   end
 
@@ -234,6 +254,16 @@ defmodule Camelot.Accounts.User do
       change(set_attribute(:github_email_declined, nil))
     end
 
+    update :dismiss_onboarding do
+      accept([])
+      change(set_attribute(:onboarding_dismissed_at, &DateTime.utc_now/0))
+    end
+
+    update :complete_onboarding do
+      accept([])
+      change(set_attribute(:onboarding_completed_at, &DateTime.utc_now/0))
+    end
+
     update :decline_github_email do
       argument :email, :ci_string do
         allow_nil?(false)
@@ -277,6 +307,10 @@ defmodule Camelot.Accounts.User do
     end
 
     policy action([:adopt_github_email, :decline_github_email]) do
+      authorize_if(expr(id == ^actor(:id)))
+    end
+
+    policy action([:dismiss_onboarding, :complete_onboarding]) do
       authorize_if(expr(id == ^actor(:id)))
     end
   end

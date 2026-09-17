@@ -113,10 +113,10 @@ defmodule CamelotWeb.Router do
 
   ash_authentication_live_session :authenticated,
     otp_app: :camelot,
-    on_mount: {
-      CamelotWeb.LiveUserAuth,
-      :live_user_required
-    } do
+    on_mount: [
+      {CamelotWeb.LiveUserAuth, :live_user_required},
+      {CamelotWeb.OnboardingHook, :default}
+    ] do
     scope "/", CamelotWeb do
       pipe_through :browser
 
@@ -143,10 +143,10 @@ defmodule CamelotWeb.Router do
 
   ash_authentication_live_session :admin,
     otp_app: :camelot,
-    on_mount: {
-      CamelotWeb.LiveUserAuth,
-      :live_admin_required
-    } do
+    on_mount: [
+      {CamelotWeb.LiveUserAuth, :live_admin_required},
+      {CamelotWeb.OnboardingHook, :default}
+    ] do
     scope "/admin", CamelotWeb do
       pipe_through :browser
 

@@ -5,6 +5,8 @@ defmodule CamelotWeb.Layouts do
   """
   use CamelotWeb, :html
 
+  import CamelotWeb.OnboardingComponents
+
   # Embed all files in layouts/* within this module.
   # The default root.html.heex file contains the HTML
   # skeleton of your application, namely HTML headers
