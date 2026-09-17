@@ -166,6 +166,31 @@ processors:
     system:
       hostname_sources: [os]
 
+  # Metrics arrive with no service.name at all: docker_stats puts the
+  # swarm service on the data points, host_metrics knows only the node.
+  # Without this every metric lands in PostHog as "unknown", since that
+  # is what a backend shows when service.name is absent. Logs already
+  # carry it, set by the receiver_creator.
+  transform/metrics_service_name:
+    error_mode: ignore
+    metric_statements:
+      - context: resource
+        statements:
+          # The swarm label first. It is authoritative, and it is the
+          # only thing that works for global services, whose container
+          # names read <service>.<node-id>.<task-id> rather than
+          # .<slot>. - so trimming the container name cannot recover
+          # them. docker_stats promotes it to a *resource* attribute
+          # despite the option being called
+          # container_labels_to_metric_labels.
+          - set(resource.attributes["service.name"], resource.attributes["docker.service.name"]) where resource.attributes["docker.service.name"] != nil
+          # Containers outside swarm (captain-netdata, captain-goaccess)
+          # carry no label, but their name is already the plain thing.
+          - set(resource.attributes["service.name"], resource.attributes["container.name"]) where resource.attributes["service.name"] == nil and resource.attributes["container.name"] != nil
+          # host_metrics has no container at all, so the node is the
+          # subject - it appears in PostHog under its own hostname.
+          - set(resource.attributes["service.name"], resource.attributes["host.name"]) where resource.attributes["service.name"] == nil
+
   batch:
     timeout: 10s
     send_batch_size: 512
@@ -202,5 +227,11 @@ service:
       exporters: [otlp/gateway]
     metrics:
       receivers: [host_metrics, docker_stats]
-      processors: [memory_limiter, resource_detection, batch]
+      processors:
+        - memory_limiter
+        # must precede the transform: it supplies host.name, which is
+        # the fallback service.name for node metrics
+        - resource_detection
+        - transform/metrics_service_name
+        - batch
       exporters: [otlp/gateway]

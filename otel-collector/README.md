@@ -8,10 +8,10 @@ the config is versioned and reviewed like any other code.
    every node                          one node
  ┌──────────────────────┐          ┌──────────────────┐
  │ otel-agent (global)  │          │ otel-gateway     │
- │  container logs      │  OTLP    │                  │ logs+traces  PostHog
- │  node metrics        │ ───────► │  the only place  │ ───────────►
- │  container metrics   │  gRPC    │  holding vendor  │ metrics      Better Stack
- └──────────────────────┘          │  credentials     │ ───────────►
+ │  container logs      │  OTLP    │                  │  logs
+ │  node metrics        │ ───────► │  the only place  │  traces      PostHog
+ │  container metrics   │  gRPC    │  holding vendor  │  metrics ───────────►
+ └──────────────────────┘          │  credentials     │
    Camelot backend  ──────────────►│                  │
    (traces, later)      OTLP       └──────────────────┘
 ```
@@ -26,15 +26,19 @@ place and the backend has one stable endpoint to push traces at.
 | Signal  | Source                                   | Destination  |
 |---------|------------------------------------------|--------------|
 | Logs    | every container, via `docker_observer` + one `filelog` receiver per container | PostHog |
-| Metrics | `host_metrics` (CPU, memory, disk, network, load, paging, processes) | Better Stack |
-| Metrics | `docker_stats` per container, labelled with its swarm service and task | Better Stack |
+| Metrics | `host_metrics` (CPU, memory, disk, network, load, paging, processes) | PostHog |
+| Metrics | `docker_stats` per container, labelled with its swarm service and task | PostHog |
 | Traces  | OTLP in on 4317/4318 — nothing produces them yet; the backend will | PostHog |
 
-Every log record carries `host.name` (the swarm node), `container.name`,
-`container.id`, `container.image.name` and `service.name`. For swarm
-containers `service.name` is the swarm service (`srv-captain--camelotai`,
-`camelot-task-<uuid>`, …); everything else falls back to the container
-name.
+Every record carries `service.name`. For swarm containers that is the
+swarm service (`srv-captain--camelotai`, `camelot-task-<uuid>`, …); for
+containers outside swarm it is the container name; and node-level
+`host_metrics`, which has no container at all, is attributed to the node
+itself (`vnic-camelotai-01`). Without this metrics reach PostHog as
+`unknown`, which is what a backend shows when `service.name` is absent.
+
+Every log record additionally carries `host.name` (the swarm node),
+`container.name`, `container.id` and `container.image.name`.
 
 **The swarm service is named differently per signal**, which matters when
 building dashboards that span both:
@@ -52,11 +56,29 @@ per-service one.
 
 ## Deploying
 
-`.github/workflows/deploy-otel-collector.yml` builds both images
-multi-arch and deploys them on pushes to `develop` that touch this
-directory. It is gated on the `test` environment variable
-`DEPLOY_OTEL_COLLECTOR=true`, so it no-ops until the CapRover apps below
-exist.
+Two workflows, one per cluster, each gated on a
+`DEPLOY_OTEL_COLLECTOR=true` variable in its own GitHub environment so it
+no-ops until that cluster's CapRover apps exist:
+
+| Workflow | Trigger | Environment | Cluster |
+|---|---|---|---|
+| `deploy-otel-collector.yml` | push to `develop` touching `otel-collector/**` | `test` | test.camelotai.tech |
+| `deploy-otel-collector-production.yml` | push to `main` touching `otel-collector/**` | `production` | app.camelotai.tech |
+
+Both build the images multi-arch and tag them with the commit sha.
+
+The production workflow builds rather than reusing the image the develop
+run produced, which is what `deploy-production.yml` does for the app.
+That image is tagged with the develop commit sha, and main's second
+parent is whatever develop pointed at when the release PR merged — not
+necessarily the commit that last touched `otel-collector/`, so the tag is
+frequently absent. These images are an upstream collector plus a `COPY`,
+so rebuilding from the merged tree is cheap and keeps every tag
+immutable.
+
+**The setup below is per cluster.** Production needs its own CapRover
+apps, its own app tokens in the `production` environment, its own node
+label, and its own run of the Global bootstrap.
 
 ### 1. CapRover apps
 
@@ -89,8 +111,6 @@ docker node update --label-add otel_role=gateway vmic-camelotai-arm-01
 **`otel-agent`** — one per node. Under *Service Update Override*:
 
 ```yaml
-Mode:
-    Global: {}
 TaskTemplate:
     ContainerSpec:
       Mounts:
@@ -116,8 +136,11 @@ TaskTemplate:
         MemoryBytes: 67108864
 ```
 
-`Mode: Global: {}` is how the existing `docker-socket-proxy` app runs on
-every node; CapRover's instance count is ignored once it is set.
+**Do not add a `Mode: Global: {}` block here — it cannot work.** CapRover
+merges the override additively, so `Global` lands next to the generated
+`Mode: Replicated` and docker rejects the spec with *"must specify only
+one service mode"*. Saving it fails outright. The service is made Global
+after the first deploy instead, with `bootstrap-global-agent.sh` below.
 
 The mounts are all read-only except the offset directory. `/` at
 `/hostfs` is what `host_metrics` measures — without it the scrapers
@@ -130,7 +153,27 @@ hold up a task:
 sudo mkdir -p /var/lib/otelcol-agent
 ```
 
-### 2. App environment variables
+### 2. Make the agent Global (once, after the first deploy)
+
+CapRover deploys the agent as an ordinary single-replica service, which
+collects logs from one node only. A swarm service cannot be converted in
+place — the daemon answers `service mode change is not allowed` — so it
+has to be recreated. On a swarm manager:
+
+```sh
+./bootstrap-global-agent.sh otel-agent
+```
+
+It reuses the spec CapRover generated and changes only the mode, so every
+label, network, mount and limit is preserved. It is idempotent, and safe
+to re-run: it exits immediately if the service is already Global. Verify
+with `docker service ls` — the agent should read `global   2/2`.
+
+CapRover manages the service normally afterwards; its override merge is a
+no-op against an already-Global spec. **Re-run this if the app is ever
+deleted and recreated.**
+
+### 3. App environment variables
 
 On **`otel-gateway`**:
 
@@ -138,8 +181,6 @@ On **`otel-gateway`**:
 |----------|-------|
 | `POSTHOG_PROJECT_API_KEY` | project token, `phc_…` — *not* a personal API key |
 | `POSTHOG_HOST` | `https://us.i.posthog.com` or `https://eu.i.posthog.com` |
-| `BETTERSTACK_INGEST_URL` | the source's ingesting host, `https://<id>.betterstackdata.com` |
-| `BETTERSTACK_SOURCE_TOKEN` | source token from the Better Stack dashboard |
 | `DEPLOYMENT_ENV` | `test` (tags everything, so test and prod stay apart in one PostHog project) |
 
 On **`otel-agent`**: nothing is required. `OTEL_GATEWAY_ENDPOINT`
@@ -152,7 +193,7 @@ If you deploy the gateway under a different name via
 `OTEL_GATEWAY_ENDPOINT` on the agent app to match, or the agents export
 into nothing.
 
-### 3. GitHub configuration
+### 4. GitHub configuration
 
 `test` environment secrets: `OTEL_GATEWAY_APP_TOKEN`,
 `OTEL_AGENT_APP_TOKEN` (CapRover app deploy tokens).
@@ -186,7 +227,7 @@ Raise `OTEL_LOG_LEVEL` to `info` on either app to see pipeline activity.
   are checkpointed to `/var/lib/otelcol/storage`, so this happens once,
   not on every restart. At the time of writing the existing backlog was
   ~106 MB on the manager and ~41 MB on the arm node. The gateway's send
-  queue is in memory and bounded (1000 batches), so a vendor outage
+  queue is in memory and bounded (1000 batches), so a PostHog outage
   lasting past that point drops the oldest data rather than growing
   without limit. Surviving a longer outage would need a disk-backed
   queue, which needs another mount — not worth it for test.
@@ -204,6 +245,15 @@ Raise `OTEL_LOG_LEVEL` to `info` on either app to see pipeline activity.
 - **The agent runs as root** (the upstream image runs as uid 10001)
   because the docker socket and the container log directory are
   root-owned on the host. The gateway keeps the unprivileged user.
+- **PostHog metrics are in private alpha.** Ingest is live — the EU
+  endpoint returns 200 for this project — but the metrics *viewer* is
+  enabled per team, so data can be accepted and still not be visible
+  yet. Nothing else in the pipeline depends on it.
+- **Metrics are sent with the temporality the receivers declare**
+  (cumulative for `host_metrics` and `docker_stats`). PostHog reads the
+  declared temporality rather than differencing, so if counters read as
+  ever-growing totals in the viewer, insert a `cumulativetodelta`
+  processor ahead of the exporter rather than changing the receivers.
 - **Corrupt log lines are forwarded, not dropped.** A disk-full event on
   2026-09-02 left a handful of truncated, spliced-together records in
   these files, and docker will do it again the next time a node fills
@@ -215,6 +265,19 @@ Raise `OTEL_LOG_LEVEL` to `info` on either app to see pipeline activity.
   backlog; at 160 a real node settles around 137 MiB with nothing
   refused. The filelog receivers also retry rather than drop, so if the
   limiter ever does bite they stop reading and wait.
+- **`Could not inspect updated container` is expected noise.** When a
+  container exits, `docker_stats` and `docker_observer` can race to
+  inspect it after it is gone and log an error apiece. Production churns
+  `camelot-task-*` containers constantly, so this recurs. Nothing is
+  dropped — the container simply stopped existing between the docker
+  event and the inspect call.
+- **Service names differ per cluster.** CapRover names newer apps bare
+  (`otel-gateway` on test) and older ones with a prefix
+  (`srv-captain--otel-gateway` on production). The agent's default
+  `OTEL_GATEWAY_ENDPOINT` uses the prefixed form, which works on both:
+  it is the real service name on production, and CapRover adds it as a
+  network alias on test. Use `docker service ls` to see which form a
+  cluster uses before writing scripts against a name.
 - **Short-lived containers may be missed.** Discovery happens on a
   docker event, so a container that starts and exits within roughly a
   second can be gone before its receiver starts.

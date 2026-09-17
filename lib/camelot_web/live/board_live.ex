@@ -34,7 +34,9 @@ defmodule CamelotWeb.BoardLive do
       socket
       |> assign(
         see_all: params["scope"] == "all",
-        new_task_open?: false,
+        # The setup guide's last step links here with the New
+        # Task modal already open.
+        new_task_open?: params["onboarding"] == "task",
         parent_task: nil,
         blocked_by_task: nil
       )
@@ -88,6 +90,10 @@ defmodule CamelotWeb.BoardLive do
           create_requested_links(task, socket.assigns.parent_task, socket.assigns.blocked_by_task)
 
         broadcast_task_event(:task_created, task)
+
+        # Ticks the setup guide's last step without waiting
+        # for a navigation. Caught by CamelotWeb.OnboardingHook.
+        send(self(), {:onboarding, :refresh})
 
         {:noreply,
          socket
