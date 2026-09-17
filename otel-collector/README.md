@@ -265,6 +265,19 @@ Raise `OTEL_LOG_LEVEL` to `info` on either app to see pipeline activity.
   backlog; at 160 a real node settles around 137 MiB with nothing
   refused. The filelog receivers also retry rather than drop, so if the
   limiter ever does bite they stop reading and wait.
+- **`Could not inspect updated container` is expected noise.** When a
+  container exits, `docker_stats` and `docker_observer` can race to
+  inspect it after it is gone and log an error apiece. Production churns
+  `camelot-task-*` containers constantly, so this recurs. Nothing is
+  dropped — the container simply stopped existing between the docker
+  event and the inspect call.
+- **Service names differ per cluster.** CapRover names newer apps bare
+  (`otel-gateway` on test) and older ones with a prefix
+  (`srv-captain--otel-gateway` on production). The agent's default
+  `OTEL_GATEWAY_ENDPOINT` uses the prefixed form, which works on both:
+  it is the real service name on production, and CapRover adds it as a
+  network alias on test. Use `docker service ls` to see which form a
+  cluster uses before writing scripts against a name.
 - **Short-lived containers may be missed.** Discovery happens on a
   docker event, so a container that starts and exits within roughly a
   second can be gone before its receiver starts.
