@@ -46,6 +46,9 @@ defmodule CamelotWeb.BoardLive do
     {:ok, socket}
   end
 
+  # Picker-backed link fields held outside the AshPhoenix create form.
+  @picker_fields [:parent_task, :blocked_by_task]
+
   @impl true
   def handle_info({:task_updated, _task}, socket) do
     {:noreply, load_board(socket)}
@@ -55,11 +58,11 @@ defmodule CamelotWeb.BoardLive do
     {:noreply, socket}
   end
 
-  def handle_info({:task_selected, field, task}, socket) when field in [:parent_task, :blocked_by_task] do
+  def handle_info({:task_selected, field, task}, socket) when field in @picker_fields do
     {:noreply, assign(socket, field, task)}
   end
 
-  def handle_info({:task_cleared, field}, socket) when field in [:parent_task, :blocked_by_task] do
+  def handle_info({:task_cleared, field}, socket) when field in @picker_fields do
     {:noreply, assign(socket, field, nil)}
   end
 
@@ -243,7 +246,10 @@ defmodule CamelotWeb.BoardLive do
         :ok
 
       {:error, error} ->
-        Logger.warning("Failed to create #{link_type} link for task #{target_task.id}: #{inspect(error)}")
+        Logger.warning(
+          "Failed to create #{link_type} link for task " <>
+            "#{target_task.id}: #{inspect(error)}"
+        )
 
         {:error, link_label(link_type, source_task)}
     end

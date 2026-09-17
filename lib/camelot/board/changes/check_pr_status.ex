@@ -353,7 +353,9 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   defp maybe_requeue(_dependent), do: :ok
 
   defp stamp_sync(link, head_sha) do
-    case Ash.update(link, %{base_synced_sha: head_sha, base_synced_at: DateTime.utc_now()}, action: :sync_base) do
+    attrs = %{base_synced_sha: head_sha, base_synced_at: DateTime.utc_now()}
+
+    case Ash.update(link, attrs, action: :sync_base) do
       {:ok, _link} ->
         :ok
 

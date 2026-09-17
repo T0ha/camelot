@@ -102,6 +102,7 @@ defmodule Camelot.Board.TaskLink.Changes.RejectCycle do
     |> MapSet.new(&edge_destination/1)
   end
 
-  defp edge_destination(%TaskLink{link_type: :blocks, source_task_id: source_id}), do: source_id
-  defp edge_destination(%TaskLink{link_type: :parent_of, target_task_id: target_id}), do: target_id
+  defp edge_destination(%TaskLink{link_type: :blocks} = link), do: link.source_task_id
+
+  defp edge_destination(%TaskLink{link_type: :parent_of} = link), do: link.target_task_id
 end

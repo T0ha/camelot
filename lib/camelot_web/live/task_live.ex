@@ -1217,7 +1217,9 @@ defmodule CamelotWeb.TaskLive do
       blocked_tasks: blocked_tasks,
       subtasks: subtasks,
       related: related,
-      hidden_count: hidden_parent + hidden_blockers + hidden_blocked + hidden_subtasks + hidden_related
+      hidden_count:
+        hidden_parent + hidden_blockers + hidden_blocked + hidden_subtasks +
+          hidden_related
     }
   end
 

@@ -75,7 +75,11 @@ defmodule CamelotWeb.Components.TaskPicker do
     |> Ash.Query.filter(ilike(title, ^like_pattern(query)))
     |> Ash.Query.filter(id not in ^exclude_ids)
     |> Ash.Query.limit(@max_results)
-    |> Scope.maybe_scope(socket.assigns.current_user, socket.assigns.see_all?, &Scope.scope_tasks/2)
+    |> Scope.maybe_scope(
+      socket.assigns.current_user,
+      socket.assigns.see_all?,
+      &Scope.scope_tasks/2
+    )
     |> Ash.read!(load: [:project])
   end
 

@@ -288,7 +288,9 @@ defmodule Camelot.Board.PromptBuilder do
   """
   @spec related_context_block(Task.t()) :: String.t()
   def related_context_block(task) do
-    lines = blocker_lines(task) ++ parent_lines(task) ++ subtask_lines(task) ++ related_lines(task)
+    lines =
+      blocker_lines(task) ++
+        parent_lines(task) ++ subtask_lines(task) ++ related_lines(task)
 
     case lines do
       [] -> ""
