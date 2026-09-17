@@ -30,7 +30,12 @@ defmodule CamelotWeb.BoardLive do
 
     socket =
       socket
-      |> assign(see_all: params["scope"] == "all", new_task_open?: false)
+      |> assign(
+        see_all: params["scope"] == "all",
+        # The setup guide's last step links here with the New
+        # Task modal already open.
+        new_task_open?: params["onboarding"] == "task"
+      )
       |> load_board()
       |> allow_upload(:attachment, accept: :any, max_entries: 5, max_file_size: 25_000_000)
 
@@ -70,6 +75,10 @@ defmodule CamelotWeb.BoardLive do
         end)
 
         broadcast_task_event(:task_created, task)
+
+        # Ticks the setup guide's last step without waiting
+        # for a navigation. Caught by CamelotWeb.OnboardingHook.
+        send(self(), {:onboarding, :refresh})
 
         {:noreply,
          socket

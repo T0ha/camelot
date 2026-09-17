@@ -42,6 +42,14 @@ On first sign-in, Camelot also generates an SSH keypair for you
 automatically (more on that in
 [Set up your profile](#2-set-up-your-profile)).
 
+The first authenticated page you land on greets you with a short **setup
+guide** covering exactly the four steps below: connect the GitHub App,
+add a Claude token, create a project, create a task. Each step links
+straight to the screen that completes it. Close it and a compact
+checklist strip stays in the header until you're done — steps you
+already satisfied (the GitHub App, if you signed in with GitHub) arrive
+ticked, and the strip disappears for good once all of them are.
+
 ## 2. Set up your profile
 
 Visit `/profile` to finish your personal setup:
@@ -70,20 +78,36 @@ Visit `/profile` to finish your personal setup:
 
 ## 3. Create a project
 
-Go to `/projects/new`. Only **Name** is required — Camelot derives a
-local path under `~/projects/<slug>` if you don't pick one with the
-**Path** folder picker. Optional fields:
+Go to `/projects/new`. The form asks for four things, and only **Name**
+is required:
 
-- **Description**
-- **GitHub URL** / **GitHub Owner** / **GitHub Repo** — set these so
-  Camelot knows which repo to open PRs against and poll CI status for. If
-  your local repo already has a GitHub remote, these are auto-detected.
-  Camelot authenticates those calls with whichever GitHub App
-  installation you connected in [Set up your
+- **Name** — Camelot derives a local path under `~/projects/<slug>` from
+  it.
+- **Description** — free text, shown on the project page.
+- **GitHub Repository** — pick the repo from the list of repositories
+  your GitHub App installation can see, so Camelot knows which repo to
+  open PRs against and poll CI status for. Camelot authenticates those
+  calls with whichever installation you connected in [Set up your
   profile](#2-set-up-your-profile) — no GitHub App connected just means
   unauthenticated API calls instead.
-- **Runner Image Override** — only needed if this project requires a
+- **Runner Image** — leave blank unless this project needs a
   non-default runner image.
+
+Everything else lives under **Advanced settings**, collapsed by default:
+
+- **Path** — override the derived `~/projects/<slug>` location with the
+  folder picker.
+- **GitHub Owner** / **GitHub Repo** — filled in for you from the
+  repository you picked, or auto-detected from a local repo's GitHub
+  remote. Edit them only if you need to point somewhere else.
+- The seven **Agent CLI overrides** — command prefix, executable, base
+  args, environment variables, permission args by stage, internal tools
+  and base retry delay. Each one applies to every task in this project,
+  on top of the chosen agent CLI's defaults.
+
+Editing an existing project shows the same split, plus **Status**
+(active/archived) under Advanced settings; the section starts expanded
+when the project already uses any of those fields.
 
 Click **Save**.
 

@@ -6,6 +6,8 @@ defmodule CamelotWeb.ProjectLiveTest do
   alias Camelot.Accounts.User
   alias Camelot.Projects.Project
 
+  require Ash.Query
+
   setup :register_and_log_in_user
 
   describe "Index" do
@@ -63,6 +65,113 @@ defmodule CamelotWeb.ProjectLiveTest do
                live(conn, ~p"/projects/#{project.id}")
 
       assert kind in [:redirect, :live_redirect]
+    end
+  end
+
+  describe "advanced settings" do
+    test "the new form shows only the four essential fields up front", %{conn: conn} do
+      {:ok, view, html} = live(conn, ~p"/projects/new")
+
+      assert html =~ "Advanced settings"
+      assert has_element?(view, "#project-advanced.hidden")
+
+      assert has_element?(view, "#project-form input[name=name]")
+      assert has_element?(view, "#project-form textarea[name=description]")
+      assert has_element?(view, "#github-repo-picker-container")
+      assert has_element?(view, "#runner-image-picker-container")
+    end
+
+    test "toggling reveals the advanced fields", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/projects/new")
+
+      view |> element("button", "Advanced settings") |> render_click()
+
+      refute has_element?(view, "#project-advanced.hidden")
+    end
+
+    test "collapsed advanced fields still round-trip through submit", %{conn: conn} do
+      name = "advanced-#{System.unique_integer([:positive])}"
+
+      {:ok, view, _html} = live(conn, ~p"/projects/new")
+
+      # Typing the name derives the path into the collapsed
+      # folder picker, exactly as it does in the browser.
+      view |> form("#project-form", %{"name" => name}) |> render_change()
+
+      view
+      |> form("#project-form", %{
+        "github_owner" => "acme",
+        "github_repo" => "widgets",
+        "executable_override" => "claude-next"
+      })
+      |> render_submit()
+
+      project = Ash.read_one!(Ash.Query.filter(Project, name == ^name))
+
+      assert project.github_owner == "acme"
+      assert project.github_repo == "widgets"
+      assert project.executable_override == "claude-next"
+      assert project.path =~ name
+    end
+
+    test "the edit form starts expanded when an advanced field is set", %{
+      conn: conn,
+      user: user
+    } do
+      {:ok, project} =
+        Ash.create(
+          Project,
+          %{
+            name: "expanded-#{System.unique_integer()}",
+            path: "/tmp/expanded",
+            executable_override: "claude-next"
+          },
+          actor: user
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}/edit")
+
+      refute has_element?(view, "#project-advanced.hidden")
+    end
+
+    test "the edit form starts collapsed with no advanced field set", %{
+      conn: conn,
+      user: user
+    } do
+      {:ok, project} =
+        Ash.create(
+          Project,
+          %{name: "collapsed-#{System.unique_integer()}", path: "/tmp/collapsed"},
+          actor: user
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}/edit")
+
+      assert has_element?(view, "#project-advanced.hidden")
+    end
+
+    test "the edit form stays collapsed for a project with a repository", %{
+      conn: conn,
+      user: user
+    } do
+      {:ok, project} =
+        Ash.create(
+          Project,
+          %{
+            name: "repo-backed-#{System.unique_integer()}",
+            path: "/tmp/repo-backed",
+            github_repo_url: "https://github.com/acme/widgets",
+            github_owner: "acme",
+            github_repo: "widgets"
+          },
+          actor: user
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}/edit")
+
+      # Owner and repo are derived from the URL, so counting them
+      # as advanced would expand the section for every project.
+      assert has_element?(view, "#project-advanced.hidden")
     end
   end
 
