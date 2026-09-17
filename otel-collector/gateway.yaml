@@ -4,9 +4,7 @@
 # Camelot backend (traces). It is the only component holding vendor
 # credentials, and the only place routing changes have to be made.
 #
-#   logs   -> PostHog
-#   traces -> PostHog
-#   metrics -> Better Stack
+#   logs, traces and metrics -> PostHog
 #
 # Runs as a single replica, pinned by node label to a node with enough
 # memory - see README.md.
@@ -49,28 +47,10 @@ exporters:
   otlphttp/posthog:
     logs_endpoint: ${env:POSTHOG_HOST:-https://us.i.posthog.com}/i/v1/logs
     traces_endpoint: ${env:POSTHOG_HOST:-https://us.i.posthog.com}/i/v1/traces
+    metrics_endpoint: ${env:POSTHOG_HOST:-https://us.i.posthog.com}/i/v1/metrics
     # The project token (phc_...), not a personal API key.
     headers:
       Authorization: Bearer ${env:POSTHOG_PROJECT_API_KEY}
-    compression: gzip
-    # Above the 30s default: batches are small, but the first start
-    # ships an accumulated backlog and a slow-but-successful request
-    # should not be abandoned into a retry.
-    timeout: 60s
-    retry_on_failure:
-      enabled: true
-      initial_interval: 5s
-      max_interval: 120s
-    sending_queue:
-      enabled: true
-      queue_size: 1000
-
-  # Better Stack is plain OTLP/HTTP, so the base endpoint is enough - it
-  # appends /v1/metrics itself.
-  otlphttp/betterstack:
-    metrics_endpoint: ${env:BETTERSTACK_INGEST_URL}/v1/metrics
-    headers:
-      Authorization: Bearer ${env:BETTERSTACK_SOURCE_TOKEN}
     compression: gzip
     # Above the 30s default: batches are small, but the first start
     # ships an accumulated backlog and a slow-but-successful request
@@ -101,4 +81,4 @@ service:
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, resource/deployment, batch]
-      exporters: [otlphttp/betterstack]
+      exporters: [otlphttp/posthog]
