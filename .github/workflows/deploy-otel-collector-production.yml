@@ -1,0 +1,134 @@
+name: Deploy OTel collector (production)
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "otel-collector/**"
+      - ".github/workflows/deploy-otel-collector-production.yml"
+  workflow_dispatch:
+
+# Only the newest run per branch survives: merging several PRs in a row
+# should not leave a queue of superseded check/build/deploy runs behind.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  AGENT_IMAGE: ghcr.io/t0ha/camelotai-otel-agent
+  GATEWAY_IMAGE: ghcr.io/t0ha/camelotai-otel-gateway
+
+jobs:
+  deploy:
+    name: Build & deploy OTel collector to production
+    runs-on: ubuntu-24.04
+    environment: production
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # DEPLOY_OTEL_COLLECTOR is a `production`-environment variable, so
+      # it is only readable once the job's environment is resolved (not
+      # in a job-level `if:`). Resolve it into a step output.
+      - name: Gate on DEPLOY_OTEL_COLLECTOR
+        id: gate
+        run: |
+          echo "go=${{ vars.DEPLOY_OTEL_COLLECTOR == 'true' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout repo
+        if: steps.gate.outputs.go == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        if: steps.gate.outputs.go == 'true'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: steps.gate.outputs.go == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        if: steps.gate.outputs.go == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Unlike deploy-production.yml, this builds rather than reusing the
+      # image the develop run produced. That image is tagged with the
+      # develop commit sha, and main's second parent is whatever develop
+      # happened to point at when the release PR merged - not necessarily
+      # the commit that last touched otel-collector/, so the tag is often
+      # absent. These images are an upstream collector plus a COPY, so
+      # rebuilding from the merged tree is cheap, deterministic, and
+      # keeps every tag immutable.
+      - name: Build and push agent image
+        if: steps.gate.outputs.go == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: otel-collector
+          file: otel-collector/Dockerfile.agent
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ env.AGENT_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=otel-agent
+          cache-to: type=gha,mode=max,scope=otel-agent
+
+      - name: Build and push gateway image
+        if: steps.gate.outputs.go == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: otel-collector
+          file: otel-collector/Dockerfile.gateway
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ env.GATEWAY_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=otel-gateway
+          cache-to: type=gha,mode=max,scope=otel-gateway
+
+      # Gateway first: the agents' only exporter points at it, so rolling
+      # it after would leave the fresh agents retrying against an old
+      # gateway for the length of the second deploy.
+      #
+      # Pin the caprover CLI to 2.3.1 (2.4.0 crashes on deploy - see
+      # deploy-production.yml for what breaks and why).
+      - name: Deploy gateway to CapRover (production)
+        if: steps.gate.outputs.go == 'true'
+        env:
+          CAPROVER_URL: "${{ vars.CAPROVER_SERVER }}"
+          CAPROVER_APP_TOKEN: "${{ secrets.OTEL_GATEWAY_APP_TOKEN }}"
+          APP_NAME: "${{ vars.OTEL_GATEWAY_APP_NAME || 'otel-gateway' }}"
+        run: |
+          if [ -z "$CAPROVER_APP_TOKEN" ]; then
+            echo "::error::OTEL_GATEWAY_APP_TOKEN is not set for the" \
+                 "'production' environment. See otel-collector/README.md."
+            exit 1
+          fi
+          npx --yes caprover@2.3.1 deploy \
+            --caproverUrl "$CAPROVER_URL" \
+            --appToken "$CAPROVER_APP_TOKEN" \
+            --appName "$APP_NAME" \
+            --imageName "${{ env.GATEWAY_IMAGE }}:${{ github.sha }}"
+
+      - name: Deploy agent to CapRover (production)
+        if: steps.gate.outputs.go == 'true'
+        env:
+          CAPROVER_URL: "${{ vars.CAPROVER_SERVER }}"
+          CAPROVER_APP_TOKEN: "${{ secrets.OTEL_AGENT_APP_TOKEN }}"
+          APP_NAME: "${{ vars.OTEL_AGENT_APP_NAME || 'otel-agent' }}"
+        run: |
+          if [ -z "$CAPROVER_APP_TOKEN" ]; then
+            echo "::error::OTEL_AGENT_APP_TOKEN is not set for the" \
+                 "'production' environment. See otel-collector/README.md."
+            exit 1
+          fi
+          npx --yes caprover@2.3.1 deploy \
+            --caproverUrl "$CAPROVER_URL" \
+            --appToken "$CAPROVER_APP_TOKEN" \
+            --appName "$APP_NAME" \
+            --imageName "${{ env.AGENT_IMAGE }}:${{ github.sha }}"

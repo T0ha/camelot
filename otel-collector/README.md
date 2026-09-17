@@ -52,11 +52,29 @@ per-service one.
 
 ## Deploying
 
-`.github/workflows/deploy-otel-collector.yml` builds both images
-multi-arch and deploys them on pushes to `develop` that touch this
-directory. It is gated on the `test` environment variable
-`DEPLOY_OTEL_COLLECTOR=true`, so it no-ops until the CapRover apps below
-exist.
+Two workflows, one per cluster, each gated on a
+`DEPLOY_OTEL_COLLECTOR=true` variable in its own GitHub environment so it
+no-ops until that cluster's CapRover apps exist:
+
+| Workflow | Trigger | Environment | Cluster |
+|---|---|---|---|
+| `deploy-otel-collector.yml` | push to `develop` touching `otel-collector/**` | `test` | test.camelotai.tech |
+| `deploy-otel-collector-production.yml` | push to `main` touching `otel-collector/**` | `production` | app.camelotai.tech |
+
+Both build the images multi-arch and tag them with the commit sha.
+
+The production workflow builds rather than reusing the image the develop
+run produced, which is what `deploy-production.yml` does for the app.
+That image is tagged with the develop commit sha, and main's second
+parent is whatever develop pointed at when the release PR merged — not
+necessarily the commit that last touched `otel-collector/`, so the tag is
+frequently absent. These images are an upstream collector plus a `COPY`,
+so rebuilding from the merged tree is cheap and keeps every tag
+immutable.
+
+**The setup below is per cluster.** Production needs its own CapRover
+apps, its own app tokens in the `production` environment, its own node
+label, and its own run of the Global bootstrap.
 
 ### 1. CapRover apps
 
