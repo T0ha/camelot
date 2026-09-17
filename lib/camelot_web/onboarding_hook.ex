@@ -55,8 +55,9 @@ defmodule CamelotWeb.OnboardingHook do
   # account that predates the guide, say — is stamped as
   # complete and never bothered again.
   defp apply_status(socket, user, %Status{complete?: true}) do
-    Onboarding.mark_complete!(user)
-    assign(socket, onboarding: nil, onboarding_modal?: false)
+    socket
+    |> assign(current_user: Onboarding.mark_complete!(user))
+    |> assign(onboarding: nil, onboarding_modal?: false)
   end
 
   defp apply_status(socket, _user, %Status{} = status) do
@@ -65,7 +66,10 @@ defmodule CamelotWeb.OnboardingHook do
 
   defp refresh_on_params(_params, _uri, socket), do: {:cont, refresh(socket)}
 
-  defp handle_info({:onboarding, :refresh}, socket), do: {:halt, refresh(socket)}
+  # The nudge is a broadcast, not a command addressed to this
+  # hook: the host LiveView may well want to react to the same
+  # message, so observe it and hand it on.
+  defp handle_info({:onboarding, :refresh}, socket), do: {:cont, refresh(socket)}
   defp handle_info(_message, socket), do: {:cont, socket}
 
   defp handle_event("onboarding_dismiss", _params, socket) do
@@ -79,14 +83,21 @@ defmodule CamelotWeb.OnboardingHook do
   # Persisting the dismissal server-side before pushing the
   # navigation keeps the two in a deterministic order.
   defp handle_event("onboarding_go", %{"step" => step}, socket) do
-    {:halt, push_navigate(dismiss(socket), to: OnboardingComponents.step_path(step))}
+    {:halt, go_to_step(socket, OnboardingComponents.fetch_step_path(step))}
   end
 
   defp handle_event(_event, _params, socket), do: {:cont, socket}
 
+  # `phx-value-step` arrives off the wire. Anything that isn't
+  # a step we render is left alone rather than quietly sending
+  # the user somewhere they didn't ask for.
+  defp go_to_step(socket, {:ok, path}), do: push_navigate(dismiss(socket), to: path)
+  defp go_to_step(socket, :error), do: socket
+
   defp dismiss(socket) do
-    Onboarding.dismiss!(socket.assigns.current_user)
-    assign(socket, onboarding_modal?: false)
+    socket
+    |> assign(current_user: Onboarding.dismiss!(socket.assigns.current_user))
+    |> assign(onboarding_modal?: false)
   end
 
   # Once the guide is done it stays done for the rest of the
@@ -94,8 +105,8 @@ defmodule CamelotWeb.OnboardingHook do
   # every subsequent navigation.
   defp refresh(%Socket{assigns: %{onboarding: nil}} = socket), do: socket
 
-  defp refresh(socket) do
+  defp refresh(%Socket{assigns: %{onboarding: %Status{} = status}} = socket) do
     user = socket.assigns.current_user
-    apply_status(socket, user, Onboarding.status(user))
+    apply_status(socket, user, Onboarding.refresh(status, user))
   end
 end

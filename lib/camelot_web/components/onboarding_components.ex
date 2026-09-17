@@ -54,14 +54,12 @@ defmodule CamelotWeb.OnboardingComponents do
   @spec step_label(Status.step()) :: String.t()
   def step_label(step), do: Keyword.fetch!(@labels, step)
 
+  @steps Keyword.keys(@labels)
+
   @doc """
   Screen a setup step hands off to.
-
-  Accepts the string form too, since `phx-value-step` comes
-  back off the wire — an unknown value falls back to the
-  board rather than reaching `String.to_atom/1`.
   """
-  @spec step_path(Status.step() | String.t()) :: String.t()
+  @spec step_path(Status.step()) :: String.t()
   # The Connect button on /profile re-signs a short-lived
   # state token on render, so the strip links to the section
   # rather than carrying a token of its own.
@@ -69,11 +67,22 @@ defmodule CamelotWeb.OnboardingComponents do
   def step_path(:claude_token), do: ~p"/profile#credentials"
   def step_path(:project), do: ~p"/projects/new"
   def step_path(:task), do: ~p"/?onboarding=task"
-  def step_path("github"), do: step_path(:github)
-  def step_path("claude_token"), do: step_path(:claude_token)
-  def step_path("project"), do: step_path(:project)
-  def step_path("task"), do: step_path(:task)
-  def step_path(_unknown), do: ~p"/"
+
+  @doc """
+  Resolves the wire form of a step name to its screen.
+
+  `phx-value-step` comes back as a string the client controls,
+  so anything that isn't one of the steps this module renders
+  gets `:error` — never `String.to_atom/1`, and never a
+  fallback destination the user didn't ask for.
+  """
+  @spec fetch_step_path(String.t()) :: {:ok, String.t()} | :error
+  def fetch_step_path(step) do
+    case Enum.find(@steps, &(to_string(&1) == step)) do
+      nil -> :error
+      found -> {:ok, step_path(found)}
+    end
+  end
 
   @doc """
   Greeting modal shown once, on the first authenticated page
@@ -150,20 +159,43 @@ defmodule CamelotWeb.OnboardingComponents do
         Setup {Status.done_count(@onboarding)} of {Status.total_count(@onboarding)}
       </span>
 
-      <.link
-        :for={{step, done?} <- @onboarding.steps}
-        id={"onboarding-step-#{step}-#{state(done?)}"}
-        navigate={step_path(step)}
-        class={["badge badge-sm gap-1", done? && "badge-success", !done? && "badge-ghost"]}
-      >
-        <.icon name={step_icon(done?)} class="size-3" />
-        {step_label(step)}
-      </.link>
+      <.step_badge :for={{step, done?} <- @onboarding.steps} step={step} done?={done?} />
 
       <button class="btn btn-ghost btn-xs ml-auto" phx-click="onboarding_open">
         Show guide
       </button>
     </div>
+    """
+  end
+
+  # A finished step is shown as plain text, not a link: there
+  # is nothing left to do there, and an inviting badge would
+  # send the user back to a screen they're done with.
+  attr :step, :atom, required: true
+  attr :done?, :boolean, required: true
+
+  defp step_badge(%{done?: true} = assigns) do
+    ~H"""
+    <span
+      id={"onboarding-step-#{@step}-done"}
+      class="badge badge-sm badge-success gap-1 opacity-60"
+    >
+      <.icon name={step_icon(true)} class="size-3" />
+      <span class="line-through">{step_label(@step)}</span>
+    </span>
+    """
+  end
+
+  defp step_badge(assigns) do
+    ~H"""
+    <.link
+      id={"onboarding-step-#{@step}-pending"}
+      navigate={step_path(@step)}
+      class="badge badge-sm badge-ghost gap-1"
+    >
+      <.icon name={step_icon(false)} class="size-3" />
+      {step_label(@step)}
+    </.link>
     """
   end
 
@@ -192,9 +224,6 @@ defmodule CamelotWeb.OnboardingComponents do
   defp step_hint(step), do: Keyword.fetch!(@hints, step)
 
   defp step_cta(step), do: Keyword.fetch!(@ctas, step)
-
-  defp state(true), do: "done"
-  defp state(false), do: "pending"
 
   defp step_icon(true), do: "hero-check-circle"
   defp step_icon(false), do: "hero-arrow-right-circle"

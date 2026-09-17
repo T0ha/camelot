@@ -31,14 +31,24 @@ defmodule CamelotWeb.Onboarding do
   """
   @spec status(User.t()) :: Status.t()
   def status(%User{} = user) do
-    Status.new(
-      github_step(user) ++
-        [
-          claude_token: claude_token?(user),
-          project: project?(user),
-          task: task?(user)
-        ]
-    )
+    applicable_steps()
+    |> Enum.map(&{&1, done?(&1, user)})
+    |> Status.new()
+  end
+
+  @doc """
+  Re-checks `status` for `user`, querying only the steps that
+  are still outstanding.
+
+  A finished step can't come undone, and which steps apply is
+  fixed for the session, so a navigation costs one query per
+  *pending* step rather than one per step.
+  """
+  @spec refresh(Status.t(), User.t()) :: Status.t()
+  def refresh(%Status{steps: steps}, %User{} = user) do
+    steps
+    |> Enum.map(&recheck(&1, user))
+    |> Status.new()
   end
 
   @doc "Records that the user closed the welcome modal."
@@ -53,14 +63,22 @@ defmodule CamelotWeb.Onboarding do
     Ash.update!(user, %{}, action: :complete_onboarding, actor: user)
   end
 
+  defp recheck({_step, true} = done, _user), do: done
+  defp recheck({step, false}, user), do: {step, done?(step, user)}
+
+  defp done?(:github, user), do: github_connected?(user)
+  defp done?(:claude_token, user), do: claude_token?(user)
+  defp done?(:project, user), do: project?(user)
+  defp done?(:task, user), do: task?(user)
+
   # The GitHub App is opt-in per deployment. Where it isn't
   # configured there is nothing to connect, so the step
   # drops out of the guide entirely.
-  defp github_step(user) do
+  defp applicable_steps do
     if AppConfig.configured?() do
-      [github: github_connected?(user)]
+      [:github, :claude_token, :project, :task]
     else
-      []
+      [:claude_token, :project, :task]
     end
   end
 

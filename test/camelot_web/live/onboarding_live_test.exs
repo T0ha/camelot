@@ -58,6 +58,15 @@ defmodule CamelotWeb.OnboardingLiveTest do
 
       assert %{onboarding_dismissed_at: %DateTime{}} = reload(user)
     end
+
+    test "onboarding_go ignores a step it never rendered", %{conn: conn, user: user} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert render_click(view, "onboarding_go", %{"step" => "../../admin"})
+
+      assert has_element?(view, @open_modal)
+      assert %{onboarding_dismissed_at: nil} = reload(user)
+    end
   end
 
   describe "setup bar" do
@@ -138,7 +147,9 @@ defmodule CamelotWeb.OnboardingLiveTest do
       })
       |> render_submit()
 
-      refute render(view) =~ "onboarding-setup-bar"
+      html = render(view)
+      refute html =~ "onboarding-setup-bar"
+      refute html =~ "onboarding-welcome-modal"
       assert %{onboarding_completed_at: %DateTime{}} = reload(user)
     end
   end

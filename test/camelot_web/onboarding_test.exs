@@ -10,19 +10,8 @@ defmodule CamelotWeb.OnboardingTest do
   alias CamelotWeb.Onboarding
   alias CamelotWeb.Onboarding.Status
 
-  @github_app [
-    app_id: "123",
-    slug: "camelot-dev",
-    client_id: "Iv1.abc",
-    client_secret: "secret",
-    private_key: Base.encode64("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n"),
-    webhook_secret: "whsecret"
-  ]
-
   setup do
-    previous = Application.get_env(:camelot, :github_app)
-    Application.put_env(:camelot, :github_app, @github_app)
-    on_exit(fn -> Application.put_env(:camelot, :github_app, previous) end)
+    stub_github_app()
 
     %{user: user!()}
   end
@@ -40,7 +29,7 @@ defmodule CamelotWeb.OnboardingTest do
     end
 
     test "omits the github step when no GitHub App is configured", %{user: user} do
-      Application.put_env(:camelot, :github_app, [])
+      put_github_app([])
 
       assert %Status{} = status = Onboarding.status(user)
       assert Keyword.keys(status.steps) == [:claude_token, :project, :task]
@@ -48,7 +37,7 @@ defmodule CamelotWeb.OnboardingTest do
     end
 
     test "counts only the applicable steps as complete", %{user: user} do
-      Application.put_env(:camelot, :github_app, [])
+      put_github_app([])
 
       seed_claude_token(user)
       seed_task(user)
@@ -123,6 +112,42 @@ defmodule CamelotWeb.OnboardingTest do
       seed_task(user)
 
       assert %Status{complete?: true, next: nil} = Onboarding.status(user)
+    end
+  end
+
+  describe "refresh/2" do
+    test "flips a step that has since been done", %{user: user} do
+      status = Onboarding.status(user)
+      seed_claude_token(user)
+
+      assert Onboarding.refresh(status, user).steps[:claude_token]
+    end
+
+    test "keeps the applicable step set of the status it refreshes", %{user: user} do
+      put_github_app([])
+      status = Onboarding.status(user)
+
+      assert Keyword.keys(Onboarding.refresh(status, user).steps) ==
+               [:claude_token, :project, :task]
+    end
+
+    test "never re-queries a step that is already done", %{user: user} do
+      done = Status.new(claude_token: true, project: true, task: true)
+
+      # The user owns no credential, project or task, so these
+      # can only still read as done if they weren't queried.
+      assert Onboarding.refresh(done, user).complete?
+    end
+  end
+
+  describe "Status.pending?/2" do
+    test "an absent step counts as done", %{user: user} do
+      put_github_app([])
+      status = Onboarding.status(user)
+
+      refute Keyword.has_key?(status.steps, :github)
+      refute Status.pending?(status, :github)
+      assert Status.pending?(status, :claude_token)
     end
   end
 

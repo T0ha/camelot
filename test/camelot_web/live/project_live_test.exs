@@ -149,6 +149,30 @@ defmodule CamelotWeb.ProjectLiveTest do
 
       assert has_element?(view, "#project-advanced.hidden")
     end
+
+    test "the edit form stays collapsed for a project with a repository", %{
+      conn: conn,
+      user: user
+    } do
+      {:ok, project} =
+        Ash.create(
+          Project,
+          %{
+            name: "repo-backed-#{System.unique_integer()}",
+            path: "/tmp/repo-backed",
+            github_repo_url: "https://github.com/acme/widgets",
+            github_owner: "acme",
+            github_repo: "widgets"
+          },
+          actor: user
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}/edit")
+
+      # Owner and repo are derived from the URL, so counting them
+      # as advanced would expand the section for every project.
+      assert has_element?(view, "#project-advanced.hidden")
+    end
   end
 
   describe "runner image override" do

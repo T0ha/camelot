@@ -72,6 +72,38 @@ defmodule Camelot.DataCase do
     Ash.Seed.seed!(Camelot.Github.Installation, Map.merge(defaults, attrs))
   end
 
+  @github_app [
+    app_id: "123",
+    slug: "camelot-dev",
+    client_id: "Iv1.abc",
+    client_secret: "secret",
+    private_key: Base.encode64("-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n"),
+    webhook_secret: "whsecret"
+  ]
+
+  @doc """
+  Points `:github_app` at a complete dummy App config for the
+  duration of the test, restoring whatever was there before.
+
+  Anything that reads `Camelot.Github.AppConfig` branches on
+  this, so tests that need the configured branch — or that
+  clear it again with `put_github_app/1` to get the
+  unconfigured one — should call this from `setup`. Such tests
+  must be `async: false`: the config is deployment-wide.
+  """
+  @spec stub_github_app() :: :ok
+  def stub_github_app do
+    previous = Application.get_env(:camelot, :github_app)
+    ExUnit.Callbacks.on_exit(fn -> put_github_app(previous) end)
+    put_github_app(@github_app)
+  end
+
+  @doc "Swaps the `:github_app` config, e.g. to `[]` for unconfigured."
+  @spec put_github_app(keyword() | nil) :: :ok
+  def put_github_app(config) do
+    Application.put_env(:camelot, :github_app, config)
+  end
+
   setup tags do
     Camelot.DataCase.setup_sandbox(tags)
     :ok

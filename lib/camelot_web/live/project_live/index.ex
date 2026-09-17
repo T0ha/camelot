@@ -225,12 +225,18 @@ defmodule CamelotWeb.ProjectLive.Index do
     Map.take(params, @project_fields)
   end
 
-  # Everything the create/edit form tucks behind "Advanced
-  # settings". `path` is deliberately absent: it's derived
-  # from the name for new projects, so it's filled on every
-  # form and would keep the section permanently expanded.
-  @advanced_fields ~w(github_owner github_repo
-                      command_prefix_override executable_override
+  # The advanced fields whose presence means the user actually
+  # went in and set something, so the section is worth opening
+  # on `:edit`.
+  #
+  # The three derived fields are deliberately absent. `path` is
+  # filled in from the name for new projects, and
+  # `github_owner`/`github_repo` are split out of
+  # `github_repo_url` by `detect_github_fields/2` — so every
+  # project with a repository would come back with them set and
+  # the section would be permanently expanded, which is exactly
+  # what hiding it was meant to avoid.
+  @advanced_fields ~w(command_prefix_override executable_override
                       base_args_override env_vars_override
                       permission_args_by_stage_override
                       internal_tools_override base_retry_delay_ms_override)
