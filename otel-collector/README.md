@@ -30,11 +30,15 @@ place and the backend has one stable endpoint to push traces at.
 | Metrics | `docker_stats` per container, labelled with its swarm service and task | Better Stack |
 | Traces  | OTLP in on 4317/4318 — nothing produces them yet; the backend will | PostHog |
 
-Every log record carries `host.name` (the swarm node), `container.name`,
-`container.id`, `container.image.name` and `service.name`. For swarm
-containers `service.name` is the swarm service (`srv-captain--camelotai`,
-`camelot-task-<uuid>`, …); everything else falls back to the container
-name.
+Every record carries `service.name`. For swarm containers that is the
+swarm service (`srv-captain--camelotai`, `camelot-task-<uuid>`, …); for
+containers outside swarm it is the container name; and node-level
+`host_metrics`, which has no container at all, is attributed to the node
+itself (`vnic-camelotai-01`). Without this metrics reach PostHog as
+`unknown`, which is what a backend shows when `service.name` is absent.
+
+Every log record additionally carries `host.name` (the swarm node),
+`container.name`, `container.id` and `container.image.name`.
 
 **The swarm service is named differently per signal**, which matters when
 building dashboards that span both:
