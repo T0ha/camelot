@@ -28,4 +28,22 @@ defmodule Camelot.Github.Resolver do
       String.downcase(installation.account_login) == String.downcase(github_owner)
     end)
   end
+
+  @doc """
+  True when two projects share a GitHub repo — `github_owner` and
+  `github_repo` both set and equal.
+
+  Shared by `Camelot.Board.PromptBuilder` (same-repo blockers get a
+  stacked-branch directive) and `Camelot.Board.Changes.CheckPrStatus`
+  (same-repo blockers get rebase notices) so the two checks can't
+  drift apart. Cross-repo links still gate dispatch and inject
+  context, but there is no git branch to share across repositories.
+  """
+  @spec same_repo?(map(), map()) :: boolean()
+  def same_repo?(%{github_owner: owner, github_repo: repo}, %{github_owner: owner, github_repo: repo})
+      when not is_nil(owner) and not is_nil(repo) do
+    true
+  end
+
+  def same_repo?(_project_a, _project_b), do: false
 end

@@ -119,6 +119,7 @@ defmodule CamelotWeb.BoardComponents do
     :waiting_for_slot
   end
 
+  defp display_state(%{state: :queued, blocked?: true}), do: :blocked
   defp display_state(%{state: state}), do: state
 
   defp format_stage(stage) do
@@ -129,6 +130,7 @@ defmodule CamelotWeb.BoardComponents do
   end
 
   defp format_state(:waiting_for_slot), do: "Waiting for a runner slot"
+  defp format_state(:blocked), do: "Blocked by an incomplete dependency"
 
   defp format_state(state) do
     state
@@ -147,6 +149,7 @@ defmodule CamelotWeb.BoardComponents do
 
   defp state_badge_class(:queued), do: "badge-ghost"
   defp state_badge_class(:waiting_for_slot), do: "badge-ghost"
+  defp state_badge_class(:blocked), do: "badge-ghost"
   defp state_badge_class(:in_progress), do: "badge-primary"
   defp state_badge_class(:waiting_for_input), do: "badge-warning"
   defp state_badge_class(:error), do: "badge-error"
@@ -154,6 +157,7 @@ defmodule CamelotWeb.BoardComponents do
 
   defp state_emoji(:queued), do: "⏳"
   defp state_emoji(:waiting_for_slot), do: "⏳"
+  defp state_emoji(:blocked), do: "⛔"
   defp state_emoji(:in_progress), do: "🔃"
   defp state_emoji(:waiting_for_input), do: "💬"
   defp state_emoji(:error), do: "⚠️"
