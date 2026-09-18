@@ -32,6 +32,29 @@ processors:
     send_batch_size: 512
     send_batch_max_size: 1024
 
+  # Severity parsers keep whatever word the application used, so Elixir
+  # emits "warning" and "notice". PostHog filters severity by exact
+  # match against six lowercase buckets (trace/debug/info/warn/error/
+  # fatal), so "warning" would never match a warn filter and the level
+  # would look parsed while still being unfilterable. The number is
+  # already correct, so rewrite the text from it, using the OTel
+  # severity ranges PostHog documents.
+  #
+  # Here rather than on the agent so it covers every log that leaves the
+  # cluster, whatever produced it. Records we could not parse keep
+  # severity_number 0 and fall through untouched.
+  transform/normalize_severity:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - set(severity_text, "trace") where severity_number >= 1 and severity_number <= 4
+          - set(severity_text, "debug") where severity_number >= 5 and severity_number <= 8
+          - set(severity_text, "info") where severity_number >= 9 and severity_number <= 12
+          - set(severity_text, "warn") where severity_number >= 13 and severity_number <= 16
+          - set(severity_text, "error") where severity_number >= 17 and severity_number <= 20
+          - set(severity_text, "fatal") where severity_number >= 21 and severity_number <= 24
+
   # Marks which cluster the telemetry came from, so test and production
   # stay distinguishable once both report into the same PostHog project.
   resource/deployment:
@@ -72,7 +95,11 @@ service:
   pipelines:
     logs:
       receivers: [otlp]
-      processors: [memory_limiter, resource/deployment, batch]
+      processors:
+        - memory_limiter
+        - resource/deployment
+        - transform/normalize_severity
+        - batch
       exporters: [otlphttp/posthog]
     traces:
       receivers: [otlp]

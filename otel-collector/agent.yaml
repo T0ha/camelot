@@ -133,6 +133,50 @@ receivers:
               # PostHog, where it is visible, rather than only showing
               # up as collector noise.
               on_error: send_quiet
+
+            # The container parser only unwraps docker's JSON envelope,
+            # so the application's own line stays raw text and severity
+            # is never set. A backend then shows every record at its
+            # default level - in PostHog that is "info", which made a
+            # Postgrex disconnect and a failed migration indistinguish-
+            # able from a 200 response.
+            #
+            # This reads the Elixir default_formatter layout configured
+            # in config/config.exs:
+            #   "$time $metadata[$level] $message"  (metadata: request_id)
+            # Only the prefix is matched, so the body is left whole; the
+            # timestamp is deliberately not captured, because the line
+            # carries no date and docker's capture time already has one.
+            #
+            # Lines from every other container - nginx, postgres,
+            # netdata - simply do not match and pass through untouched,
+            # which is what send_quiet buys. Their severity is still
+            # unset; parsing those formats is a separate job.
+            - id: elixir-severity
+              type: regex_parser
+              parse_from: body
+              parse_to: attributes
+              on_error: send_quiet
+              # Kept on one line on purpose: a folded (>-) scalar
+              # joins lines with spaces, which silently inserts one
+              # before the bracket and makes this match nothing, while
+              # still passing otelcol validate.
+              regex: '^\d{2}:\d{2}:\d{2}\.\d{3} (?:request_id=(?P<request_id>\S+) )?\[(?P<level>[a-z]+)\]'
+              severity:
+                parse_from: attributes.level
+                mapping:
+                  debug: debug
+                  info:
+                    - info
+                    - notice
+                  warn:
+                    - warning
+                    - warn
+                  error: error
+                  fatal:
+                    - critical
+                    - alert
+                    - emergency
         resource_attributes:
           container.id: '`container_id`'
           # Swarm names containers <service>.<slot>.<taskid>, so fall back
