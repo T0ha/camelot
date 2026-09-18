@@ -40,6 +40,34 @@ itself (`vnic-camelotai-01`). Without this metrics reach PostHog as
 Every log record additionally carries `host.name` (the swarm node),
 `container.name`, `container.id` and `container.image.name`.
 
+**Log severity is parsed for the Elixir app only.** The `container`
+operator unwraps docker's JSON envelope but leaves the application's own
+line alone, so without further parsing nothing sets severity and a
+backend shows every record at its default level — in PostHog that is
+`info`, which made a Postgrex disconnect and a failed migration look
+identical to a 200.
+
+Released builds log JSON (`logger_json`, configured for `:prod` in
+`config/runtime.exs`), and the agent parses that first. This matters
+beyond tidiness: docker gives the collector **one record per physical
+line**, so a text-formatted stack trace arrives as several records with
+only the first carrying `[error]` and the rest stranded at the default
+level. JSON escapes the newlines, so the whole event stays one line and
+one record.
+
+A regex fallback handles anything that is not JSON — `IO.puts`,
+early-boot SASL reports, `mix` output from `/app/bin/migrate`, and dev
+builds, which keep the human-readable formatter.
+
+The gateway then rewrites `severity_text` into the six canonical OTel
+buckets, because Elixir says `warning` and `notice` while PostHog filters
+on exact `warn` / `info`.
+
+Lines from every other container — nginx, postgres, netdata — match
+neither path, pass through untouched, and still arrive with no severity
+(so PostHog shows them as `info`). Parsing those formats is a separate
+job.
+
 **The swarm service is named differently per signal**, which matters when
 building dashboards that span both:
 
