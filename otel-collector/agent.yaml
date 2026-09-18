@@ -134,8 +134,58 @@ receivers:
               # up as collector noise.
               on_error: send_quiet
 
-            # The container parser only unwraps docker's JSON envelope,
-            # so the application's own line stays raw text and severity
+            # Released builds log JSON (logger_json), so try that first.
+            # One event is one line even when the message spans many,
+            # because JSON escapes the newlines - which is the whole
+            # reason for it: a text-formatted stack trace arrives as
+            # several records, only the first carrying a level.
+            #
+            # The timestamp is deliberately left to docker. Parsing the
+            # JSON `time` field would gain ~30ms of accuracy, and a
+            # layout mismatch would fail the operator and take the
+            # severity down with it.
+            - id: app-json
+              type: json_parser
+              parse_from: body
+              parse_to: attributes
+              on_error: send_quiet
+              severity:
+                parse_from: attributes.severity
+                mapping:
+                  debug: debug
+                  info:
+                    - info
+                    - notice
+                  warn:
+                    - warning
+                    - warn
+                  error: error
+                  fatal:
+                    - critical
+                    - alert
+                    - emergency
+
+            # Body should read as the message, not the envelope.
+            - id: app-json-body
+              type: move
+              from: attributes.message
+              to: body
+              on_error: send_quiet
+
+            # Lift request_id out of the nested metadata object so it is
+            # filterable as a plain attribute, the same as on the text
+            # path below.
+            - id: app-json-request-id
+              type: move
+              from: attributes.metadata.request_id
+              to: attributes.request_id
+              on_error: send_quiet
+
+            # Fallback for anything that is not JSON. Plenty of
+            # container output never passes through Logger at all -
+            # IO.puts, early-boot SASL reports, mix output from
+            # /app/bin/migrate - and dev builds still log text. Without
+            # this the application's own line stays raw and severity
             # is never set. A backend then shows every record at its
             # default level - in PostHog that is "info", which made a
             # Postgrex disconnect and a failed migration indistinguish-

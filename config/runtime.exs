@@ -206,7 +206,21 @@ if config_env() == :prod do
       Generate one with: mix run -e 'IO.puts 32 |> :crypto.strong_rand_bytes() |> Base.encode64()'
       """
 
-  # In prod, default to swarm if RUNNER_BACKEND wasn't set above.
+  # Structured logs for released builds only; `mix phx.server` keeps the
+  # human-readable formatter from config.exs.
+  #
+  # The collector reads container logs off disk, and docker gives it one
+  # record per physical line. A text-formatted multi-line error - a
+  # stack trace, a crash report - therefore arrives as several records,
+  # of which only the first carries "[error]"; the rest land at the
+  # backend's default level, detached from what they belong to. JSON
+  # escapes the newlines, so the whole event stays one line and one
+  # record, and every Logger metadata key arrives as a field instead of
+  # being recovered with a regex.
+  config :logger, :default_handler,
+    # In prod, default to swarm if RUNNER_BACKEND wasn't set above.
+    formatter: LoggerJSON.Formatters.Basic.new(metadata: [:request_id, :mfa, :crash_reason])
+
   if !System.get_env("RUNNER_BACKEND") do
     config :camelot, :attachment_store, attachment_store_for.(Swarm)
 
