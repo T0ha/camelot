@@ -33,6 +33,15 @@ fi
 
 cd /workspace 2>/dev/null || true
 
+# A CLI that takes its structured-output schema as a file (Codex's
+# `--output-schema`) is handed the path in its argv, built by the BEAM
+# before it knew which backend would run it. Materialise the schema at
+# that same path. Session-scoped so concurrent sessions can't race.
+if [ -n "${CAMELOT_OUTPUT_SCHEMA_JSON:-}" ]; then
+  printf '%s' "$CAMELOT_OUTPUT_SCHEMA_JSON" \
+    > "/tmp/camelot-output-schema-${CAMELOT_SESSION_ID:-session}.json"
+fi
+
 # Tee the agent's output to a per-session file so the BEAM can fetch
 # the complete result with a short `docker exec cat` after the process
 # exits, instead of depending on the long-lived, mostly-idle exec

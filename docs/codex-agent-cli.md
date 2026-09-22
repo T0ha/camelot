@@ -40,7 +40,8 @@ on `base_args` still being exactly `["--quiet"]` so a hand-edited row at
 - **`exec`** — the non-interactive subcommand. Without it argv is parsed
   as options to the interactive TUI.
 - **`--json`** — the JSONL event stream the `:codex_jsonl` parser reads.
-  See [Output parsing](#output-parsing) below.
+  See [Output parsing](#output-parsing) below. Planning additionally
+  passes `--output-schema`; see [Planning output](#planning-output).
 - **`--skip-git-repo-check`** — keeps a run outside a checkout (e.g. a
   bootstrap session) from aborting.
 - **`--color never`** — `session.output_log` stores stdout verbatim and
@@ -96,7 +97,7 @@ its posture explicitly in `permission_args_by_stage`:
 
 | Stage | Args |
 |---|---|
-| `planning` | `--sandbox read-only` |
+| `planning` | `--sandbox read-only`, `--output-schema <path>` |
 | `executing` | `--dangerously-bypass-approvals-and-sandbox` |
 | `pr` | `--dangerously-bypass-approvals-and-sandbox` |
 
@@ -131,26 +132,58 @@ send it twice.
 
 ## Planning output
 
-There is still no structured-output contract here: nothing forces the
-shape of the answer, so `TaskRunner.planning_action/2` takes the
-free-text path and the final agent message becomes the plan. Two
-consequences shape `planning_system_prompt/0`:
+Planning runs under `--output-schema`, the analogue of the
+`--json-schema` contract `claude_code` has had since
+[planning-output-contract.md](planning-output-contract.md). The final
+message is then a validated object rather than prose:
 
-- the final message must *be* the plan, and nothing else — it is stored
-  exactly as written;
-- a clarifying question is only recognised from free text, and only when
-  it is under 500 characters and matches `question_phrases` — hence the
-  instruction to reply with nothing but the questions.
+```json
+{"decision": "plan", "plan": "## Implementation plan\n\n1. …", "questions": null}
+```
 
-Codex does have `--output-schema <FILE>`, the analogue of Claude Code's
-`--json-schema`. Using it would need the schema file materialised inside
-the runner container, which means a new `Runner.Spec` field, a matching
-env var in all four backends, and an entrypoint change in the base
-image — worth doing if free-text planning proves unreliable, but not
-needed to get a readable plan.
+`OutputParser` surfaces it as `structured`, and
+`TaskRunner.planning_action/2` reads the decision directly through the
+same path Claude Code's structured output takes — no guessing whether
+prose is a plan or a question. `question_phrases` survives only as the
+fallback for a run whose structured decision is missing.
 
-See [planning-output-contract.md](planning-output-contract.md) for how
-Claude Code does this instead.
+### Strict mode
+
+Codex forwards the schema to OpenAI's **strict** structured-output mode,
+which is narrower than the schema `claude_code` uses. Two rules:
+
+- `additionalProperties` must be present and `false`;
+- **every** property must be listed in `required` — an optional field is
+  expressed as a nullable union (`["string", "null"]`) instead.
+
+Break either and the turn fails with a 400 *before the model runs*:
+
+```
+invalid_request_error / invalid_json_schema:
+  'additionalProperties' is required to be supplied and to be false.
+```
+
+That arrives as a `turn.failed` event on a process that still exits 0,
+which is why the parser treats `turn.failed` as an error.
+
+### How the file gets there
+
+`--output-schema` takes a **file**, and the argv naming it is built
+before the backend is chosen, so every backend materialises it at the
+same session-scoped path (`Runner.Spec.output_schema_path/1`):
+
+| Backend | Who writes it |
+|---|---|
+| Swarm, DockerEngine | `exec-wrapper.sh`, from `CAMELOT_OUTPUT_SCHEMA_JSON` passed at exec time |
+| LocalPort | the `LocalPort` GenServer itself, before opening the port |
+
+The schema body lives on the agent row (`output_schema_by_stage`), and
+`{{output_schema_path}}` in that stage's `permission_args_by_stage`
+resolves to the path — so both halves stay editable at `/agents`.
+
+> **Deploy note.** The wrapper change ships in the runner image, so a
+> containerised install needs `runner-images` rebuilt and re-pulled
+> before planning runs can find the schema file.
 
 ## Models
 

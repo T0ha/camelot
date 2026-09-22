@@ -24,7 +24,7 @@ defmodule CamelotWeb.AgentLive.Index do
   @array_fields ~w(base_args internal_tools question_phrases
                    required_credential_kinds available_models)
   @map_fields ~w(permission_args_by_stage system_prompt_by_stage
-                 env_vars runner_resources)
+                 output_schema_by_stage env_vars runner_resources)
   @integer_fields ~w(base_retry_delay_ms max_retries)
 
   @credential_kinds ~w(claude_api_key openai_api_key codex_api_key
@@ -168,6 +168,7 @@ defmodule CamelotWeb.AgentLive.Index do
       "tools_separator" => ",",
       "permission_args_by_stage" => "{}",
       "system_prompt_by_stage" => "{}",
+      "output_schema_by_stage" => "{}",
       "internal_tools" => "",
       "env_vars" => "{}",
       "parser" => "raw_text",
@@ -196,6 +197,7 @@ defmodule CamelotWeb.AgentLive.Index do
       "tools_separator" => agent.tools_separator,
       "permission_args_by_stage" => Jason.encode!(agent.permission_args_by_stage, pretty: true),
       "system_prompt_by_stage" => Jason.encode!(agent.system_prompt_by_stage, pretty: true),
+      "output_schema_by_stage" => Jason.encode!(agent.output_schema_by_stage, pretty: true),
       "internal_tools" => lines(agent.internal_tools),
       "env_vars" => Jason.encode!(agent.env_vars, pretty: true),
       "parser" => to_string(agent.parser),
@@ -217,6 +219,7 @@ defmodule CamelotWeb.AgentLive.Index do
   defp build_attrs(form_p) do
     with {:ok, perm} <- parse_json_map(form_p, "permission_args_by_stage"),
          {:ok, system_prompts} <- parse_json_map(form_p, "system_prompt_by_stage"),
+         {:ok, output_schemas} <- parse_json_map(form_p, "output_schema_by_stage"),
          {:ok, env} <- parse_json_map(form_p, "env_vars"),
          {:ok, resources} <- parse_json_map(form_p, "runner_resources"),
          {:ok, retry_ms} <- parse_int(form_p, "base_retry_delay_ms"),
@@ -237,6 +240,7 @@ defmodule CamelotWeb.AgentLive.Index do
          tools_separator: form_p["tools_separator"] || ",",
          permission_args_by_stage: perm,
          system_prompt_by_stage: system_prompts,
+         output_schema_by_stage: output_schemas,
          internal_tools: split_lines(form_p["internal_tools"]),
          env_vars: env,
          parser: parse_atom(form_p["parser"]),
@@ -413,6 +417,17 @@ defmodule CamelotWeb.AgentLive.Index do
               For CLIs with no append-system-prompt flag: the text is prepended to the prompt itself.
               Supports <code>{"{{prompt:<slug>}}"}</code>
               placeholders, e.g. <code>{"{\"planning\": \"{{prompt:codex_planning_system_prompt}}\"}"}</code>.
+            </p>
+            <.input
+              field={@form[:output_schema_by_stage]}
+              type="textarea"
+              label="Output schema by stage (JSON)"
+              rows="5"
+            />
+            <p class="text-xs text-base-content/50 -mt-2">
+              For CLIs that take a JSON Schema as a FILE: the app writes it per run and
+              <code>{"{{output_schema_path}}"}</code>
+              above resolves to its path.
             </p>
             <.input
               field={@form[:internal_tools]}

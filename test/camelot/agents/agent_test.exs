@@ -54,6 +54,12 @@ defmodule Camelot.Agents.AgentTest do
       assert agent.system_prompt_by_stage == CodexDefaults.system_prompt_by_stage()
       assert agent.permission_args_by_stage == CodexDefaults.permission_args_by_stage()
 
+      # Planning answers through a schema file, not inferred from prose.
+      assert agent.output_schema_by_stage == CodexDefaults.output_schema_by_stage()
+
+      assert "--output-schema" in agent.permission_args_by_stage["planning"]
+      assert "{{output_schema_path}}" in agent.permission_args_by_stage["planning"]
+
       # A nil runner_image resolves to alpine:latest, which has no codex.
       assert agent.runner_image == CodexDefaults.runner_image()
       assert agent.required_credential_kinds == [:codex_api_key]

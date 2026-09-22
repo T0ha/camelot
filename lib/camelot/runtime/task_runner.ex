@@ -672,6 +672,7 @@ defmodule Camelot.Runtime.TaskRunner do
       |> AgentConfig.resolve(task.project)
       |> AgentConfig.render_permission_args(task.project_id, task.creator_id)
       |> AgentConfig.render_system_prompts(task.project_id, task.creator_id)
+      |> AgentConfig.resolve_output_schema_path(Spec.output_schema_path(state.current_session_id))
 
     model = resolve_model(task)
 
@@ -717,6 +718,7 @@ defmodule Camelot.Runtime.TaskRunner do
       repo_url: repo_url_for(backend, task),
       repo_branch: nil,
       mcp_config_json: build_mcp_config_json(task),
+      output_schema_json: AgentConfig.output_schema(config, task.stage),
       attachments_json: build_attachments_json(task),
       bootstrap?: false,
       task_id: task_id

@@ -10,7 +10,8 @@ defmodule Camelot.Runtime.OutputParser do
   - `:codex_jsonl` expects the `codex exec --json` event
     stream: one JSON object per line, with the agent's own
     messages arriving as `item.completed` events whose item
-    `type` is `agent_message`.
+    `type` is `agent_message`. Under `--output-schema` that
+    final message is a JSON object, surfaced as `structured`.
   - `:raw_text` passes the buffer through unchanged.
   """
 
@@ -283,9 +284,21 @@ defmodule Camelot.Runtime.OutputParser do
       num_turns: codex_num_turns(events),
       usage: codex_usage(events),
       permission_denials: [],
-      structured: nil,
+      structured: codex_structured(final),
       assistant_texts: codex_assistant_texts(final)
     }
+  end
+
+  # Under `--output-schema` the final message is the schema-validated
+  # object itself, so it lands in `structured` and reaches
+  # `TaskRunner.planning_action/2` through the same path Claude Code's
+  # `--json-schema` output does. Without a schema it is prose, which
+  # simply doesn't decode — no need to know which mode the run used.
+  defp codex_structured(final) do
+    case Jason.decode(final) do
+      {:ok, %{} = object} -> object
+      _other -> nil
+    end
   end
 
   defp codex_assistant_texts(""), do: []

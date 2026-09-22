@@ -64,15 +64,14 @@ defmodule Camelot.Agents.CodexDefaults do
   @planning_system_prompt "You are in planning mode: investigate the " <>
                             "repository read-only and do not modify, " <>
                             "create, or delete any file. Your final message " <>
-                            "must be the complete implementation plan in " <>
-                            "Markdown and nothing else — no preamble, no " <>
-                            "narration of what you are about to do, no " <>
-                            "summary of what you read. It is captured as the " <>
-                            "plan for approval exactly as you write it. If " <>
-                            "you instead need input or a decision before the " <>
-                            "plan can be finished, reply with nothing but " <>
-                            "your questions, one per line, in under 400 " <>
-                            "characters."
+                            "is validated against a JSON Schema. Set " <>
+                            ~s(decision="plan" with the complete ) <>
+                            "implementation plan in Markdown under `plan` " <>
+                            "when you are ready for approval, or " <>
+                            ~s(decision="question" with specific questions ) <>
+                            "under `questions` when you need input or a " <>
+                            "decision before planning can complete. Leave " <>
+                            "the field you are not using null."
 
   @doc "Literal default system prompt for the planning run."
   @spec planning_system_prompt() :: String.t()
@@ -125,14 +124,81 @@ defmodule Camelot.Agents.CodexDefaults do
   Planning stays in the read-only sandbox so an investigation run
   cannot touch the workspace; executing and pr need to write files,
   run builds, and push, with no TTY available to approve at.
+
+  Planning also carries `--output-schema`, whose `{{output_schema_path}}`
+  placeholder `Camelot.Runtime.AgentConfig.resolve_output_schema_path/2`
+  fills in with the path the run's schema is written to.
   """
   @spec permission_args_by_stage() :: %{optional(String.t()) => [String.t()]}
   def permission_args_by_stage do
     %{
-      "planning" => ["--sandbox", "read-only"],
+      "planning" => [
+        "--sandbox",
+        "read-only",
+        "--output-schema",
+        "{{output_schema_path}}"
+      ],
       "executing" => ["--dangerously-bypass-approvals-and-sandbox"],
       "pr" => ["--dangerously-bypass-approvals-and-sandbox"]
     }
+  end
+
+  @doc """
+  Per-stage JSON Schema constraining the CLI's final message.
+
+  Only planning has one: it turns the plan-or-question decision from
+  something inferred out of prose into a machine-readable object, the
+  same contract `claude_code` gets from `--json-schema` (see
+  `docs/planning-output-contract.md`).
+  """
+  @spec output_schema_by_stage() :: %{optional(String.t()) => String.t()}
+  def output_schema_by_stage do
+    %{"planning" => planning_output_schema()}
+  end
+
+  @doc """
+  JSON Schema (encoded string) passed as `--output-schema` for planning.
+
+  Codex forwards this to OpenAI's *strict* structured-output mode,
+  which is narrower than the schema `claude_code` uses:
+  `additionalProperties` must be present and false, and **every**
+  property must be listed in `required`. An optional field is
+  expressed as a nullable union instead — hence `["string", "null"]`
+  on `plan` and `["array", "null"]` on `questions`, either of which
+  comes back as `null` when the other is the answer. A schema that
+  breaks those rules fails the turn with a 400 before the model runs.
+  """
+  @spec planning_output_schema() :: String.t()
+  def planning_output_schema do
+    Jason.encode!(%{
+      "type" => "object",
+      "additionalProperties" => false,
+      "properties" => %{
+        "decision" => %{
+          "type" => "string",
+          "enum" => ["plan", "question"],
+          "description" =>
+            ~s(Use "plan" when you have a complete implementation plan ) <>
+              ~s(ready for approval. Use "question" when you need input, a ) <>
+              ~s(decision, or clarification from the user before the plan ) <>
+              ~s(can be finalized.)
+        },
+        "plan" => %{
+          "type" => ["string", "null"],
+          "description" =>
+            ~s(The full implementation plan in Markdown. Required when ) <>
+              ~s(decision is "plan"; null otherwise.)
+        },
+        "questions" => %{
+          "type" => ["array", "null"],
+          "items" => %{"type" => "string"},
+          "description" =>
+            ~s(One clarifying question per item. Required when decision ) <>
+              ~s(is "question"; null otherwise.)
+        }
+      },
+      "required" => ["decision", "plan", "questions"]
+    })
   end
 
   @doc """
@@ -169,11 +235,11 @@ defmodule Camelot.Agents.CodexDefaults do
   @doc """
   Phrases marking planning output as a clarifying question.
 
-  Codex has no structured-output contract, so a question can only be
-  recognised from the free text of the run — which is also why
-  `planning_system_prompt/0` asks for a short, questions-only reply
-  (`TaskRunner` only treats output under 500 characters as a
-  question).
+  A planning run answers through `planning_output_schema/0`, so these
+  are only the fallback path — a run whose structured decision is
+  missing (an older row without `output_schema_by_stage`, or a schema
+  a user has cleared at `/agents`) still has its free text checked for
+  a question.
   """
   @spec question_phrases() :: [String.t()]
   def question_phrases, do: @question_phrases

@@ -132,6 +132,21 @@ defmodule Camelot.Agents.Agent do
       )
     end
 
+    attribute :output_schema_by_stage, :map do
+      allow_nil?(false)
+      public?(true)
+      default(%{})
+
+      description(
+        "Map of task stage (string) to a JSON Schema the CLI " <>
+          "should constrain its final message to. For CLIs that " <>
+          "take the schema as a FILE (e.g. Codex's " <>
+          "--output-schema); the app materialises it per run and " <>
+          "{{output_schema_path}} in permission_args_by_stage " <>
+          "resolves to its path."
+      )
+    end
+
     attribute :internal_tools, {:array, :string} do
       allow_nil?(false)
       public?(true)
@@ -248,6 +263,7 @@ defmodule Camelot.Agents.Agent do
         :tools_separator,
         :permission_args_by_stage,
         :system_prompt_by_stage,
+        :output_schema_by_stage,
         :internal_tools,
         :env_vars,
         :parser,
@@ -277,6 +293,7 @@ defmodule Camelot.Agents.Agent do
         :tools_separator,
         :permission_args_by_stage,
         :system_prompt_by_stage,
+        :output_schema_by_stage,
         :internal_tools,
         :env_vars,
         :parser,

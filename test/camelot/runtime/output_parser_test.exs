@@ -461,6 +461,27 @@ defmodule Camelot.Runtime.OutputParserTest do
       assert String.length(parsed.result_text) < 500
     end
 
+    test "surfaces a schema-validated final message as structured output" do
+      # Verbatim from a real `--output-schema` run (codex-cli 0.155.0):
+      # the final agent_message is the validated object itself.
+      buffer =
+        ~s({"type":"item.completed","item":{"id":"item_0","type":"agent_message",) <>
+          ~s("text":"{\\"decision\\":\\"plan\\",\\"plan\\":\\"Add the flag.\\",\\"questions\\":null}"}})
+
+      assert {:ok, parsed} = OutputParser.parse(:codex_jsonl, buffer)
+
+      assert parsed.structured == %{
+               "decision" => "plan",
+               "plan" => "Add the flag.",
+               "questions" => nil
+             }
+    end
+
+    test "leaves structured nil when the run had no schema" do
+      assert {:ok, parsed} = OutputParser.parse(:codex_jsonl, codex_stream())
+      assert is_nil(parsed.structured)
+    end
+
     # Verbatim event shapes from `codex exec --json` (codex-cli 0.155.0).
     defp codex_stream do
       Enum.join(

@@ -93,6 +93,7 @@ codex_attrs = %{
   tools_separator: ",",
   permission_args_by_stage: CodexDefaults.permission_args_by_stage(),
   system_prompt_by_stage: CodexDefaults.system_prompt_by_stage(),
+  output_schema_by_stage: CodexDefaults.output_schema_by_stage(),
   parser: CodexDefaults.parser(),
   pr_url_pattern: pr_url_pattern,
   question_phrases: CodexDefaults.question_phrases(),

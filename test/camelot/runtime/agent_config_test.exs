@@ -134,6 +134,12 @@ defmodule Camelot.Runtime.AgentConfigTest do
       refute "--quiet" in args
     end
 
+    test "the planning stage names the schema file", ctx do
+      args = AgentConfig.build_cli_args(ctx.codex, "p", [], :planning, nil)
+
+      assert "--output-schema" in args
+    end
+
     test "each stage carries its sandbox posture", ctx do
       planning = AgentConfig.build_cli_args(ctx.codex, "p", [], :planning, nil)
       executing = AgentConfig.build_cli_args(ctx.codex, "p", [], :executing, nil)
@@ -152,6 +158,58 @@ defmodule Camelot.Runtime.AgentConfigTest do
 
       refute "--allowedTools" in args
       refute "Read,Write" in args
+    end
+  end
+
+  describe "output_schema/2 and resolve_output_schema_path/2" do
+    test "planning carries the strict schema; the other stages carry none", ctx do
+      assert AgentConfig.output_schema(ctx.codex, :planning) ==
+               CodexDefaults.planning_output_schema()
+
+      assert is_nil(AgentConfig.output_schema(ctx.codex, :executing))
+      assert is_nil(AgentConfig.output_schema(ctx.codex, :pr))
+      assert is_nil(AgentConfig.output_schema(ctx.claude, :planning))
+    end
+
+    test "the schema satisfies OpenAI strict structured-output mode" do
+      schema = Jason.decode!(CodexDefaults.planning_output_schema())
+
+      # Codex forwards the schema verbatim; strict mode 400s the turn
+      # before the model runs unless both of these hold.
+      assert schema["additionalProperties"] == false
+      assert Enum.sort(schema["required"]) == ~w(decision plan questions)
+
+      # …so an "optional" field is a nullable union instead.
+      assert schema["properties"]["plan"]["type"] == ["string", "null"]
+      assert schema["properties"]["questions"]["type"] == ["array", "null"]
+    end
+
+    test "substitutes the path placeholder in the planning args", ctx do
+      resolved = AgentConfig.resolve_output_schema_path(ctx.codex, "/tmp/schema-1.json")
+
+      assert resolved.permission_args_by_stage["planning"] ==
+               ["--sandbox", "read-only", "--output-schema", "/tmp/schema-1.json"]
+
+      # Stages without the placeholder are untouched.
+      assert resolved.permission_args_by_stage["executing"] ==
+               ctx.codex.permission_args_by_stage["executing"]
+    end
+
+    test "the resolved path reaches argv", ctx do
+      args =
+        ctx.codex
+        |> AgentConfig.resolve_output_schema_path("/tmp/schema-1.json")
+        |> AgentConfig.build_cli_args("p", [], :planning, nil)
+
+      assert "--output-schema" in args
+      assert "/tmp/schema-1.json" in args
+      refute Enum.any?(args, &String.contains?(&1, "{{output_schema_path}}"))
+    end
+
+    test "a blank schema reads as no schema", ctx do
+      config = %{ctx.codex | output_schema_by_stage: %{"planning" => "   "}}
+
+      assert is_nil(AgentConfig.output_schema(config, :planning))
     end
   end
 
