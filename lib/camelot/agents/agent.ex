@@ -19,7 +19,7 @@ defmodule Camelot.Agents.Agent do
     data_layer: AshPostgres.DataLayer,
     authorizers: []
 
-  @parsers [:claude_code_json, :raw_text]
+  @parsers [:claude_code_json, :codex_jsonl, :raw_text]
 
   postgres do
     table("agents")

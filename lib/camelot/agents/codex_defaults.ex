@@ -31,16 +31,22 @@ defmodule Camelot.Agents.CodexDefaults do
   per agent, at `/agents`) to tighten that.
   """
 
-  @base_args ["exec", "--skip-git-repo-check", "--color", "never"]
+  @base_args ["exec", "--json", "--skip-git-repo-check", "--color", "never"]
 
   @doc """
   Static args prepended to every run.
 
-  `exec` selects the non-interactive subcommand;
+  `exec` selects the non-interactive subcommand.
+
+  `--json` switches the run onto the JSONL event stream the
+  `:codex_jsonl` parser reads. Without it the CLI prints a human
+  transcript in which the agent's own messages are indistinguishable
+  from echoed prompts and command output, so the whole run — 122 KB
+  of `rg` results in the case that prompted this — became the "plan".
+
   `--skip-git-repo-check` keeps a bootstrap run outside a checkout
-  from aborting; `--color never` keeps ANSI escapes out of
-  `session.output_log`, which the `:raw_text` parser stores verbatim
-  and the task page renders.
+  from aborting, and `--color never` keeps ANSI escapes out of
+  `session.output_log`, which the task page renders verbatim.
   """
   @spec base_args() :: [String.t()]
   def base_args, do: @base_args
@@ -57,13 +63,16 @@ defmodule Camelot.Agents.CodexDefaults do
 
   @planning_system_prompt "You are in planning mode: investigate the " <>
                             "repository read-only and do not modify, " <>
-                            "create, or delete any file. End your final " <>
-                            "message with the complete implementation plan " <>
-                            "in Markdown — that message is captured verbatim " <>
-                            "as the plan for approval. If you instead need " <>
-                            "input or a decision before the plan can be " <>
-                            "finished, reply with nothing but your questions, " <>
-                            "one per line, in under 400 characters."
+                            "create, or delete any file. Your final message " <>
+                            "must be the complete implementation plan in " <>
+                            "Markdown and nothing else — no preamble, no " <>
+                            "narration of what you are about to do, no " <>
+                            "summary of what you read. It is captured as the " <>
+                            "plan for approval exactly as you write it. If " <>
+                            "you instead need input or a decision before the " <>
+                            "plan can be finished, reply with nothing but " <>
+                            "your questions, one per line, in under 400 " <>
+                            "characters."
 
   @doc "Literal default system prompt for the planning run."
   @spec planning_system_prompt() :: String.t()
@@ -168,4 +177,15 @@ defmodule Camelot.Agents.CodexDefaults do
   """
   @spec question_phrases() :: [String.t()]
   def question_phrases, do: @question_phrases
+
+  @doc """
+  Output parser for this CLI: the `codex exec --json` event stream.
+
+  See `Camelot.Runtime.OutputParser`. `:raw_text` — what the template
+  originally carried — stored the entire human transcript as the run's
+  result, so a planning run's "plan" was every command it ran and
+  every line those commands printed.
+  """
+  @spec parser() :: :codex_jsonl
+  def parser, do: :codex_jsonl
 end

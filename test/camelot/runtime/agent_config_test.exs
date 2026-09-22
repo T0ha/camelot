@@ -125,7 +125,7 @@ defmodule Camelot.Runtime.AgentConfigTest do
           nil
         )
 
-      assert Enum.take(args, 4) == CodexDefaults.base_args()
+      assert Enum.take(args, length(CodexDefaults.base_args())) == CodexDefaults.base_args()
       assert List.first(args) == "exec"
       assert List.last(args) =~ "hello"
 

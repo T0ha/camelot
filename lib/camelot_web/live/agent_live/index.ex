@@ -14,6 +14,7 @@ defmodule CamelotWeb.AgentLive.Index do
 
   @parser_options [
     {"Claude Code JSON", "claude_code_json"},
+    {"Codex JSONL", "codex_jsonl"},
     {"Raw Text", "raw_text"}
   ]
 

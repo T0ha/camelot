@@ -28,7 +28,7 @@ defmodule Camelot.Agents.AgentTest do
       agent = agent!("codex")
 
       assert agent.name == "Codex"
-      assert agent.parser == :raw_text
+      assert agent.parser == CodexDefaults.parser()
       assert agent.base_args == CodexDefaults.base_args()
       assert agent.prompt_flag == nil
       assert agent.model_flag == "--model"
@@ -43,6 +43,11 @@ defmodule Camelot.Agents.AgentTest do
       # originally seeded against, which exited 2 before any model call.
       assert List.first(agent.base_args) == "exec"
       refute "--quiet" in agent.base_args
+
+      # The JSONL event stream, not the human transcript: with
+      # :raw_text the whole 122 KB run became the "plan".
+      assert "--json" in agent.base_args
+      assert agent.parser == :codex_jsonl
 
       # No --append-system-prompt equivalent: the stage system prompt
       # rides in on the prompt itself.

@@ -93,7 +93,7 @@ codex_attrs = %{
   tools_separator: ",",
   permission_args_by_stage: CodexDefaults.permission_args_by_stage(),
   system_prompt_by_stage: CodexDefaults.system_prompt_by_stage(),
-  parser: :raw_text,
+  parser: CodexDefaults.parser(),
   pr_url_pattern: pr_url_pattern,
   question_phrases: CodexDefaults.question_phrases(),
   runner_image: CodexDefaults.runner_image(),

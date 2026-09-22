@@ -7,10 +7,14 @@ defmodule Camelot.Runtime.OutputParser do
     `result` field plus optional `is_error`, `cost_usd`,
     `duration_ms`, `duration_api_ms`, `num_turns`, `usage`,
     and `permission_denials`.
+  - `:codex_jsonl` expects the `codex exec --json` event
+    stream: one JSON object per line, with the agent's own
+    messages arriving as `item.completed` events whose item
+    `type` is `agent_message`.
   - `:raw_text` passes the buffer through unchanged.
   """
 
-  @type parser :: :claude_code_json | :raw_text
+  @type parser :: :claude_code_json | :codex_jsonl | :raw_text
 
   @type permission_denial :: %{
           tool_name: String.t(),
@@ -45,6 +49,13 @@ defmodule Camelot.Runtime.OutputParser do
        structured: nil,
        assistant_texts: []
      }}
+  end
+
+  def parse(:codex_jsonl, buffer) do
+    case decode_lines(buffer) do
+      [] -> {:error, "no JSON object found in output"}
+      events -> from_codex_events(events)
+    end
   end
 
   def parse(:claude_code_json, "") do
@@ -133,12 +144,19 @@ defmodule Camelot.Runtime.OutputParser do
   # decodable object so a single-object buffer wrapped in log/terminal
   # noise still parses.
   defp extract_json_from_lines(buffer) do
-    objects =
-      buffer
-      |> String.split(~r/\r?\n/)
-      |> Enum.flat_map(&decode_line_to_list/1)
+    objects = decode_lines(buffer)
 
     pick_object(last_result_event(objects), objects)
+  end
+
+  # Every decodable JSON object in the buffer, in stream order.
+  # Container runners emit entrypoint log lines around the CLI output
+  # and Codex writes its own progress notes to stderr, which the runner
+  # merges into the same buffer — undecodable lines are simply dropped.
+  defp decode_lines(buffer) do
+    buffer
+    |> String.split(~r/\r?\n/)
+    |> Enum.flat_map(&decode_line_to_list/1)
   end
 
   # Pair the chosen result object with the full object list; `:error`
@@ -234,4 +252,87 @@ defmodule Camelot.Runtime.OutputParser do
   end
 
   defp parse_denials(_), do: []
+
+  # `codex exec --json` emits `turn.failed` instead of a non-zero exit
+  # when the model or the harness gives up mid-turn, so a buffer full of
+  # otherwise-valid events can still be a failed run.
+  defp from_codex_events(events) do
+    case Enum.find(events, &codex_event?(&1, "turn.failed")) do
+      nil -> {:ok, codex_result(events)}
+      failed -> {:error, "codex error: " <> codex_error_message(failed)}
+    end
+  end
+
+  # Only the LAST agent message is the run's answer. Unlike Claude
+  # Code — where `assistant_texts` collects every turn because the plan
+  # may sit in one before the final result field — Codex emits its
+  # progress narration ("I'll trace the config path first…") as its own
+  # `agent_message` items ahead of the answer. Joining those would put
+  # two paragraphs of throat-clearing in front of every plan, and would
+  # push a clarifying question past the 500-character ceiling
+  # `TaskRunner.planning_action/2` uses to recognise one. The full
+  # transcript stays in `session.output_log` either way.
+  defp codex_result(events) do
+    final = List.last(codex_agent_messages(events)) || ""
+
+    %{
+      result_text: final,
+      cost_usd: nil,
+      duration_ms: nil,
+      duration_api_ms: nil,
+      num_turns: codex_num_turns(events),
+      usage: codex_usage(events),
+      permission_denials: [],
+      structured: nil,
+      assistant_texts: codex_assistant_texts(final)
+    }
+  end
+
+  defp codex_assistant_texts(""), do: []
+  defp codex_assistant_texts(final), do: [final]
+
+  # Every message the agent addressed to the user, in stream order.
+  # The reasoning, command_execution, and file_change items carry the
+  # run's working noise and are dropped — they are what made an
+  # unparsed run unreadable.
+  defp codex_agent_messages(events) do
+    events
+    |> Enum.filter(&codex_event?(&1, "item.completed"))
+    |> Enum.map(&get_in(&1, ["item"]))
+    |> Enum.filter(&codex_agent_message?/1)
+    |> Enum.map(&String.trim(&1["text"]))
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  defp codex_agent_message?(%{"type" => "agent_message", "text" => text}), do: is_binary(text)
+  defp codex_agent_message?(_item), do: false
+
+  # Token counts live on the last `turn.completed`; a resumed thread
+  # emits one per turn and each is that turn's own tally.
+  defp codex_usage(events) do
+    events
+    |> Enum.filter(&codex_event?(&1, "turn.completed"))
+    |> List.last()
+    |> case do
+      %{"usage" => %{} = usage} -> usage
+      _ -> nil
+    end
+  end
+
+  defp codex_num_turns(events) do
+    case Enum.count(events, &codex_event?(&1, "turn.completed")) do
+      0 -> nil
+      count -> count
+    end
+  end
+
+  defp codex_error_message(%{"error" => %{"message" => message}}) when is_binary(message) do
+    message
+  end
+
+  defp codex_error_message(%{"error" => error}) when is_binary(error), do: error
+  defp codex_error_message(_event), do: "the turn failed without a reason"
+
+  defp codex_event?(%{"type" => type}, type), do: true
+  defp codex_event?(_event, _type), do: false
 end

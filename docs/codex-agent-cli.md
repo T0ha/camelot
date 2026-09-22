@@ -27,6 +27,7 @@ Three further gaps would each have broken a run that got past that:
 | `runner_image` nil | Swarm/DockerEngine fall back to `alpine:latest`, which has no `codex` binary |
 | `required_credential_kinds` empty | No `OPENAI_API_KEY` mounted (`:codex_api_key` maps to it in `Runner.SecretEnv`) |
 | No per-stage system prompt | Nothing told the agent to emit a plan, or to finish by opening a PR |
+| `parser: :raw_text` | The whole human transcript became the run's result — see [Output parsing](#output-parsing) |
 
 `20260922060000_fix_codex_for_modern_cli.exs` repairs all of it, guarded
 on `base_args` still being exactly `["--quiet"]` so a hand-edited row at
@@ -34,17 +35,59 @@ on `base_args` still being exactly `["--quiet"]` so a hand-edited row at
 
 ## Argv shape
 
-`base_args` is `exec --skip-git-repo-check --color never`:
+`base_args` is `exec --json --skip-git-repo-check --color never`:
 
 - **`exec`** — the non-interactive subcommand. Without it argv is parsed
   as options to the interactive TUI.
+- **`--json`** — the JSONL event stream the `:codex_jsonl` parser reads.
+  See [Output parsing](#output-parsing) below.
 - **`--skip-git-repo-check`** — keeps a run outside a checkout (e.g. a
   bootstrap session) from aborting.
-- **`--color never`** — the `:raw_text` parser stores stdout verbatim in
-  `session.output_log` and the task page renders it; ANSI escapes would
-  survive into both.
+- **`--color never`** — `session.output_log` stores stdout verbatim and
+  the task page renders it; ANSI escapes would survive into both.
 
 `prompt_flag` is nil, so the prompt is positional — `codex exec [PROMPT]`.
+
+## Output parsing
+
+The template originally carried `parser: :raw_text`, which stores the
+whole run as its result. The first successful planning run therefore
+produced a **122 KB "plan"**: the echoed prompt, every `rg`/`sed` the
+agent ran, and every line those printed — with the actual plan as the
+last few hundred lines.
+
+`--json` makes the CLI emit one event per line instead:
+
+```jsonc
+{"type":"thread.started","thread_id":"01a0…"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"…"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"…","aggregated_output":"…","exit_code":0,"status":"completed"}}
+{"type":"turn.completed","usage":{"input_tokens":25809,"output_tokens":137,…}}
+```
+
+`OutputParser.parse(:codex_jsonl, buffer)` keeps only `agent_message`
+items — `reasoning`, `command_execution`, `file_change`, `mcp_tool_call`,
+`web_search` and `todo_list` are the working noise — and reads token
+counts off `turn.completed`. A `turn.failed` event becomes an error even
+though the process still exits 0. Undecodable lines are dropped, so the
+entrypoint's log lines and the CLI's own stderr notes ("Reading
+additional input from stdin…") pass through harmlessly.
+
+One visible trade-off: `session.output_log` now holds JSONL rather than
+the human transcript, so the task page's live-output panel shows events
+instead of prose. That is already how `claude_code` behaves — it runs
+`--output-format stream-json` — and the panel renders whatever the CLI
+wrote, verbatim. There is no second stream to keep the prose in.
+
+**Only the last `agent_message` is the answer.** Codex emits its
+progress narration ("I'll trace the config path first…") as its own
+`agent_message` items *ahead* of the answer, so unlike Claude Code —
+where `assistant_texts` collects every turn because the plan may sit in
+one before the final result field — joining them here would prefix every
+plan with throat-clearing, and would push a clarifying question past the
+500-character ceiling `TaskRunner.planning_action/2` uses to recognise
+one. The full transcript remains in `session.output_log` either way.
 
 ## Sandbox posture
 
@@ -88,15 +131,23 @@ send it twice.
 
 ## Planning output
 
-There is no structured-output contract here — `parser` is `:raw_text`, so
-`TaskRunner.planning_action/2` falls through to the free-text path and
-the whole run output becomes the plan. Two consequences shape
-`planning_system_prompt/0`:
+There is still no structured-output contract here: nothing forces the
+shape of the answer, so `TaskRunner.planning_action/2` takes the
+free-text path and the final agent message becomes the plan. Two
+consequences shape `planning_system_prompt/0`:
 
-- the final message must *be* the plan, since it is captured verbatim;
+- the final message must *be* the plan, and nothing else — it is stored
+  exactly as written;
 - a clarifying question is only recognised from free text, and only when
-  the output is under 500 characters and matches `question_phrases` —
-  hence the instruction to reply with nothing but the questions.
+  it is under 500 characters and matches `question_phrases` — hence the
+  instruction to reply with nothing but the questions.
+
+Codex does have `--output-schema <FILE>`, the analogue of Claude Code's
+`--json-schema`. Using it would need the schema file materialised inside
+the runner container, which means a new `Runner.Spec` field, a matching
+env var in all four backends, and an entrypoint change in the base
+image — worth doing if free-text planning proves unreliable, but not
+needed to get a readable plan.
 
 See [planning-output-contract.md](planning-output-contract.md) for how
 Claude Code does this instead.
