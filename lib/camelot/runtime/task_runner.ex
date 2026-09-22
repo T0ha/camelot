@@ -671,6 +671,7 @@ defmodule Camelot.Runtime.TaskRunner do
       task.agent
       |> AgentConfig.resolve(task.project)
       |> AgentConfig.render_permission_args(task.project_id, task.creator_id)
+      |> AgentConfig.render_system_prompts(task.project_id, task.creator_id)
 
     model = resolve_model(task)
 

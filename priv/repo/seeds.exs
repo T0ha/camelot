@@ -12,6 +12,7 @@
 
 alias Camelot.Agents.Agent
 alias Camelot.Agents.ClaudeCodeDefaults
+alias Camelot.Agents.CodexDefaults
 alias Camelot.Prompts.PromptTemplate
 
 pr_url_pattern = "https://github\\.com/[^\\s]+/pull/(\\d+)"
@@ -75,23 +76,38 @@ case Enum.find(existing_templates, &(&1.slug == "claude_code")) do
     Ash.update!(template, claude_code_attrs)
 end
 
-if !Enum.any?(existing_templates, &(&1.slug == "codex")) do
-  Ash.create!(Agent, %{
-    slug: "codex",
-    name: "Codex",
-    executable: "codex",
-    base_args: ["--quiet"],
-    # `available_models`/`default_model` deliberately left unset: unlike
-    # Claude Code's ids above, Codex CLI's current `--model` values
-    # aren't confirmed here. Left for an admin to fill in via the Agent
-    # CLI admin page once verified against the CLI's own docs.
-    model_flag: "--model",
-    tools_separator: ",",
-    parser: :raw_text,
-    pr_url_pattern: pr_url_pattern,
-    base_retry_delay_ms: 5_000,
-    max_retries: 3
-  })
+# Codex is configured against the modern CLI (`codex exec`), which has
+# no `--quiet` flag and no `--append-system-prompt` equivalent — see
+# `Camelot.Agents.CodexDefaults`. Reconciled rather than
+# create-if-missing, same as `claude_code` above, so an install seeded
+# against the old CLI is repaired instead of left broken.
+codex_attrs = %{
+  name: "Codex",
+  executable: "codex",
+  base_args: CodexDefaults.base_args(),
+  # `available_models`/`default_model` deliberately left unset: unlike
+  # Claude Code's ids above, Codex CLI's current `--model` values
+  # aren't confirmed here. Left for an admin to fill in via the Agent
+  # CLI admin page once verified against the CLI's own docs.
+  model_flag: "--model",
+  tools_separator: ",",
+  permission_args_by_stage: CodexDefaults.permission_args_by_stage(),
+  system_prompt_by_stage: CodexDefaults.system_prompt_by_stage(),
+  parser: :raw_text,
+  pr_url_pattern: pr_url_pattern,
+  question_phrases: CodexDefaults.question_phrases(),
+  runner_image: CodexDefaults.runner_image(),
+  required_credential_kinds: [:codex_api_key],
+  base_retry_delay_ms: 5_000,
+  max_retries: 3
+}
+
+case Enum.find(existing_templates, &(&1.slug == "codex")) do
+  nil ->
+    Ash.create!(Agent, Map.put(codex_attrs, :slug, "codex"))
+
+  template ->
+    Ash.update!(template, codex_attrs)
 end
 
 existing = Ash.read!(PromptTemplate)

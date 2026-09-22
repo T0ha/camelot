@@ -118,6 +118,20 @@ defmodule Camelot.Agents.Agent do
       )
     end
 
+    attribute :system_prompt_by_stage, :map do
+      allow_nil?(false)
+      public?(true)
+      default(%{})
+
+      description(
+        "Map of task stage (string) to a system prompt prepended " <>
+          "to the prompt itself. For CLIs with no " <>
+          "append-system-prompt flag (e.g. Codex); CLIs that have " <>
+          "one carry it in permission_args_by_stage instead. " <>
+          "Supports {{prompt:<slug>}} placeholders."
+      )
+    end
+
     attribute :internal_tools, {:array, :string} do
       allow_nil?(false)
       public?(true)
@@ -233,6 +247,7 @@ defmodule Camelot.Agents.Agent do
         :tools_flag,
         :tools_separator,
         :permission_args_by_stage,
+        :system_prompt_by_stage,
         :internal_tools,
         :env_vars,
         :parser,
@@ -261,6 +276,7 @@ defmodule Camelot.Agents.Agent do
         :tools_flag,
         :tools_separator,
         :permission_args_by_stage,
+        :system_prompt_by_stage,
         :internal_tools,
         :env_vars,
         :parser,

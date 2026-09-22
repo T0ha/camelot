@@ -11,6 +11,7 @@ defmodule Camelot.Runtime.AgentConfigTest do
 
   alias Camelot.Accounts.User
   alias Camelot.Agents.ClaudeCodeDefaults
+  alias Camelot.Agents.CodexDefaults
   alias Camelot.Projects.Project
   alias Camelot.Prompts.PromptTemplate
   alias Camelot.Runtime.AgentConfig
@@ -113,8 +114,8 @@ defmodule Camelot.Runtime.AgentConfigTest do
     end
   end
 
-  describe "build_cli_args/5 — codex parity" do
-    test "uses positional prompt and --quiet base arg", ctx do
+  describe "build_cli_args/5 — codex against the modern CLI" do
+    test "runs the exec subcommand with a positional prompt", ctx do
       args =
         AgentConfig.build_cli_args(
           ctx.codex,
@@ -124,7 +125,154 @@ defmodule Camelot.Runtime.AgentConfigTest do
           nil
         )
 
-      assert args == ["--quiet", "hello"]
+      assert Enum.take(args, 4) == CodexDefaults.base_args()
+      assert List.first(args) == "exec"
+      assert List.last(args) =~ "hello"
+
+      # The flag the original seed shipped, which the modern CLI
+      # rejects with exit 2 before any model call.
+      refute "--quiet" in args
+    end
+
+    test "each stage carries its sandbox posture", ctx do
+      planning = AgentConfig.build_cli_args(ctx.codex, "p", [], :planning, nil)
+      executing = AgentConfig.build_cli_args(ctx.codex, "p", [], :executing, nil)
+      pr = AgentConfig.build_cli_args(ctx.codex, "p", [], :pr, nil)
+
+      assert ["--sandbox", "read-only"] ==
+               Enum.filter(planning, &(&1 in ["--sandbox", "read-only"]))
+
+      assert "--dangerously-bypass-approvals-and-sandbox" in executing
+      assert "--dangerously-bypass-approvals-and-sandbox" in pr
+      refute "--dangerously-bypass-approvals-and-sandbox" in planning
+    end
+
+    test "omits --allowedTools entirely (the CLI has no such flag)", ctx do
+      args = AgentConfig.build_cli_args(ctx.codex, "p", ["Read", "Write"], :executing, nil)
+
+      refute "--allowedTools" in args
+      refute "Read,Write" in args
+    end
+  end
+
+  describe "build_cli_args/5 — system_prompt_by_stage" do
+    test "prepends the stage system prompt to a positional prompt", ctx do
+      config = %{
+        ctx.codex
+        | system_prompt_by_stage: %{"executing" => "SYSTEM TEXT"}
+      }
+
+      args = AgentConfig.build_cli_args(config, "do it", [], :executing, nil)
+
+      assert List.last(args) == "SYSTEM TEXT\n\ndo it"
+    end
+
+    test "prepends to a flag-passed prompt too, leaving the flag last-but-one", ctx do
+      config = %{
+        ctx.claude
+        | system_prompt_by_stage: %{"executing" => "SYSTEM TEXT"}
+      }
+
+      args = AgentConfig.build_cli_args(config, "do it", [], :executing, nil)
+
+      assert Enum.take(args, -2) == ["-p", "SYSTEM TEXT\n\ndo it"]
+    end
+
+    test "leaves the prompt untouched for a stage with no entry", ctx do
+      config = %{ctx.codex | system_prompt_by_stage: %{"planning" => "PLAN TEXT"}}
+
+      args = AgentConfig.build_cli_args(config, "do it", [], :executing, nil)
+
+      assert List.last(args) == "do it"
+    end
+
+    test "leaves the prompt untouched when the resolved text is blank", ctx do
+      config = %{ctx.codex | system_prompt_by_stage: %{"executing" => "   "}}
+
+      args = AgentConfig.build_cli_args(config, "do it", [], :executing, nil)
+
+      assert List.last(args) == "do it"
+    end
+
+    test "the seeded claude_code template carries no system_prompt_by_stage", ctx do
+      # Claude Code takes its system prompt as a flag, in
+      # permission_args_by_stage — a row carrying both would send it twice.
+      assert ctx.claude.system_prompt_by_stage == %{}
+    end
+  end
+
+  describe "render_system_prompts/3" do
+    test "substitutes every stage's placeholder with the seeded body text", ctx do
+      rendered = AgentConfig.render_system_prompts(ctx.codex, nil, nil)
+
+      assert rendered.system_prompt_by_stage["planning"] ==
+               CodexDefaults.planning_system_prompt()
+
+      assert rendered.system_prompt_by_stage["executing"] ==
+               CodexDefaults.execution_system_prompt()
+
+      assert rendered.system_prompt_by_stage["pr"] == CodexDefaults.pr_system_prompt()
+    end
+
+    test "a project-scoped PromptTemplate wins over the system-global one", ctx do
+      {:ok, project} =
+        Ash.create(Project, %{
+          name: "rsp-proj-#{System.unique_integer()}",
+          path: "/tmp/rsp"
+        })
+
+      {:ok, _override} =
+        Ash.create(PromptTemplate, %{
+          slug: CodexDefaults.execution_system_prompt_slug(),
+          name: "Project Codex Execution Override",
+          body: "CUSTOM PROJECT EXECUTION PROMPT",
+          project_id: project.id
+        })
+
+      rendered = AgentConfig.render_system_prompts(ctx.codex, project.id, nil)
+
+      assert rendered.system_prompt_by_stage["executing"] ==
+               "CUSTOM PROJECT EXECUTION PROMPT"
+    end
+
+    test "a missing template falls back to the literal CodexDefaults text and logs", ctx do
+      PromptTemplate
+      |> Ash.Query.filter(
+        slug == ^CodexDefaults.execution_system_prompt_slug() and
+          is_nil(project_id) and is_nil(user_id)
+      )
+      |> Ash.read_one!()
+      |> Ash.destroy!()
+
+      {rendered, log} =
+        with_log(fn -> AgentConfig.render_system_prompts(ctx.codex, nil, nil) end)
+
+      assert rendered.system_prompt_by_stage["executing"] ==
+               CodexDefaults.execution_system_prompt()
+
+      assert log =~ "Missing PromptTemplate codex_execution_system_prompt"
+    end
+
+    test "literal text with no placeholder passes through unchanged", ctx do
+      config = %{ctx.codex | system_prompt_by_stage: %{"executing" => "Literal text"}}
+
+      rendered = AgentConfig.render_system_prompts(config, nil, nil)
+
+      assert rendered.system_prompt_by_stage["executing"] == "Literal text"
+    end
+  end
+
+  describe "the seeded codex template" do
+    test "points at an image that actually carries the CLI", ctx do
+      assert ctx.codex.runner_image == CodexDefaults.runner_image()
+    end
+
+    test "declares the credential that becomes OPENAI_API_KEY", ctx do
+      assert :codex_api_key in ctx.codex.required_credential_kinds
+    end
+
+    test "can recognise a clarifying question in free-text planning output", ctx do
+      assert ctx.codex.question_phrases != []
     end
   end
 
