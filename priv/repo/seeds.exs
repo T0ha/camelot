@@ -85,11 +85,11 @@ codex_attrs = %{
   name: "Codex",
   executable: "codex",
   base_args: CodexDefaults.base_args(),
-  # `available_models`/`default_model` deliberately left unset: unlike
-  # Claude Code's ids above, Codex CLI's current `--model` values
-  # aren't confirmed here. Left for an admin to fill in via the Agent
-  # CLI admin page once verified against the CLI's own docs.
   model_flag: "--model",
+  # Verified by invocation, not documented by the CLI — and scoped to
+  # the account the probe ran under. `default_model` stays nil so the
+  # CLI picks its own. See `CodexDefaults.available_models/0`.
+  available_models: CodexDefaults.available_models(),
   tools_separator: ",",
   permission_args_by_stage: CodexDefaults.permission_args_by_stage(),
   system_prompt_by_stage: CodexDefaults.system_prompt_by_stage(),

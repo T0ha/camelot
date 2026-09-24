@@ -187,7 +187,26 @@ resolves to the path — so both halves stay editable at `/agents`.
 
 ## Models
 
-`available_models` and `default_model` are deliberately empty: the CLI's
-current `--model` values aren't pinned here. Fill them in at `/agents`
-once verified against the CLI's own docs; until then Codex uses its own
-default.
+`available_models` is `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`. The CLI
+has no "list models" command, so that list was established by invoking
+each candidate against codex-cli 0.155.0 and keeping the ones whose turn
+completed. The rejects — `gpt-5.6-sol`, `gpt-5.4`, `gpt-5.3-codex`,
+`gpt-5.2`, `gpt-5.1-codex-max` — return:
+
+```
+400 invalid_request_error:
+  The 'gpt-5.4' model is not supported when using Codex with a ChatGPT account.
+```
+
+after a `Model metadata … not found` warning that, on its own, reads as
+survivable and isn't.
+
+**That set is scoped to the account the probe ran under**, not a property
+of the CLI: another plan, or API-key auth, may accept a different list.
+Treat it as a sensible default and edit it at `/agents` when it doesn't
+match. Discovering it per install is
+[issue #165](https://github.com/T0ha/camelot/issues/165).
+
+`default_model` is deliberately nil. With no `--model` the CLI picks its
+own default (`gpt-5.6-terra` today), which degrades gracefully on an
+install that isn't entitled to whichever id we'd otherwise have pinned.

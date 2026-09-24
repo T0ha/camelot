@@ -51,6 +51,33 @@ defmodule Camelot.Agents.CodexDefaults do
   @spec base_args() :: [String.t()]
   def base_args, do: @base_args
 
+  @available_models ["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"]
+
+  @doc """
+  Model ids the CLI's `--model` flag accepts.
+
+  The CLI has no "list models" command, so this was established by
+  invoking each candidate against codex-cli 0.155.0 and keeping the
+  ones whose turn completed. The rejected ones (`gpt-5.6-sol`,
+  `gpt-5.4`, `gpt-5.3-codex`, `gpt-5.2`, `gpt-5.1-codex-max`) fail with
+  a 400 — "not supported when using Codex with a ChatGPT account" —
+  after a `Model metadata … not found` warning, which on its own looks
+  survivable and isn't.
+
+  That caveat is the point: **the accepted set is scoped to the
+  account the probe ran under.** Another ChatGPT plan, or API-key auth,
+  may accept a different list, so treat this as a sensible default
+  rather than a fact about the CLI, and edit it at `/agents` when it
+  doesn't match. Discovering it per install is tracked separately.
+
+  `default_model` is deliberately left nil: with no `--model` the CLI
+  picks its own default (`gpt-5.6-terra` at the time of writing),
+  which degrades gracefully on an account that can't use whichever id
+  we would have pinned.
+  """
+  @spec available_models() :: [String.t()]
+  def available_models, do: @available_models
+
   @doc """
   Image carrying the Codex CLI (`runner-images/codex/Dockerfile`).
 

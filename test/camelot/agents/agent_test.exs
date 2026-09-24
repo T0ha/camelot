@@ -32,8 +32,21 @@ defmodule Camelot.Agents.AgentTest do
       assert agent.base_args == CodexDefaults.base_args()
       assert agent.prompt_flag == nil
       assert agent.model_flag == "--model"
-      assert agent.available_models == []
+      assert agent.available_models == CodexDefaults.available_models()
       assert agent.default_model == nil
+    end
+
+    test "codex agent offers models for the task form's dropdown" do
+      agent = agent!("codex")
+
+      # BoardLive.next_model_options/2 builds the Model select from
+      # this; empty rendered only the "Use agent default" placeholder.
+      assert agent.available_models != []
+      assert "gpt-5.6-terra" in agent.available_models
+
+      # Left nil on purpose: the accepted ids are account-scoped, so
+      # the CLI picking its own default degrades better than a pin.
+      assert is_nil(agent.default_model)
     end
 
     test "codex agent is configured for the modern CLI" do
