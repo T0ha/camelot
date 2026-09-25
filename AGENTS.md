@@ -66,6 +66,7 @@ Follow the [Elixir Style Guide](https://github.com/christopheradams/elixir_style
 - `POSTHOG_API_KEY` / `POSTHOG_API_HOST` drive both server-side capture (`Camelot.Telemetry.PostHogHandler`) and browser-side capture (`CamelotWeb.PostHogConfig`, `posthog-js` in `assets/js/app.js`) — both are disabled unless the key is set
 - `AHREFS_ANALYTICS_KEY` renders the Ahrefs Web Analytics snippet in the app and docs layouts (`CamelotWeb.AhrefsConfig`) — set it on the production app only, since the test cluster runs the same `MIX_ENV=prod` release
 - Tasks can link to each other (`:blocks`, `:parent_of`, `:relates_to`), including across projects — see `docs/task-links.md` for gating, stacked branches and the rebase-notice flow
+- A project's `.camelot/rules/*.md` files are **not** auto-discovered: they only reach the agent when the stage's prompt template (`execution`, `pr_review`, `planning`) `@`-mentions them, and the CLI resolves the `@path` itself against the cloned repo — see `docs/guides/camelot-folder.md`
 
 ### Phoenix v1.8 Guidelines
 
