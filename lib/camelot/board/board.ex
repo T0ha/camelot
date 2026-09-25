@@ -13,6 +13,7 @@ defmodule Camelot.Board do
     resource(Camelot.Board.Task)
     resource(Camelot.Board.TaskMessage)
     resource(TaskAttachment)
+    resource(Camelot.Board.TaskLink)
   end
 
   @doc """

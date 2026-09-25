@@ -58,7 +58,9 @@ defmodule Camelot.Runtime.Runner.LocalPort do
   # --- GenServer ---
 
   @impl GenServer
-  def init(%Spec{owner_pid: owner, argv: argv, env: env, cwd: cwd, session_id: id}) do
+  def init(%Spec{owner_pid: owner, argv: argv, env: env, cwd: cwd, session_id: id} = spec) do
+    write_output_schema(spec)
+
     case open_port(argv, env, cwd) do
       {:ok, port} ->
         state = %__MODULE__{owner: owner, port: port, session_id: id}
@@ -66,6 +68,27 @@ defmodule Camelot.Runtime.Runner.LocalPort do
 
       {:error, reason} ->
         {:stop, reason}
+    end
+  end
+
+  # The container backends have `exec-wrapper.sh` write this from
+  # `CAMELOT_OUTPUT_SCHEMA_JSON`; running on the host there is no
+  # wrapper, so write it here — same path either way, since the argv
+  # naming it was built before the backend was known. A failure is
+  # logged rather than fatal: the CLI will report the missing file
+  # itself, with more context than this process has.
+  defp write_output_schema(%Spec{output_schema_json: nil}), do: :ok
+
+  defp write_output_schema(%Spec{output_schema_json: json, session_id: id}) do
+    path = Spec.output_schema_path(id)
+
+    case File.write(path, json) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("LocalPort: could not write output schema to #{path}: #{inspect(reason)}")
+        :ok
     end
   end
 

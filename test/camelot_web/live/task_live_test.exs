@@ -605,6 +605,137 @@ defmodule CamelotWeb.TaskLiveTest do
     end
   end
 
+  describe "linked tasks" do
+    alias Camelot.Board.TaskLink
+
+    defp create_linked_task(project, user, attrs \\ %{}) do
+      defaults = %{
+        title: "linked-#{System.unique_integer([:positive])}",
+        project_id: project.id,
+        creator_id: user.id,
+        agent_id: agent!("claude_code").id
+      }
+
+      {:ok, task} = Ash.create(Task, Map.merge(defaults, attrs))
+      task
+    end
+
+    defp link!(source, target, link_type) do
+      {:ok, link} =
+        Ash.create(TaskLink, %{
+          source_task_id: source.id,
+          target_task_id: target.id,
+          link_type: link_type
+        })
+
+      link
+    end
+
+    test "renders a blocker and navigates to it", %{conn: conn, task: task, project: project, user: user} do
+      blocker = create_linked_task(project, user, %{title: "Ship the API first"})
+      link!(blocker, task, :blocks)
+
+      {:ok, view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ "Linked Tasks"
+      assert html =~ "Ship the API first"
+
+      assert view
+             |> element("a[href=\"#{~p"/tasks/#{blocker.id}"}\"]")
+             |> has_element?()
+    end
+
+    test "shows the blocked banner while a blocker is pre-pr", %{
+      conn: conn,
+      task: task,
+      project: project,
+      user: user
+    } do
+      blocker = create_linked_task(project, user)
+      link!(blocker, task, :blocks)
+
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ "Waiting on"
+      assert html =~ "task(s) to open a PR"
+    end
+
+    test "adding a link creates a TaskLink row", %{conn: conn, task: task, project: project, user: user} do
+      other = create_linked_task(project, user, %{title: "Prerequisite work"})
+
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      render_click(view, "open_link_modal")
+
+      view
+      |> element("#link-task-picker input[name=query]")
+      |> render_change(%{"query" => "Prerequisite"})
+
+      view
+      |> element(~s(button[phx-value-id="#{other.id}"]))
+      |> render_click()
+
+      html =
+        view
+        |> form("#add-link-form", %{"relation" => "blocked_by"})
+        |> render_submit()
+
+      assert html =~ "Link added"
+      assert html =~ "Prerequisite work"
+
+      assert [%TaskLink{source_task_id: source_id, target_task_id: target_id}] =
+               Ash.read!(TaskLink)
+
+      assert source_id == other.id
+      assert target_id == task.id
+    end
+
+    test "a cycle attempt flashes an error", %{conn: conn, task: task, project: project, user: user} do
+      # task blocks mid, mid blocks far — task is not directly linked to
+      # far, so the picker doesn't exclude it. Making task blocked_by
+      # far (far blocks task) would close the loop: task -> far -> mid
+      # -> task.
+      mid = create_linked_task(project, user, %{title: "Mid task"})
+      far = create_linked_task(project, user, %{title: "Far downstream task"})
+      link!(task, mid, :blocks)
+      link!(mid, far, :blocks)
+
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      render_click(view, "open_link_modal")
+
+      view
+      |> element("#link-task-picker input[name=query]")
+      |> render_change(%{"query" => "Far downstream"})
+
+      view
+      |> element(~s(button[phx-value-id="#{far.id}"]))
+      |> render_click()
+
+      html =
+        view
+        |> form("#add-link-form", %{"relation" => "blocked_by"})
+        |> render_submit()
+
+      assert html =~ "cycle"
+      assert length(Ash.read!(TaskLink)) == 2
+    end
+
+    test "unlinking removes the link", %{conn: conn, task: task, project: project, user: user} do
+      blocker = create_linked_task(project, user, %{title: "Ship the API first"})
+      link = link!(blocker, task, :blocks)
+
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      view
+      |> element(~s(button[phx-value-id="#{link.id}"]))
+      |> render_click()
+
+      refute render(view) =~ "Ship the API first"
+      assert Ash.read!(TaskLink) == []
+    end
+  end
+
   defp index_of(html, substring) do
     case :binary.match(html, substring) do
       {pos, _len} -> pos

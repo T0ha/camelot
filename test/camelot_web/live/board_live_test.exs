@@ -3,6 +3,7 @@ defmodule CamelotWeb.BoardLiveTest do
 
   import Phoenix.LiveViewTest
 
+  alias Camelot.Accounts.User
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
@@ -367,7 +368,7 @@ defmodule CamelotWeb.BoardLiveTest do
           agent_id: agent!("claude_code").id
         })
 
-      other = Ash.Seed.seed!(Camelot.Accounts.User, %{email: "o-#{System.unique_integer()}@x.com"})
+      other = Ash.Seed.seed!(User, %{email: "o-#{System.unique_integer()}@x.com"})
 
       {:ok, theirs} =
         Ash.create(
@@ -387,6 +388,191 @@ defmodule CamelotWeb.BoardLiveTest do
       {:ok, _view, html} = live(conn, ~p"/")
       assert html =~ "mine-task-"
       refute html =~ "theirs-task-"
+    end
+  end
+
+  describe "linked task creation" do
+    alias Camelot.Board.TaskLink
+
+    test "picking a parent task creates the task and a parent_of link", %{conn: conn, user: user} do
+      {:ok, project} =
+        Ash.create(
+          Project,
+          %{name: "link-board-#{System.unique_integer()}", path: "/tmp/link-board"},
+          actor: user
+        )
+
+      {:ok, parent} =
+        Ash.create(Task, %{
+          title: "Umbrella task",
+          project_id: project.id,
+          creator_id: user.id,
+          agent_id: agent!("claude_code").id
+        })
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_new_task")
+
+      view
+      |> element("#new-task-parent-picker input[name=query]")
+      |> render_change(%{"query" => "Umbrella"})
+
+      view
+      |> element(~s(button[phx-value-id="#{parent.id}"]))
+      |> render_click()
+
+      title = "child-task-#{System.unique_integer()}"
+
+      view
+      |> form("#new-task-form", %{
+        "task" => %{
+          "title" => title,
+          "project_id" => project.id,
+          "agent_id" => agent!("claude_code").id
+        }
+      })
+      |> render_submit()
+
+      child = Task |> Ash.Query.filter(title == ^title) |> Ash.read_one!()
+
+      assert [%TaskLink{link_type: :parent_of, source_task_id: source_id, target_task_id: target_id}] =
+               Ash.read!(TaskLink)
+
+      assert source_id == parent.id
+      assert target_id == child.id
+    end
+
+    test "the parent picker excludes a task from a project the user doesn't belong to", %{
+      conn: conn,
+      user: user
+    } do
+      {:ok, project} =
+        Ash.create(
+          Project,
+          %{name: "member-board-#{System.unique_integer()}", path: "/tmp/member-board"},
+          actor: user
+        )
+
+      other = Ash.Seed.seed!(User, %{email: "picker-other-#{System.unique_integer()}@x.com"})
+
+      {:ok, other_project} =
+        Ash.create(
+          Project,
+          %{name: "non-member-board-#{System.unique_integer()}", path: "/tmp/non-member-board"},
+          actor: other
+        )
+
+      {:ok, _out_of_scope} =
+        Ash.create(Task, %{
+          title: "Out of scope task",
+          project_id: other_project.id,
+          creator_id: other.id,
+          agent_id: agent!("claude_code").id
+        })
+
+      {:ok, _in_scope} =
+        Ash.create(Task, %{
+          title: "Out of scope but visible",
+          project_id: project.id,
+          creator_id: user.id,
+          agent_id: agent!("claude_code").id
+        })
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_new_task")
+
+      html =
+        view
+        |> element("#new-task-parent-picker input[name=query]")
+        |> render_change(%{"query" => "Out of scope"})
+
+      assert html =~ "Out of scope but visible"
+      refute html =~ "Out of scope task"
+    end
+
+    test "a search treats LIKE metacharacters as literal text", %{conn: conn, user: user} do
+      {:ok, project} =
+        Ash.create(
+          Project,
+          %{name: "wildcard-board-#{System.unique_integer()}", path: "/tmp/wildcard-board"},
+          actor: user
+        )
+
+      [literal, wildcard_match] =
+        for title <- ["Discount 50% banner", "Discount 5012 banner"] do
+          Ash.create!(Task, %{
+            title: title,
+            project_id: project.id,
+            creator_id: user.id,
+            agent_id: agent!("claude_code").id
+          })
+        end
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_new_task")
+
+      view
+      |> element("#new-task-parent-picker input[name=query]")
+      |> render_change(%{"query" => "50%"})
+
+      # Both titles also appear on the board behind the modal, so the
+      # assertion is on the picker's own result buttons.
+      assert has_element?(view, ~s(#new-task-parent-picker button[phx-value-id="#{literal.id}"]))
+      refute has_element?(view, ~s(#new-task-parent-picker button[phx-value-id="#{wildcard_match.id}"]))
+    end
+
+    test "a rejected link is reported instead of silently dropped", %{conn: conn, user: user} do
+      {:ok, project} =
+        Ash.create(
+          Project,
+          %{name: "reject-board-#{System.unique_integer()}", path: "/tmp/reject-board"},
+          actor: user
+        )
+
+      {:ok, parent} =
+        Ash.create(Task, %{
+          title: "Doomed umbrella",
+          project_id: project.id,
+          creator_id: user.id,
+          agent_id: agent!("claude_code").id
+        })
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_new_task")
+
+      view
+      |> element("#new-task-parent-picker input[name=query]")
+      |> render_change(%{"query" => "Doomed"})
+
+      view
+      |> element(~s(button[phx-value-id="#{parent.id}"]))
+      |> render_click()
+
+      # The picked parent disappears between the pick and the submit,
+      # so the link create fails while the task itself succeeds.
+      Ash.destroy!(parent)
+
+      title = "orphan-task-#{System.unique_integer()}"
+
+      html =
+        view
+        |> form("#new-task-form", %{
+          "task" => %{
+            "title" => title,
+            "project_id" => project.id,
+            "agent_id" => agent!("claude_code").id
+          }
+        })
+        |> render_submit()
+
+      assert html =~ "Task created, but these links were rejected"
+      assert html =~ "Doomed umbrella"
+      assert Ash.read!(TaskLink) == []
+      assert Task |> Ash.Query.filter(title == ^title) |> Ash.read_one!()
     end
   end
 end
