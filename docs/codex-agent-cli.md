@@ -25,7 +25,7 @@ Three further gaps would each have broken a run that got past that:
 | Gap | Effect |
 |---|---|
 | `runner_image` nil | Swarm/DockerEngine fall back to `alpine:latest`, which has no `codex` binary |
-| `required_credential_kinds` empty | No `OPENAI_API_KEY` mounted (`:codex_api_key` maps to it in `Runner.SecretEnv`) |
+| `required_credential_kinds` empty | No `OPENAI_API_KEY` mounted (`:openai_api_key` maps to it in `Runner.SecretEnv`) |
 | No per-stage system prompt | Nothing told the agent to emit a plan, or to finish by opening a PR |
 | `parser: :raw_text` | The whole human transcript became the run's result — see [Output parsing](#output-parsing) |
 
@@ -184,6 +184,27 @@ resolves to the path — so both halves stay editable at `/agents`.
 > **Deploy note.** The wrapper change ships in the runner image, so a
 > containerised install needs `runner-images` rebuilt and re-pulled
 > before planning runs can find the schema file.
+
+## Credentials
+
+`required_credential_kinds` is `[:openai_api_key]`, mounted as
+`OPENAI_API_KEY`. There is no ChatGPT-account path: a runner container
+has no browser login, so an API key is the only option.
+
+A second kind, `codex_api_key`, used to exist alongside it. Both mounted
+the same variable and nothing ever branched on the difference, so the
+choice between them was cosmetic — except that this row required only
+`codex_api_key`, and a user who stored their key under the obvious
+`openai_api_key` got no key mounted at all and four runs that failed
+with `401 Unauthorized: Missing bearer or basic authentication`, which
+reads as a bad key rather than a missing one. The kind was retired in
+`20260925110000_retire_codex_api_key_credential_kind.exs`, which
+converts any stored row.
+
+Credential kinds name the **provider**, not the agent CLI that reads
+them — `claude_api_key`, not `claude_code_api_key`. A future
+ChatGPT-token path would discriminate on the value inside one kind,
+exactly as `claude_api_key` already does for `sk-ant-oat*`.
 
 ## Models
 

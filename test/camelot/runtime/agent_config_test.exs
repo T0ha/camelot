@@ -326,7 +326,7 @@ defmodule Camelot.Runtime.AgentConfigTest do
     end
 
     test "declares the credential that becomes OPENAI_API_KEY", ctx do
-      assert :codex_api_key in ctx.codex.required_credential_kinds
+      assert ctx.codex.required_credential_kinds == [:openai_api_key]
     end
 
     test "can recognise a clarifying question in free-text planning output", ctx do

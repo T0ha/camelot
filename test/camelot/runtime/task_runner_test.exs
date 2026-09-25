@@ -4,6 +4,7 @@ defmodule Camelot.Runtime.TaskRunnerTest do
   alias Camelot.Accounts.Credential
   alias Camelot.Accounts.User
   alias Camelot.Agents.Agent
+  alias Camelot.Agents.CodexDefaults
   alias Camelot.Agents.Session
   alias Camelot.Board.AttachmentStore
   alias Camelot.Board.Task
@@ -106,13 +107,11 @@ defmodule Camelot.Runtime.TaskRunnerTest do
       assert value in ["PRIV-manual", "PRIV-default"]
     end
 
-    test "an openai_api_key satisfies a CLI that also lists :codex_api_key",
-         ctx do
+    test "an openai_api_key satisfies the codex CLI", ctx do
       # The case that broke the first real Codex run on the test
-      # cluster: the profile page offers both kinds with nothing to
-      # tell them apart, the user stored the obvious one, and the
-      # agent required only the other — so no key was mounted and the
-      # CLI failed with a bare 401.
+      # cluster: the row required the since-retired :codex_api_key, the
+      # user had stored the obvious :openai_api_key, so no key was
+      # mounted and the CLI failed with a bare 401.
       {:ok, _openai} =
         Ash.create(Credential, %{
           user_id: ctx.task.creator_id,
@@ -121,28 +120,13 @@ defmodule Camelot.Runtime.TaskRunnerTest do
         })
 
       config =
-        build_config(required_credential_kinds: [:openai_api_key, :codex_api_key])
+        build_config(required_credential_kinds: CodexDefaults.required_credential_kinds())
 
       assert [%{kind: :openai_api_key, value: "OPENAI-KEY"}] =
                TaskRunner.build_secrets(ctx.task, config)
     end
 
-    test "a codex_api_key satisfies the same CLI", ctx do
-      {:ok, _codex} =
-        Ash.create(Credential, %{
-          user_id: ctx.task.creator_id,
-          kind: :codex_api_key,
-          value: "CODEX-KEY"
-        })
-
-      config =
-        build_config(required_credential_kinds: [:openai_api_key, :codex_api_key])
-
-      assert [%{kind: :codex_api_key, value: "CODEX-KEY"}] =
-               TaskRunner.build_secrets(ctx.task, config)
-    end
-
-    test "a user holding both kinds mounts only one OPENAI_API_KEY", ctx do
+    test "it mounts exactly one OPENAI_API_KEY", ctx do
       {:ok, _openai} =
         Ash.create(Credential, %{
           user_id: ctx.task.creator_id,
@@ -150,23 +134,11 @@ defmodule Camelot.Runtime.TaskRunnerTest do
           value: "OPENAI-KEY"
         })
 
-      {:ok, _codex} =
-        Ash.create(Credential, %{
-          user_id: ctx.task.creator_id,
-          kind: :codex_api_key,
-          value: "CODEX-KEY"
-        })
-
       config =
-        build_config(required_credential_kinds: [:openai_api_key, :codex_api_key])
+        build_config(required_credential_kinds: CodexDefaults.required_credential_kinds())
 
-      secrets = TaskRunner.build_secrets(ctx.task, config)
-
-      # Both map to OPENAI_API_KEY; two entries would put two values
-      # on one variable, with the winner decided by list order.
-      assert [%{kind: :openai_api_key, value: "OPENAI-KEY"}] = secrets
-
-      assert secrets
+      assert ctx.task
+             |> TaskRunner.build_secrets(config)
              |> Enum.flat_map(&SecretEnv.to_env/1)
              |> Enum.filter(&String.starts_with?(&1, "OPENAI_API_KEY="))
              |> length() == 1

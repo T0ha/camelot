@@ -26,7 +26,6 @@ defmodule CamelotWeb.UserProfileLive do
   @credential_kinds [
     :claude_api_key,
     :openai_api_key,
-    :codex_api_key,
     :ssh_private_key,
     :generic
   ]
@@ -47,14 +46,12 @@ defmodule CamelotWeb.UserProfileLive do
   end
 
   @doc false
-  # The raw atom names don't say which agent CLI reads which key, and
-  # `openai_api_key` / `codex_api_key` are interchangeable at runtime
-  # (both become OPENAI_API_KEY) — picking the "wrong" one used to
-  # mount no key at all and surface as a bare 401 from the CLI.
+  # The raw atom names don't say which agent CLI reads which key, which
+  # is how a user could pick a kind no agent was looking for and see
+  # only a bare 401 from the CLI.
   @spec kind_label(atom()) :: String.t()
   def kind_label(:claude_api_key), do: "claude_api_key — Claude Code"
   def kind_label(:openai_api_key), do: "openai_api_key — Codex"
-  def kind_label(:codex_api_key), do: "codex_api_key — Codex (same as openai_api_key)"
   def kind_label(:ssh_private_key), do: "ssh_private_key — git over SSH"
   def kind_label(kind), do: Atom.to_string(kind)
 
