@@ -2,6 +2,7 @@ defmodule Camelot.Agents.AgentTest do
   use Camelot.DataCase, async: true
 
   alias Camelot.Agents.Agent
+  alias Camelot.Agents.CodexDefaults
   alias Ecto.Adapters.SQL
 
   describe "seeded data" do
@@ -27,12 +28,54 @@ defmodule Camelot.Agents.AgentTest do
       agent = agent!("codex")
 
       assert agent.name == "Codex"
-      assert agent.parser == :raw_text
-      assert agent.base_args == ["--quiet"]
+      assert agent.parser == CodexDefaults.parser()
+      assert agent.base_args == CodexDefaults.base_args()
       assert agent.prompt_flag == nil
       assert agent.model_flag == "--model"
-      assert agent.available_models == []
+      assert agent.available_models == CodexDefaults.available_models()
       assert agent.default_model == nil
+    end
+
+    test "codex agent offers models for the task form's dropdown" do
+      agent = agent!("codex")
+
+      # BoardLive.next_model_options/2 builds the Model select from
+      # this; empty rendered only the "Use agent default" placeholder.
+      assert agent.available_models != []
+      assert "gpt-5.6-terra" in agent.available_models
+
+      # Left nil on purpose: the accepted ids are account-scoped, so
+      # the CLI picking its own default degrades better than a pin.
+      assert is_nil(agent.default_model)
+    end
+
+    test "codex agent is configured for the modern CLI" do
+      agent = agent!("codex")
+
+      # `codex exec`, not the removed `--quiet` of the CLI this row was
+      # originally seeded against, which exited 2 before any model call.
+      assert List.first(agent.base_args) == "exec"
+      refute "--quiet" in agent.base_args
+
+      # The JSONL event stream, not the human transcript: with
+      # :raw_text the whole 122 KB run became the "plan".
+      assert "--json" in agent.base_args
+      assert agent.parser == :codex_jsonl
+
+      # No --append-system-prompt equivalent: the stage system prompt
+      # rides in on the prompt itself.
+      assert agent.system_prompt_by_stage == CodexDefaults.system_prompt_by_stage()
+      assert agent.permission_args_by_stage == CodexDefaults.permission_args_by_stage()
+
+      # Planning answers through a schema file, not inferred from prose.
+      assert agent.output_schema_by_stage == CodexDefaults.output_schema_by_stage()
+
+      assert "--output-schema" in agent.permission_args_by_stage["planning"]
+      assert "{{output_schema_path}}" in agent.permission_args_by_stage["planning"]
+
+      # A nil runner_image resolves to alpine:latest, which has no codex.
+      assert agent.runner_image == CodexDefaults.runner_image()
+      assert agent.required_credential_kinds == [:codex_api_key]
     end
   end
 

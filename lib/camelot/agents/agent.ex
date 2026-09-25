@@ -19,7 +19,7 @@ defmodule Camelot.Agents.Agent do
     data_layer: AshPostgres.DataLayer,
     authorizers: []
 
-  @parsers [:claude_code_json, :raw_text]
+  @parsers [:claude_code_json, :codex_jsonl, :raw_text]
 
   postgres do
     table("agents")
@@ -115,6 +115,35 @@ defmodule Camelot.Agents.Agent do
       description(
         "Map of task stage (string) to extra CLI args, " <>
           ~s(e.g. %{"planning" => ["--permission-mode", "plan"]})
+      )
+    end
+
+    attribute :system_prompt_by_stage, :map do
+      allow_nil?(false)
+      public?(true)
+      default(%{})
+
+      description(
+        "Map of task stage (string) to a system prompt prepended " <>
+          "to the prompt itself. For CLIs with no " <>
+          "append-system-prompt flag (e.g. Codex); CLIs that have " <>
+          "one carry it in permission_args_by_stage instead. " <>
+          "Supports {{prompt:<slug>}} placeholders."
+      )
+    end
+
+    attribute :output_schema_by_stage, :map do
+      allow_nil?(false)
+      public?(true)
+      default(%{})
+
+      description(
+        "Map of task stage (string) to a JSON Schema the CLI " <>
+          "should constrain its final message to. For CLIs that " <>
+          "take the schema as a FILE (e.g. Codex's " <>
+          "--output-schema); the app materialises it per run and " <>
+          "{{output_schema_path}} in permission_args_by_stage " <>
+          "resolves to its path."
       )
     end
 
@@ -233,6 +262,8 @@ defmodule Camelot.Agents.Agent do
         :tools_flag,
         :tools_separator,
         :permission_args_by_stage,
+        :system_prompt_by_stage,
+        :output_schema_by_stage,
         :internal_tools,
         :env_vars,
         :parser,
@@ -261,6 +292,8 @@ defmodule Camelot.Agents.Agent do
         :tools_flag,
         :tools_separator,
         :permission_args_by_stage,
+        :system_prompt_by_stage,
+        :output_schema_by_stage,
         :internal_tools,
         :env_vars,
         :parser,

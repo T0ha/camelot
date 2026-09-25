@@ -13,12 +13,14 @@ defmodule Camelot.Runtime.AgentConfig do
 
   alias Camelot.Agents.Agent
   alias Camelot.Agents.ClaudeCodeDefaults
+  alias Camelot.Agents.CodexDefaults
   alias Camelot.Projects.Project
   alias Camelot.Prompts.Renderer
 
   require Logger
 
   @placeholder ~r/^\{\{prompt:([^}]+)\}\}$/
+  @schema_path_placeholder "{{output_schema_path}}"
 
   @enforce_keys [:parser, :executable]
   defstruct command_prefix: nil,
@@ -29,6 +31,8 @@ defmodule Camelot.Runtime.AgentConfig do
             model_flag: nil,
             tools_separator: ",",
             permission_args_by_stage: %{},
+            system_prompt_by_stage: %{},
+            output_schema_by_stage: %{},
             internal_tools: [],
             env_vars: %{},
             parser: :raw_text,
@@ -48,6 +52,8 @@ defmodule Camelot.Runtime.AgentConfig do
           model_flag: String.t() | nil,
           tools_separator: String.t(),
           permission_args_by_stage: %{optional(String.t()) => [String.t()]},
+          system_prompt_by_stage: %{optional(String.t()) => String.t()},
+          output_schema_by_stage: %{optional(String.t()) => String.t()},
           internal_tools: [String.t()],
           env_vars: %{optional(String.t()) => String.t()},
           parser: :claude_code_json | :raw_text,
@@ -74,6 +80,8 @@ defmodule Camelot.Runtime.AgentConfig do
           project.permission_args_by_stage_override,
           agent.permission_args_by_stage
         ),
+      system_prompt_by_stage: agent.system_prompt_by_stage,
+      output_schema_by_stage: agent.output_schema_by_stage,
       internal_tools: override(project.internal_tools_override, agent.internal_tools),
       env_vars: override(project.env_vars_override, agent.env_vars),
       parser: agent.parser,
@@ -116,6 +124,72 @@ defmodule Camelot.Runtime.AgentConfig do
     %{config | permission_args_by_stage: rendered}
   end
 
+  @doc """
+  Resolves `{{prompt:<slug>}}` placeholders inside
+  `config.system_prompt_by_stage`, the same way
+  `render_permission_args/3` does for the per-stage CLI args.
+
+  Separate from that function because the two carry the system prompt
+  for different kinds of CLI: one that takes it as a flag (Claude
+  Code's `--append-system-prompt`) keeps it in
+  `permission_args_by_stage`; one with no such flag (Codex) keeps it
+  here, and `build_cli_args/5` prepends the resolved text to the
+  prompt instead. A CLI only ever uses one of the two.
+  """
+  @spec render_system_prompts(t(), String.t() | nil, String.t() | nil) :: t()
+  def render_system_prompts(%__MODULE__{} = config, project_id, user_id) do
+    rendered =
+      Map.new(config.system_prompt_by_stage, fn {stage, text} ->
+        {stage, render_arg(to_string(text), project_id, user_id)}
+      end)
+
+    %{config | system_prompt_by_stage: rendered}
+  end
+
+  @doc """
+  The JSON Schema this CLI should constrain `task_stage`'s final
+  message to, or nil when the stage has none.
+
+  `Camelot.Runtime.TaskRunner` hands it to the runner backend, which
+  materialises it at `Runner.Spec.output_schema_path/1` — the path
+  `resolve_output_schema_path/2` substitutes into the stage's args.
+  """
+  @spec output_schema(t(), atom()) :: String.t() | nil
+  def output_schema(%__MODULE__{} = config, task_stage) do
+    case Map.get(config.output_schema_by_stage, to_string(task_stage)) do
+      schema when is_binary(schema) -> blank_to_nil(schema)
+      _other -> nil
+    end
+  end
+
+  @doc """
+  Substitutes the `{{output_schema_path}}` placeholder in
+  `permission_args_by_stage` with `path`.
+
+  Kept separate from `render_permission_args/3` because the value
+  isn't a `PromptTemplate` lookup but the per-session path the schema
+  is written to, which only exists once a session id does.
+  """
+  @spec resolve_output_schema_path(t(), String.t()) :: t()
+  def resolve_output_schema_path(%__MODULE__{} = config, path) do
+    rendered =
+      Map.new(config.permission_args_by_stage, fn {stage, args} ->
+        {stage, Enum.map(args, &replace_schema_path(&1, path))}
+      end)
+
+    %{config | permission_args_by_stage: rendered}
+  end
+
+  defp replace_schema_path(@schema_path_placeholder, path), do: path
+  defp replace_schema_path(arg, _path), do: arg
+
+  defp blank_to_nil(schema) do
+    case String.trim(schema) do
+      "" -> nil
+      _kept -> schema
+    end
+  end
+
   @spec prefix_tokens(t(), String.t()) :: [String.t()]
   def prefix_tokens(%__MODULE__{command_prefix: nil}, _project_path), do: []
 
@@ -132,7 +206,7 @@ defmodule Camelot.Runtime.AgentConfig do
     |> Kernel.++(stage_args(config, task_stage))
     |> Kernel.++(tools_args(config, allowed_tools))
     |> Kernel.++(model_args(config, model))
-    |> Kernel.++(prompt_args(config, prompt))
+    |> Kernel.++(prompt_args(config, with_system_prompt(config, prompt, task_stage)))
   end
 
   @spec env_for_port(t()) :: [{charlist(), charlist()}]
@@ -171,13 +245,13 @@ defmodule Camelot.Runtime.AgentConfig do
   end
 
   # A deleted/missing row must never blank out the system prompt (that
-  # would silently strip e.g. "always open a PR" from every run) for
-  # the three built-in stages — fall back to the literal default and
-  # log instead. Any other slug is a template a user created to plug
-  # into `{{prompt:<slug>}}` themselves (e.g. to experiment with an
-  # alternate stage prompt); there's no built-in text to restore for
-  # those, so a missing row just renders empty, same as an unfilled
-  # `claude_pr_system_prompt` row does today.
+  # would silently strip e.g. "always open a PR" from every run) for a
+  # built-in agent's three stages — fall back to the literal default
+  # and log instead. Any other slug is a template a user created to
+  # plug into `{{prompt:<slug>}}` themselves (e.g. to experiment with
+  # an alternate stage prompt); there's no built-in text to restore
+  # for those, so a missing row just renders empty, same as an
+  # unfilled `claude_pr_system_prompt` row does today.
   defp fallback_for("claude_planning_system_prompt") do
     Logger.warning("Missing PromptTemplate claude_planning_system_prompt; using built-in default")
     ClaudeCodeDefaults.planning_system_prompt()
@@ -191,6 +265,21 @@ defmodule Camelot.Runtime.AgentConfig do
   defp fallback_for("claude_pr_system_prompt") do
     Logger.warning("Missing PromptTemplate claude_pr_system_prompt; using built-in default")
     ClaudeCodeDefaults.pr_system_prompt()
+  end
+
+  defp fallback_for("codex_planning_system_prompt") do
+    Logger.warning("Missing PromptTemplate codex_planning_system_prompt; using built-in default")
+    CodexDefaults.planning_system_prompt()
+  end
+
+  defp fallback_for("codex_execution_system_prompt") do
+    Logger.warning("Missing PromptTemplate codex_execution_system_prompt; using built-in default")
+    CodexDefaults.execution_system_prompt()
+  end
+
+  defp fallback_for("codex_pr_system_prompt") do
+    Logger.warning("Missing PromptTemplate codex_pr_system_prompt; using built-in default")
+    CodexDefaults.pr_system_prompt()
   end
 
   defp fallback_for(slug) do
@@ -226,4 +315,18 @@ defmodule Camelot.Runtime.AgentConfig do
 
   defp prompt_args(%__MODULE__{prompt_flag: nil}, prompt), do: [prompt]
   defp prompt_args(%__MODULE__{prompt_flag: flag}, prompt), do: [flag, prompt]
+
+  # A CLI with no append-system-prompt flag carries its stage system
+  # prompt in `system_prompt_by_stage`; the only channel left to
+  # deliver it is the prompt itself.
+  defp with_system_prompt(config, prompt, task_stage) do
+    config.system_prompt_by_stage
+    |> Map.get(to_string(task_stage), "")
+    |> to_string()
+    |> String.trim()
+    |> prefix_prompt(prompt)
+  end
+
+  defp prefix_prompt("", prompt), do: prompt
+  defp prefix_prompt(system_prompt, prompt), do: system_prompt <> "\n\n" <> prompt
 end
