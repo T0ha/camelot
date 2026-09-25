@@ -18,9 +18,8 @@ defmodule Camelot.Runtime.Runner.SecretEnvTest do
              ]
     end
 
-    test "openai_api_key and codex_api_key both map to OPENAI_API_KEY" do
+    test "openai_api_key maps to OPENAI_API_KEY" do
       assert SecretEnv.to_env(%{kind: :openai_api_key, value: "sk-oai"}) == ["OPENAI_API_KEY=sk-oai"]
-      assert SecretEnv.to_env(%{kind: :codex_api_key, value: "sk-oai"}) == ["OPENAI_API_KEY=sk-oai"]
     end
 
     test "github_app_token sets both GH_TOKEN and GITHUB_TOKEN" do

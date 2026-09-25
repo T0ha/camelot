@@ -98,7 +98,7 @@ codex_attrs = %{
   pr_url_pattern: pr_url_pattern,
   question_phrases: CodexDefaults.question_phrases(),
   runner_image: CodexDefaults.runner_image(),
-  required_credential_kinds: [:codex_api_key],
+  required_credential_kinds: CodexDefaults.required_credential_kinds(),
   base_retry_delay_ms: 5_000,
   max_retries: 3
 }

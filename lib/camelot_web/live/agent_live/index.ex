@@ -27,8 +27,7 @@ defmodule CamelotWeb.AgentLive.Index do
                  output_schema_by_stage env_vars runner_resources)
   @integer_fields ~w(base_retry_delay_ms max_retries)
 
-  @credential_kinds ~w(claude_api_key openai_api_key codex_api_key
-                       ssh_private_key generic)
+  @credential_kinds ~w(claude_api_key openai_api_key ssh_private_key generic)
 
   @impl true
   def mount(_params, _session, socket) do

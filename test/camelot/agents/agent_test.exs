@@ -75,7 +75,10 @@ defmodule Camelot.Agents.AgentTest do
 
       # A nil runner_image resolves to alpine:latest, which has no codex.
       assert agent.runner_image == CodexDefaults.runner_image()
-      assert agent.required_credential_kinds == [:codex_api_key]
+      # Names the provider, not the CLI. Requiring the since-retired
+      # :codex_api_key meant a user who stored the obvious
+      # :openai_api_key got no key mounted and a bare 401.
+      assert agent.required_credential_kinds == [:openai_api_key]
     end
   end
 
