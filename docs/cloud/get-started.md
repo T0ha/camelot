@@ -74,7 +74,9 @@ Visit `/profile` to finish your personal setup:
   access tokens or OAuth tokens aren't supported — use the GitHub App
   above for git/GitHub access instead. Right now, **Claude Code is the
   only Agent CLI that's fully integrated and tested** — start with a
-  Claude API key unless you know you need another provider.
+  Claude API key unless you know you need another provider. See
+  [Setting up Claude Code](../agents/claude-code.md) or
+  [Setting up Codex](../agents/codex.md) for a full walkthrough.
 
 ## 3. Create a project
 
