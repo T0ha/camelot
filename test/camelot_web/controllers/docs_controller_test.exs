@@ -14,6 +14,7 @@ defmodule CamelotWeb.DocsControllerTest do
       assert body =~ "Self Hosting"
       assert body =~ "GitHub App"
       assert body =~ "Cloud"
+      assert body =~ "Guides"
       # internal (unpublished) docs never appear
       refute body =~ "Session adoption"
     end
@@ -58,6 +59,14 @@ defmodule CamelotWeb.DocsControllerTest do
       body = html_response(conn, 200)
 
       assert body =~ "Get Started"
+      assert body =~ "<h1>"
+    end
+
+    test "renders the .camelot folder guide", %{conn: conn} do
+      conn = get(conn, "/guides/camelot-folder")
+      body = html_response(conn, 200)
+
+      assert body =~ "The .camelot folder"
       assert body =~ "<h1>"
     end
   end
