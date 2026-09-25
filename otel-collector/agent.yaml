@@ -255,9 +255,19 @@ processors:
   # that would scatter every service across meaningless host names.
   resource_detection:
     detectors: [env, docker, system]
-    timeout: 5s
+    # The 5s default is not enough here. `docker info` - the call the
+    # docker detector makes - measured 2.5s cold on the 1 GB manager,
+    # and a deploy is exactly when that node is busiest. Detection runs
+    # once at startup and never retries, so losing this race leaves the
+    # agent reporting a wrong host.name for its whole life: one agent
+    # sent `dfe83da2fbdf`, its own container id, for a week.
+    timeout: 30s
     override: false
     system:
+      # Correct only because the service sets
+      # Hostname: "{{.Node.Hostname}}" - see README.md. Without that
+      # template a container's hostname is its short id, which is what
+      # this fell back to.
       hostname_sources: [os]
 
   # Metrics arrive with no service.name at all: docker_stats puts the
