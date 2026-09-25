@@ -191,6 +191,37 @@ resolves to the path — so both halves stay editable at `/agents`.
 `OPENAI_API_KEY`. There is no ChatGPT-account path: a runner container
 has no browser login, so an API key is the only option.
 
+### The env var alone is not enough
+
+**Codex reads its credentials from `$CODEX_HOME/auth.json`, never from
+`OPENAI_API_KEY`.** With the key only in the environment, every request
+goes out unauthenticated:
+
+```
+401 Unauthorized: Missing bearer or basic authentication in header
+```
+
+which reads as a bad key rather than an unused one. The tell is
+`Missing bearer` — a key that *was* sent and rejected reports
+`auth error code: invalid_api_key` instead.
+
+So the runner image authenticates the CLI wherever the key lands:
+
+| Script | Why |
+|---|---|
+| `entrypoint.sh` → `codex_login` | container boot / bootstrap runs |
+| `exec-wrapper.sh` | task sessions arrive as `docker exec` with the key in the **exec-time** environment, which the entrypoint never saw |
+
+Both pipe the key into `codex login --with-api-key`, which takes it on
+stdin so it never lands in argv or `ps`, and both no-op in images
+without the CLI. There is no config-file equivalent —
+`preferred_auth_method`, `auth_mode` and `use_api_key` are all rejected
+by `--strict-config` — so this cannot be solved from `base_args`.
+
+> **Deploy note.** This lives in the runner image, so a containerised
+> install needs `runner-images` rebuilt and re-pulled before Codex can
+> authenticate at all.
+
 A second kind, `codex_api_key`, used to exist alongside it. Both mounted
 the same variable and nothing ever branched on the difference, so the
 choice between them was cosmetic — except that this row required only
