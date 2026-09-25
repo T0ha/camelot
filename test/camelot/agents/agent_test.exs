@@ -75,7 +75,11 @@ defmodule Camelot.Agents.AgentTest do
 
       # A nil runner_image resolves to alpine:latest, which has no codex.
       assert agent.runner_image == CodexDefaults.runner_image()
-      assert agent.required_credential_kinds == [:codex_api_key]
+      # Either kind satisfies it: both become OPENAI_API_KEY, and the
+      # profile page offers them with nothing to tell them apart.
+      assert agent.required_credential_kinds == CodexDefaults.required_credential_kinds()
+      assert :openai_api_key in agent.required_credential_kinds
+      assert :codex_api_key in agent.required_credential_kinds
     end
   end
 

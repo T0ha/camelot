@@ -48,4 +48,18 @@ defmodule Camelot.Runtime.Runner.SecretEnv do
   def to_env(%{kind: kind, value: v}) do
     ["CAMELOT_SECRET_#{String.upcase(Atom.to_string(kind))}=#{v}"]
   end
+
+  @doc """
+  The kind that stands in for `kind` when deduping secrets.
+
+  `:openai_api_key` and `:codex_api_key` both become `OPENAI_API_KEY`
+  above, so they are interchangeable at runtime — which is why an
+  agent CLI can require both (whichever the user happened to store
+  satisfies it) without a user holding both getting two conflicting
+  values for the same variable. Collapsing them here keeps that
+  knowledge next to the mapping that creates it.
+  """
+  @spec canonical_kind(atom()) :: atom()
+  def canonical_kind(:codex_api_key), do: :openai_api_key
+  def canonical_kind(kind), do: kind
 end

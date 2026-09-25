@@ -79,6 +79,24 @@ defmodule Camelot.Agents.CodexDefaults do
   def available_models, do: @available_models
 
   @doc """
+  Credential kinds that satisfy this CLI's auth.
+
+  Both, because both map to `OPENAI_API_KEY` in
+  `Camelot.Runtime.Runner.SecretEnv` and the profile page offers them
+  as separate choices with nothing to distinguish them — requiring
+  only `:codex_api_key` meant a user who stored their OpenAI key under
+  the obvious `:openai_api_key` got no key mounted at all and a bare
+  401 from the CLI. `TaskRunner.build_secrets/2` collapses the two, so
+  declaring both accepts whichever one exists without a user holding
+  both mounting two values for one variable.
+
+  There is no ChatGPT-account path here: a runner container has no
+  browser login, so an API key is the only option.
+  """
+  @spec required_credential_kinds() :: [atom()]
+  def required_credential_kinds, do: [:openai_api_key, :codex_api_key]
+
+  @doc """
   Image carrying the Codex CLI (`runner-images/codex/Dockerfile`).
 
   A nil `runner_image` resolves to `alpine:latest` in the Swarm and

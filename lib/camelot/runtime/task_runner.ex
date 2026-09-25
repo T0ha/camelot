@@ -47,6 +47,7 @@ defmodule Camelot.Runtime.TaskRunner do
   alias Camelot.Runtime.Runner.AdoptPolicy
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.LocalPort
+  alias Camelot.Runtime.Runner.SecretEnv
   alias Camelot.Runtime.Runner.Spec
   alias Camelot.Runtime.Runner.Swarm
   alias Camelot.Runtime.RunnerPool
@@ -791,8 +792,14 @@ defmodule Camelot.Runtime.TaskRunner do
   # Always appends the task creator's default SSH key
   # (`name: "default"`) when present, regardless of the agent CLI's
   # `required_credential_kinds`, so git just works without every
-  # agent CLI having to declare the requirement. Dedupes by `kind` —
+  # agent CLI having to declare the requirement.
+  #
+  # Dedupes by `SecretEnv.canonical_kind/1` rather than by `kind` —
   # the agent CLI's explicit entry wins if it's already in the list.
+  # Two kinds that map to the same env var (`:openai_api_key` and
+  # `:codex_api_key` both become `OPENAI_API_KEY`) collapse, so a CLI
+  # can declare both — accepting whichever one the user stored —
+  # without a user holding both mounting two values for one variable.
   def build_secrets(%Task{creator_id: uid}, %AgentConfig{required_credential_kinds: kinds}) do
     template_secrets =
       Enum.flat_map(kinds, fn kind_atom ->
@@ -814,7 +821,7 @@ defmodule Camelot.Runtime.TaskRunner do
 
     template_secrets
     |> append_default_ssh_key(uid)
-    |> Enum.uniq_by(& &1.kind)
+    |> Enum.uniq_by(&SecretEnv.canonical_kind(&1.kind))
   end
 
   defp append_default_ssh_key(secrets, user_id) do
