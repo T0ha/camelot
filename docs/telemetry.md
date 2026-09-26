@@ -89,6 +89,14 @@ exposes no insert-vs-conflict flag; `inserted_at` is not in either
 action's `upsert_fields`, so a returning user still carries their
 original signup time and is correctly skipped.
 
+`:sign_in_with_magic_link` is *generated* by AshAuthentication, so its
+`upsert_fields` (`[:email]` today) is not ours to keep correct. Widen
+it — or this repo's `[:github_user_id]` — to include `inserted_at` and
+`user_signed_up` starts firing on every login, making the funnel's
+first step a silent copy of `user_signed_in`. Both actions are pinned
+by `test/camelot/telemetry/post_hog_handler_test.exs`, which asserts
+the `upsert_fields` directly *and* drives a real returning login.
+
 ### Onboarding guide
 
 | Event | Properties |

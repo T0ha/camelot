@@ -1,6 +1,7 @@
 defmodule Camelot.Telemetry.PostHogHandlerTest do
   use Camelot.DataCase, async: true
 
+  alias Ash.Resource.Info
   alias Camelot.Accounts.Credential
   alias Camelot.Accounts.User
   alias Camelot.Agents.Agent
@@ -174,6 +175,39 @@ defmodule Camelot.Telemetry.PostHogHandlerTest do
       returning = %User{id: Ash.UUID.generate(), inserted_at: old}
 
       assert Events.resolve(User, :register_with_github, returning, nil) == :skip
+    end
+
+    # `new_user?/1` reads `inserted_at` because Ash exposes no
+    # insert-vs-conflict flag, and that only tells the truth while
+    # neither upsert replaces the column on conflict. The magic-link
+    # action is *generated* by AshAuthentication, so nothing in this
+    # repo pins its `upsert_fields`: were an upgrade to widen them,
+    # `user_signed_up` would fire on every login, the funnel's first
+    # step would silently become a copy of `user_signed_in`, and every
+    # conversion rate measured off it would be wrong.
+    test "neither upsert action replaces inserted_at on conflict" do
+      for action <- [:register_with_github, :sign_in_with_magic_link] do
+        upsert_fields = Info.action(User, action).upsert_fields
+
+        assert is_list(upsert_fields), "#{action} is no longer an upsert"
+        refute :inserted_at in upsert_fields
+      end
+    end
+
+    # The test above asserts the classifier; this one asserts its
+    # premise, by running the upsert a returning user actually runs.
+    # `GateGithubRegistration` lets an existing account through
+    # whatever `:registration_enabled` says, so this needs no
+    # application env mutation and stays async-safe.
+    test "a real returning GitHub login keeps its signup time and stays silent" do
+      signed_up_at = DateTime.add(DateTime.utc_now(), -30, :day)
+      existing = user!(%{confirmed_at: signed_up_at, inserted_at: signed_up_at})
+
+      assert {:ok, user} = register_with_github(to_string(existing.email))
+
+      assert user.id == existing.id
+      assert DateTime.compare(user.inserted_at, signed_up_at) == :eq
+      assert signups_for(user.id) == []
     end
 
     test "a fresh GitHub registration is reported as such" do
@@ -430,5 +464,37 @@ defmodule Camelot.Telemetry.PostHogHandlerTest do
 
     assert :ok ==
              PostHogHandler.handle_event([:camelot, :user, :signed_in], %{}, %{}, nil)
+  end
+
+  # Drives the real `:register_with_github` upsert the way
+  # AshAuthentication does, so the returning-login test exercises the
+  # action rather than a hand-built struct. No GitHub credentials and
+  # no HTTP: the action resolves identity from `user_info` alone.
+  defp register_with_github(email) do
+    User
+    |> Ash.Changeset.new()
+    |> Ash.Changeset.set_context(%{private: %{ash_authentication?: true}})
+    |> Ash.Changeset.for_create(
+      :register_with_github,
+      %{
+        user_info: %{
+          "sub" => System.unique_integer([:positive]),
+          "email" => email,
+          "email_verified" => true,
+          "preferred_username" => "octocat"
+        },
+        oauth_tokens: %{"access_token" => "gho_faketoken"}
+      },
+      upsert?: true,
+      upsert_identity: :unique_email
+    )
+    |> Ash.create()
+  end
+
+  defp signups_for(user_id) do
+    Enum.filter(
+      PostHog.Test.all_captured(),
+      &(&1.event == "user_signed_up" and &1.distinct_id == user_id)
+    )
   end
 end
