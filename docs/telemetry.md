@@ -340,6 +340,28 @@ them: `CamelotWeb.LiveUserAuth.attach_posthog_hook/1` sets `user_id`,
 `CamelotWeb.TaskLive` adds `task_id` / `project_id`, and
 `Camelot.Runtime.TaskRunner` sets all three.
 
+"Per process" is only the same as "per request" once something resets
+it. `CamelotWeb.Plugs.RequestContext` is that reset, and it is not
+optional: a LiveView's *dead render* runs in the connection process,
+and Bandit keeps one process per TCP connection, looping over every
+keep-alive request on it. Nothing in Plug, Phoenix or LiveView clears
+`Logger` metadata between those requests, so without the plug the last
+page a browser loaded tags everything it asks for afterwards — a
+GitHub connect failure filed under whichever task the user looked at
+first, an anonymous request still carrying the id of a user who has
+signed out.
+
+The same plug clears the PostHog context, for the same reason and one
+worse: `PostHog.Context` has no delete at all, it only ever merges.
+`CamelotWeb.LiveUserAuth` writes `$current_url` into the *instance*
+scope, which `PostHog.Context.get/2` merges after the `:all` scope
+`PostHog.Integrations.Plug` sets for the request in hand — so a stale
+value does not just linger, it wins. The plug runs before
+`PostHog.Integrations.Plug`, which then repopulates the context for
+this request. `test/camelot_web/request_context_test.exs` pins both
+halves: the page tags its own request, and the next request on the
+same process is free of it.
+
 Runner containers export `CAMELOT_TASK_ID`, and
 `runner-images/base/entrypoint.sh` prints
 `[camelot] task_id=<uuid> stage=boot|clone` so the collector's

@@ -45,6 +45,7 @@ defmodule CamelotWeb.Endpoint do
     cookie_key: "request_logger"
 
   plug Plug.RequestId
+  plug CamelotWeb.Plugs.RequestContext
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
   plug Plug.Parsers,
