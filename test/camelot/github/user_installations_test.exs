@@ -222,5 +222,70 @@ defmodule Camelot.Github.UserInstallationsTest do
 
       assert UserInstallations.sync(nil, user) == {:error, :no_access_token}
     end
+
+    # Folding the install into the login round-trip is the intended
+    # way to connect, so a listing that fails leaves the user
+    # unconnected having linked nothing and attempted nothing. Without
+    # an event they are indistinguishable in PostHog from someone who
+    # never tried.
+    test "reports a failed listing as a connect failure" do
+      user = seed_user!("list-http-error@example.com")
+      configure_github_app()
+      Req.Test.stub(__MODULE__, &Plug.Conn.send_resp(&1, 503, "nope"))
+
+      assert {:error, {:http_error, 503, _body}} =
+               UserInstallations.sync("gho_token", user)
+
+      assert [%{properties: %{reason: :http_error, http_status: 503}}] =
+               captured("github_setup_failed", user)
+    end
+
+    test "classifies a rejected token rather than reporting it raw" do
+      user = seed_user!("list-unauthorized@example.com")
+      configure_github_app()
+      Req.Test.stub(__MODULE__, &Plug.Conn.send_resp(&1, 401, "bad credentials"))
+
+      assert {:error, _reason} = UserInstallations.sync("gho_token", user)
+
+      assert [%{properties: %{reason: :forbidden, http_status: 401}}] =
+               captured("github_setup_failed", user)
+    end
+
+    # Neither is a connect the user attempted: the deployment has no
+    # GitHub App at all, or the login carried no user token. Same
+    # split `CamelotWeb.AuthController` already makes when it decides
+    # what is worth logging.
+    test "reports nothing when the deployment has no GitHub App" do
+      user = seed_user!("list-unconfigured@example.com")
+      Application.put_env(:camelot, :github_app, [])
+
+      assert UserInstallations.sync("gho_token", user) == {:error, :not_configured}
+      assert captured("github_setup_failed", user) == []
+    end
+
+    test "reports nothing when the login carried no GitHub token" do
+      user = seed_user!("list-no-token@example.com")
+
+      assert UserInstallations.sync(nil, user) == {:error, :no_access_token}
+      assert captured("github_setup_failed", user) == []
+    end
+  end
+
+  # `list/1` calls `Req.get/1` directly, so the only seam is Req's own
+  # global default options. Safe here because the case is
+  # `async: false`: ExUnit runs no other module alongside it.
+  defp configure_github_app do
+    previous_req = Application.get_env(:req, :default_options, [])
+    Req.default_options(plug: {Req.Test, __MODULE__}, retry: false)
+    on_exit(fn -> Application.put_env(:req, :default_options, previous_req) end)
+
+    Application.put_env(:camelot, :github_app,
+      app_id: "123",
+      slug: "camelot-dev",
+      client_id: "Iv1.abc",
+      client_secret: "secret",
+      private_key: Base.encode64("pem"),
+      webhook_secret: "whsecret"
+    )
   end
 end

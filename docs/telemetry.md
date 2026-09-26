@@ -219,6 +219,18 @@ failed at once. Each skipped installation is still logged
 individually (`info`, with its `installation_id`) — that is what the
 log line is for.
 
+The login path can also fail *before* any of that, when
+`GET /user/installations` itself errors — a 5xx, a rejected token, or
+the 10 s timeout the login critical path caps GitHub at. Nothing is
+linked and nothing is skipped, so the per-sync report above has no
+outcomes to look at; `Camelot.Github.UserInstallations.sync/2` reports
+`github_setup_failed` for the listing in its own right. Two listing
+errors deliberately report nothing, because neither is a connect the
+user attempted: `not_configured` (the deployment has no GitHub App)
+and `no_access_token` (the login carried no user token). That is the
+same split `CamelotWeb.AuthController` makes when deciding which sync
+failures are worth logging.
+
 `reason` is a `Camelot.Telemetry.Reason` value:
 `missing_state`, `not_authenticated`, `actor_mismatch`,
 `invalid_state`, `expired_state`, `invalid_installation_id`,

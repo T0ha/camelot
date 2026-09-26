@@ -69,12 +69,16 @@ defmodule Camelot.Github.UserInstallations do
 
   @doc """
   `list/1` followed by `link/2`.
+
+  A listing that fails is a connect that got no further than asking
+  GitHub what the user has, so it reports `github_setup_failed` in its
+  own right — `link/2` never runs and would otherwise report nothing.
   """
   @spec sync(String.t() | nil, User.t()) :: :ok | {:error, term()}
   def sync(access_token, %User{} = user) do
     case list(access_token) do
       {:ok, payloads} -> link(payloads, user)
-      {:error, reason} -> {:error, reason}
+      {:error, reason} -> report_list_failure(reason, user)
     end
   end
 
@@ -206,6 +210,20 @@ defmodule Camelot.Github.UserInstallations do
   @spec failed?(outcome()) :: boolean()
   defp failed?({:error, _reason}), do: true
   defp failed?(_outcome), do: false
+
+  # Neither of these is a connect the user attempted — the deployment
+  # has no GitHub App at all, or the login carried no user token — so
+  # neither is a funnel drop-off. Same split `CamelotWeb.AuthController`
+  # already makes when it decides which sync failures are worth logging.
+  @spec report_list_failure(term(), User.t()) :: {:error, term()}
+  defp report_list_failure(:not_configured, _user), do: {:error, :not_configured}
+  defp report_list_failure(:no_access_token, _user), do: {:error, :no_access_token}
+
+  defp report_list_failure(reason, user) do
+    capture_failed(user, reason)
+
+    {:error, reason}
+  end
 
   @spec capture_failed(User.t(), term()) :: :ok
   defp capture_failed(user, reason) do
