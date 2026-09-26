@@ -177,7 +177,8 @@ cannot delete: a process-wide write would stamp one guide's
 | `github_setup_succeeded` | `installation_id`, `account_type`, `repository_selection` |
 | `github_setup_failed` | `reason`, `http_status` |
 | `github_installation_linked` | `installation_id` |
-| `github_installation_suspended` / `_unsuspended` | `installation_id` |
+| `github_installation_suspended` | `installation_id` |
+| `github_installation_unsuspended` | `installation_id` |
 | `project_repo_resolve_failed` | `reason`, `http_status` |
 
 `project_repo_resolve_failed` also has two capture points, for the two
