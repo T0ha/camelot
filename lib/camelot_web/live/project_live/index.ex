@@ -6,7 +6,12 @@ defmodule CamelotWeb.ProjectLive.Index do
 
   import CamelotWeb.OnboardingComponents
 
+  alias Camelot.Accounts.User
+  alias Camelot.Github.RepositoryCatalog
+  alias Camelot.Github.Resolver
   alias Camelot.Projects.Project
+  alias Camelot.Telemetry.Capture
+  alias Camelot.Telemetry.Reason
   alias CamelotWeb.Components.FolderPicker
   alias CamelotWeb.Components.GithubRepoPicker
   alias CamelotWeb.Components.RunnerImagePicker
@@ -14,6 +19,7 @@ defmodule CamelotWeb.ProjectLive.Index do
   alias Phoenix.LiveView.Socket
 
   require Ash.Query
+  require Logger
 
   @impl true
   @spec mount(map(), map(), Socket.t()) ::
@@ -92,10 +98,12 @@ defmodule CamelotWeb.ProjectLive.Index do
       {:ok, attrs} ->
         save_project(socket, socket.assigns.live_action, attrs)
 
-      {:error, msg} ->
+      {:error, {field, code}} ->
+        capture_create_failed(socket, %{error_fields: [to_string(field)], error_codes: [to_string(code)]})
+
         {:noreply,
          socket
-         |> put_flash(:error, msg)
+         |> put_flash(:error, override_error_message(field, code))
          |> assign(form: to_form(project_params))}
     end
   end
@@ -125,7 +133,7 @@ defmodule CamelotWeb.ProjectLive.Index do
       |> Map.put("github_repo", repo.repo)
       |> Map.put("github_repo_url", repo.html_url)
 
-    {:noreply, assign(socket, form: to_form(form_params))}
+    {:noreply, assign(socket, form: to_form(form_params), picked_repo: repo)}
   end
 
   def handle_info({:runner_image_selected, image}, socket) do
@@ -135,21 +143,29 @@ defmodule CamelotWeb.ProjectLive.Index do
   end
 
   defp save_project(socket, :new, params) do
+    set_repo_visibility(socket, params)
+
     case Ash.create(Project, params, action: :create, actor: socket.assigns.current_user) do
-      {:ok, _project} ->
+      {:ok, project} ->
+        report_repo_resolution(socket, project)
+
         {:noreply,
          socket
          |> put_flash(:info, "Project created")
          |> push_navigate(to: ~p"/projects")}
 
       {:error, changeset} ->
+        capture_create_failed(socket, Reason.changeset_summary(changeset))
+
         {:noreply, assign(socket, form: to_form(changeset_params(changeset)))}
     end
   end
 
   defp save_project(socket, :edit, params) do
     case Ash.update(socket.assigns.project, params, action: :update) do
-      {:ok, _project} ->
+      {:ok, project} ->
+        report_repo_resolution(socket, project)
+
         {:noreply,
          socket
          |> put_flash(:info, "Project updated")
@@ -270,6 +286,127 @@ defmodule CamelotWeb.ProjectLive.Index do
     end
   end
 
+  # Whether the repository is private is what separates a project the
+  # App can clone from one whose first task dies on `Authentication
+  # failed`, so `project_created` carries it. The Project record does
+  # not store it and the resource's notifier is what captures the
+  # event, so the picker's answer is handed over in the event's own
+  # PostHog context.
+  #
+  # Scoped to this one event, and written on *every* create including
+  # when it is unknown: `PostHog.Context` only ever merges, so a
+  # project submitted after a rejected one would otherwise inherit
+  # whatever repository was picked before it.
+  @spec set_repo_visibility(Socket.t(), map()) :: :ok
+  defp set_repo_visibility(socket, params) do
+    PostHog.set_event_context("project_created", %{
+      repo_visibility: picked_visibility(socket.assigns[:picked_repo], params)
+    })
+  end
+
+  # The owner/repo fields stay editable after a pick, so the picker's
+  # answer only describes the repository actually submitted.
+  @spec picked_visibility(RepositoryCatalog.repo() | nil, map()) :: String.t() | nil
+  defp picked_visibility(%{full_name: full_name, visibility: visibility}, %{
+         "github_owner" => owner,
+         "github_repo" => repo
+       }) do
+    visibility_for(
+      String.downcase(to_string(full_name)),
+      String.downcase("#{owner}/#{repo}"),
+      visibility
+    )
+  end
+
+  defp picked_visibility(_picked, _params), do: nil
+
+  @spec visibility_for(String.t(), String.t(), String.t() | nil) :: String.t() | nil
+  defp visibility_for(submitted, submitted, visibility), do: visibility
+  defp visibility_for(_picked, _submitted, _visibility), do: nil
+
+  # Project creation is where the funnel actually dies — PostHog's
+  # dead clicks pile up on this form's repository field — so both
+  # failure branches report which fields failed and how, and never
+  # the messages, which would carry whatever the user typed.
+  @spec capture_create_failed(Socket.t(), %{
+          error_fields: [String.t()],
+          error_codes: [String.t()]
+        }) :: :ok
+  defp capture_create_failed(%Socket{assigns: %{live_action: :new}} = socket, summary) do
+    Capture.capture("project_create_failed", socket.assigns.current_user, summary)
+  end
+
+  defp capture_create_failed(_socket, _summary), do: :ok
+
+  # The form accepts a repository whose owner the user never installed
+  # the App on, and nothing notices until the runner reaches `git
+  # clone` and GitHub answers `Authentication failed` — because
+  # `Camelot.Github.Resolver.installation_id/2` falls back to the sole
+  # installation and mints a token for the wrong account. This is the
+  # last point at which that failure is still attributable to the
+  # field PostHog's dead clicks pile up on, so it is reported here
+  # rather than left to be guessed from a task's error alert.
+  @spec report_repo_resolution(Socket.t(), Project.t()) :: :ok
+  defp report_repo_resolution(_socket, %Project{github_owner: nil}), do: :ok
+
+  defp report_repo_resolution(socket, project) do
+    user = socket.assigns.current_user
+
+    case Ash.load(user, :github_installations, actor: user) do
+      {:ok, %User{github_installations: installations}} ->
+        installations
+        |> Enum.filter(&is_nil(&1.suspended_at))
+        |> Resolver.owner_coverage(project.github_owner)
+        |> capture_repo_resolution(user, project)
+
+      # A load that failed says nothing about coverage, and reporting
+      # it anyway would invent a drop-off.
+      {:error, _reason} ->
+        :ok
+    end
+  end
+
+  @spec capture_repo_resolution(Resolver.coverage(), User.t(), Project.t()) :: :ok
+  defp capture_repo_resolution(:ok, _user, _project), do: :ok
+
+  defp capture_repo_resolution({:error, reason}, user, project) do
+    log_repo_resolution(reason, user, project)
+
+    Capture.capture("project_repo_resolve_failed", user, %{
+      reason: reason,
+      http_status: nil
+    })
+  end
+
+  # Same split as `Camelot.Github.RepositoryCatalog`: not having
+  # connected the App is the ordinary state of a user who has not
+  # reached that step, while a repository outside every installation
+  # is a clone failure already scheduled.
+  @spec log_repo_resolution(Resolver.unresolved(), User.t(), Project.t()) :: :ok
+  defp log_repo_resolution(:no_installation, user, project) do
+    Logger.info("Project saved before any GitHub installation",
+      user_id: user.id,
+      project_id: project.id,
+      reason: :no_installation
+    )
+  end
+
+  defp log_repo_resolution(reason, user, project) do
+    Logger.warning("Project repository is outside every installation",
+      user_id: user.id,
+      project_id: project.id,
+      reason: reason
+    )
+  end
+
+  @spec override_error_message(String.t(), atom()) :: String.t()
+  defp override_error_message(field, :not_json_object), do: "#{field} must be a JSON object"
+  defp override_error_message(field, :invalid_json), do: "#{field} is not valid JSON"
+
+  defp override_error_message(field, :invalid_integer) do
+    "#{field} must be a positive integer"
+  end
+
   defp parse_optional_lines(nil), do: {:ok, nil}
   defp parse_optional_lines(""), do: {:ok, nil}
 
@@ -291,8 +428,8 @@ defmodule CamelotWeb.ProjectLive.Index do
       text ->
         case Jason.decode(text) do
           {:ok, %{} = map} -> {:ok, map}
-          {:ok, _} -> {:error, "#{key} must be a JSON object"}
-          {:error, _} -> {:error, "#{key} is not valid JSON"}
+          {:ok, _other} -> {:error, {key, :not_json_object}}
+          {:error, _reason} -> {:error, {key, :invalid_json}}
         end
     end
   end
@@ -308,7 +445,7 @@ defmodule CamelotWeb.ProjectLive.Index do
       text ->
         case Integer.parse(text) do
           {n, ""} when n > 0 -> {:ok, n}
-          _ -> {:error, "#{key} must be a positive integer"}
+          _not_a_positive_integer -> {:error, {key, :invalid_integer}}
         end
     end
   end

@@ -18,6 +18,7 @@ defmodule CamelotWeb.UserProfileLive do
   alias Camelot.Github.Installation
   alias Camelot.Runtime.RunnerPool
   alias Camelot.Runtime.SecretSync
+  alias Camelot.Telemetry.Capture
   alias CamelotWeb.GithubSetupController
   alias Phoenix.LiveView.Socket
 
@@ -63,7 +64,17 @@ defmodule CamelotWeb.UserProfileLive do
   # Never crash the profile page on an unexpected PubSub message.
   def handle_info(_msg, socket), do: {:noreply, socket}
 
+  # The connect button is a plain link out to GitHub, so this is the
+  # only point at which the app sees the attempt at all: without it a
+  # user who abandons GitHub's install screen is indistinguishable
+  # from one who never clicked. The `href` navigation is unaffected.
   @impl true
+  def handle_event("github_setup_started", _params, socket) do
+    Capture.capture("github_setup_started", socket.assigns.current_user, %{})
+
+    {:noreply, socket}
+  end
+
   def handle_event("create_credential", %{"credential" => params}, socket) do
     attrs = %{
       kind: parse_kind(params["kind"]),
@@ -74,6 +85,11 @@ defmodule CamelotWeb.UserProfileLive do
     case Ash.create(Credential, Map.put(attrs, :user_id, socket.assigns.current_user.id)) do
       {:ok, cred} ->
         SecretSync.reconcile(socket.assigns.current_user.id, cred.kind)
+        # A Claude key is one of the setup guide's four steps, and this
+        # is the only place it gets added. Without the nudge the strip
+        # keeps showing it outstanding until the next navigation, and
+        # `onboarding_step_completed` never sees the transition at all.
+        send(self(), {:onboarding, :refresh})
 
         {:noreply,
          socket
@@ -443,6 +459,7 @@ defmodule CamelotWeb.UserProfileLive do
         <a
           :if={@github_app_configured? && @github_connect_url}
           href={@github_connect_url}
+          phx-click="github_setup_started"
           class="btn btn-sm btn-primary"
         >
           {if @github_installations_count > 0,

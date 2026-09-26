@@ -159,6 +159,58 @@ if posthog_api_key = System.get_env("POSTHOG_API_KEY") do
     api_host: System.get_env("POSTHOG_API_HOST", "https://us.i.posthog.com")
 end
 
+# Deployment environment name. Both clusters run the same MIX_ENV=prod
+# release, so `config_env()` cannot tell test.camelotai.tech from
+# app.camelotai.tech — falling back to it would label them both "prod"
+# and leave the shared PostHog project exactly as mixed as it is today,
+# with `environment = production` matching nothing at all.
+#
+# DEPLOYMENT_ENV is the only thing that can tell them apart, and the
+# unset default is the *gateway's* own default
+# (`${env:DEPLOYMENT_ENV:-test}`, otel-collector/gateway.yaml), so a
+# capture and the collector's data for the same box name the same
+# cluster. Set DEPLOYMENT_ENV=production on the production app only.
+deployment_environment =
+  case {System.get_env("DEPLOYMENT_ENV"), config_env()} do
+    {nil, :prod} -> "test"
+    {nil, mix_env} -> to_string(mix_env)
+    {name, _mix_env} -> name
+  end
+
+config :camelot, :telemetry, environment: deployment_environment
+
+# `global_properties` is merged by the library into *every* capture —
+# product events as much as the backend `$exception`s below — and is
+# merged last, so it overrides the caller. Nothing in `lib/` adds
+# `environment`: this line is the only thing putting it on the wire,
+# and removing it would leave the two clusters mixed in the exact way
+# this whole configuration exists to prevent. It is pinned to
+# `Camelot.Telemetry.Context.global_properties/0` by
+# `Camelot.Telemetry.ContextTest`.
+#
+# `metadata` is what the error-tracking half needs. PostHog's logger
+# handler captures anything logged with a `crash_reason` — a LiveView
+# crash, a GenServer crash, the Oban job failures
+# `Camelot.Telemetry.JobFailures` reports — through
+# `PostHog.bare_capture/4`, which bypasses `Camelot.Telemetry.Capture`
+# and so carries none of the ids the application puts in
+# `Logger.metadata` unless they are named here. `distinct_id` is
+# always included, and is what decides whose crash it is.
+config :posthog,
+  global_properties: %{environment: deployment_environment},
+  metadata: [
+    :request_id,
+    :user_id,
+    :project_id,
+    :task_id,
+    :installation_id,
+    :worker,
+    :queue,
+    :job_attempt,
+    :reason,
+    :http_status
+  ]
+
 # Ahrefs Web Analytics. Set AHREFS_ANALYTICS_KEY on the production app
 # only: the test cluster runs the same MIX_ENV=prod release, so leaving
 # the var unset there is what keeps its traffic out of the report.
@@ -219,7 +271,23 @@ if config_env() == :prod do
   # being recovered with a regex.
   config :logger, :default_handler,
     # In prod, default to swarm if RUNNER_BACKEND wasn't set above.
-    formatter: LoggerJSON.Formatters.Basic.new(metadata: [:request_id, :mfa, :crash_reason])
+    formatter:
+      LoggerJSON.Formatters.Basic.new(
+        metadata: [
+          :request_id,
+          :mfa,
+          :crash_reason,
+          :user_id,
+          :project_id,
+          :task_id,
+          :installation_id,
+          :worker,
+          :queue,
+          :job_attempt,
+          :reason,
+          :http_status
+        ]
+      )
 
   if !System.get_env("RUNNER_BACKEND") do
     config :camelot, :attachment_store, attachment_store_for.(Swarm)

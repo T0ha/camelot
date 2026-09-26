@@ -53,6 +53,7 @@ defmodule Camelot.Runtime.TaskRunner do
   alias Camelot.Runtime.SecretSync
   alias Camelot.Runtime.SessionRegistry
   alias Camelot.Runtime.TaskRegistry
+  alias Camelot.Telemetry.Context
 
   require Ash.Query
   require Logger
@@ -144,7 +145,8 @@ defmodule Camelot.Runtime.TaskRunner do
 
   @impl true
   def init(task_id) do
-    Logger.info("TaskRunner started for task #{task_id}")
+    Logger.metadata(task_id: task_id)
+    Logger.info("TaskRunner started")
     Phoenix.PubSub.subscribe(Camelot.PubSub, "task:#{task_id}")
     {:ok, %__MODULE__{task_id: task_id}}
   end
@@ -541,6 +543,13 @@ defmodule Camelot.Runtime.TaskRunner do
         authorize?: false
       )
 
+    # Every subsequent `Logger` call in this process inherits these,
+    # so runner failures are filterable by user and project in the
+    # JSON log pipeline instead of being anonymous container noise —
+    # and a crash here is reported to error tracking as this user's.
+    Logger.metadata(project_id: task.project_id)
+    Context.put_person_metadata(task.creator_id)
+
     config = AgentConfig.resolve(task.agent, task.project)
 
     {:ok, session} =
@@ -704,7 +713,11 @@ defmodule Camelot.Runtime.TaskRunner do
         config
         |> AgentConfig.env_for_port()
         |> normalise_env()
-        |> Map.merge(EnvVarResolver.resolve(task.agent_id, task.project_id, task.creator_id)),
+        |> Map.merge(EnvVarResolver.resolve(task.agent_id, task.project_id, task.creator_id))
+        # The collector tails `camelot-task-<uuid>` containers, but the
+        # entrypoint's own output carried no id of its own. Exported
+        # here so its first line is joinable to the task.
+        |> Map.put("CAMELOT_TASK_ID", task.id),
       image: config.runner_image,
       cwd: cwd_for(backend, task),
       profile_volume: "camelot_user_#{task.creator_id}_profile",

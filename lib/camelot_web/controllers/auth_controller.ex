@@ -10,6 +10,7 @@ defmodule CamelotWeb.AuthController do
   alias Camelot.Accounts.Errors.RegistrationDisabled
   alias Camelot.Accounts.User
   alias Camelot.Github.UserInstallations
+  alias Camelot.Telemetry.Reason
   alias CamelotWeb.GithubLoginFlow
 
   require Logger
@@ -21,7 +22,7 @@ defmodule CamelotWeb.AuthController do
           String.t() | nil
         ) :: Plug.Conn.t()
   def success(conn, {:github, :callback}, %User{} = user, _token) do
-    :telemetry.execute([:camelot, :user, :signed_in], %{}, %{user: user})
+    signed_in(user, :github)
     sync_github_installations(user)
 
     conn
@@ -32,7 +33,7 @@ defmodule CamelotWeb.AuthController do
   end
 
   def success(conn, _activity, user, _token) do
-    :telemetry.execute([:camelot, :user, :signed_in], %{}, %{user: user})
+    signed_in(user, :magic_link)
 
     conn
     |> store_in_session(user)
@@ -58,6 +59,18 @@ defmodule CamelotWeb.AuthController do
     |> redirect(to: ~p"/sign-in")
   end
 
+  # Which strategy signed the user in is otherwise only inferable
+  # from the `$current_url` of the capture, which breaks as soon as
+  # the sign-in routes move.
+  @spec signed_in(User.t(), :github | :magic_link) :: :ok
+  defp signed_in(user, auth_method) do
+    :telemetry.execute(
+      [:camelot, :user, :signed_in],
+      %{},
+      %{user: user, auth_method: auth_method}
+    )
+  end
+
   # Folding the App installation into the login round-trip is
   # the whole point of the feature: a new user lands on the
   # board connected, with no second step on /profile. Failure
@@ -81,9 +94,12 @@ defmodule CamelotWeb.AuthController do
   defp log_sync_failure(_user, reason) when reason in [:not_configured, :no_access_token], do: :ok
 
   defp log_sync_failure(user, reason) do
-    Logger.warning(
-      "GitHub login: could not sync installations for user " <>
-        "#{user.id}: #{inspect(reason)}"
+    {classified, http_status} = Reason.classify(reason)
+
+    Logger.warning("GitHub login: could not sync installations",
+      user_id: user.id,
+      reason: classified,
+      http_status: http_status
     )
 
     :ok

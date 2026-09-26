@@ -17,6 +17,8 @@ defmodule CamelotWeb.GithubSetupController do
   alias Camelot.Github.AppConfig
   alias Camelot.Github.InstallationSync
   alias Camelot.Github.Jwt
+  alias Camelot.Telemetry.Capture
+  alias Camelot.Telemetry.Reason
 
   require Logger
 
@@ -28,14 +30,16 @@ defmodule CamelotWeb.GithubSetupController do
     with {:ok, user} <- verify_state(params["state"], conn.assigns[:current_user]),
          {:ok, installation_id} <- parse_integer(installation_id_str),
          {:ok, gh_installation} <- fetch_installation(installation_id),
-         {:ok, installation} <- InstallationSync.upsert(gh_installation),
+         {:ok, installation} <- upsert_installation(gh_installation),
          {:ok, _installation} <- link_user(installation, user) do
+      capture_succeeded(user, installation_id, gh_installation)
+
       conn
       |> put_flash(:info, "GitHub App connected.")
       |> redirect(to: ~p"/profile")
     else
       {:error, reason} ->
-        Logger.warning("GitHub setup callback failed: #{inspect(reason)}")
+        report_failure(conn.assigns[:current_user], reason)
 
         conn
         |> put_flash(:error, "Could not connect the GitHub App.")
@@ -43,7 +47,14 @@ defmodule CamelotWeb.GithubSetupController do
     end
   end
 
+  # GitHub comes back here with no installation_id when the install
+  # never happened — an org owner has to approve it first, or the user
+  # backed out of the install screen. That is a funnel stop of its own,
+  # and reporting it as `invalid_installation_id` would blame a parse
+  # that was never attempted.
   def new(conn, _params) do
+    report_failure(conn.assigns[:current_user], :missing_installation_id)
+
     conn
     |> put_flash(:error, "Missing installation_id from GitHub.")
     |> redirect(to: ~p"/profile")
@@ -99,7 +110,53 @@ defmodule CamelotWeb.GithubSetupController do
     end
   end
 
-  defp link_user(installation, user) do
-    Ash.update(installation, %{user_id: user.id}, action: :link_user, actor: user)
+  defp upsert_installation(gh_installation) do
+    case InstallationSync.upsert(gh_installation) do
+      {:ok, installation} -> {:ok, installation}
+      {:error, reason} -> {:error, {:upsert_failed, reason}}
+    end
   end
+
+  defp link_user(installation, user) do
+    case Ash.update(installation, %{user_id: user.id}, action: :link_user, actor: user) do
+      {:ok, installation} -> {:ok, installation}
+      {:error, reason} -> {:error, {:link_failed, reason}}
+    end
+  end
+
+  # `repository_selection` is the difference between an App that can
+  # see every repository and one the user pointed at a single repo —
+  # the second is a common way to end up with a project Camelot
+  # cannot actually clone.
+  @spec capture_succeeded(User.t(), integer(), map()) :: :ok
+  defp capture_succeeded(user, installation_id, gh_installation) do
+    Capture.capture("github_setup_succeeded", user, %{
+      installation_id: installation_id,
+      account_type: get_in(gh_installation, ["account", "type"]),
+      repository_selection: gh_installation["repository_selection"]
+    })
+  end
+
+  # One event per distinct error shape, never `inspect(reason)`: the
+  # point is a `reason` a funnel drop-off can be grouped by. The log
+  # line carries the same bounded value as metadata, so the JSON log
+  # pipeline can filter on exactly what the event reports.
+  @spec report_failure(User.t() | nil, term()) :: :ok
+  defp report_failure(user, reason) do
+    {classified, http_status} = Reason.classify(reason)
+
+    Logger.warning("GitHub setup callback failed",
+      reason: classified,
+      http_status: http_status,
+      user_id: user_id(user)
+    )
+
+    Capture.capture("github_setup_failed", user, %{
+      reason: classified,
+      http_status: http_status
+    })
+  end
+
+  defp user_id(%User{id: id}), do: id
+  defp user_id(_no_user), do: nil
 end

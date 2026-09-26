@@ -13,7 +13,8 @@ defmodule Camelot.Accounts.User do
     domain: Camelot.Accounts,
     data_layer: AshPostgres.DataLayer,
     extensions: [AshAuthentication],
-    authorizers: [Ash.Policy.Authorizer]
+    authorizers: [Ash.Policy.Authorizer],
+    simple_notifiers: [Camelot.Telemetry.Notifier]
 
   alias Camelot.Accounts.User.Secrets
 

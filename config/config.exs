@@ -98,6 +98,17 @@ config :camelot, :runner,
   max_interrupt_requeues: 3,
   redeploy_wait_ms: 60_000
 
+# Global properties on every PostHog capture. `environment` keeps the
+# test cluster and production apart (they share one PostHog project);
+# `config/runtime.exs` resolves it from DEPLOYMENT_ENV, the same
+# variable and the same unset default as the collector gateway, so only
+# the production app ever reports itself as production.
+# The internal-email pattern is a string, not a Regex: a release's
+# sys.config cannot serialise a compiled regex.
+config :camelot, :telemetry,
+  environment: "dev",
+  internal_email_pattern: "^t0hashvein.*@gmail\\.com$"
+
 config :camelot, :token_signing_secret, "dev-only-signing-secret-change-in-prod"
 
 config :camelot,
@@ -132,7 +143,7 @@ config :esbuild,
 # Configure Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id]
+  metadata: [:request_id, :user_id, :project_id, :task_id, :installation_id, :reason, :http_status]
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
