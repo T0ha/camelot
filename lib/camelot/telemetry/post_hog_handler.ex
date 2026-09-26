@@ -82,7 +82,10 @@ defmodule Camelot.Telemetry.PostHogHandler do
 
   # `$set` overwrites on every sign-in, so it carries the facts that
   # can change; `$set_once` carries the signup time, which cannot.
-  @spec handle_user_signed_in(%{user: Ash.Resource.record()}) :: :ok
+  @spec handle_user_signed_in(%{
+          :user => User.t(),
+          optional(:auth_method) => :github | :magic_link
+        }) :: :ok
   defp handle_user_signed_in(%{user: user} = metadata) do
     person = Map.put(Capture.person_properties(user), "auth_method", auth_method(metadata))
 
@@ -96,7 +99,7 @@ defmodule Camelot.Telemetry.PostHogHandler do
   defp auth_method(%{auth_method: auth_method}), do: to_string(auth_method)
   defp auth_method(_metadata), do: "unknown"
 
-  @spec signed_up_at(Ash.Resource.record()) :: String.t() | nil
+  @spec signed_up_at(User.t()) :: String.t() | nil
   defp signed_up_at(%{inserted_at: %DateTime{} = inserted_at}) do
     DateTime.to_iso8601(inserted_at)
   end

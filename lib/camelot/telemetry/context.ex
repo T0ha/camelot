@@ -15,6 +15,8 @@ defmodule Camelot.Telemetry.Context do
   internal, as does the maintainer's own email.
   """
 
+  alias Camelot.Accounts.User
+
   @production "production"
 
   # Configured as a string rather than a `Regex` because release
@@ -45,8 +47,7 @@ defmodule Camelot.Telemetry.Context do
   cluster is staff-only — and so is the maintainer's email in any
   environment. Client domains are *not* internal.
   """
-  @spec internal?(%{email: String.t() | Ash.CiString.t()} | String.t() | nil) ::
-          boolean()
+  @spec internal?(User.t() | String.t() | nil) :: boolean()
   def internal?(nil), do: not production?()
   def internal?(%{email: email}), do: internal?(to_string(email))
 

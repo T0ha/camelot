@@ -13,10 +13,18 @@ defmodule Camelot.Telemetry.Capture do
   the caller's explicit properties.
   """
 
+  alias Camelot.Accounts.User
   alias Camelot.Telemetry.Context
 
-  @typedoc "A person a capture can be attributed to."
-  @type subject :: %{id: String.t()} | String.t() | nil
+  @typedoc """
+  A person a capture can be attributed to: the user record itself, a
+  bare distinct id, or nothing at all.
+
+  A struct is spelled out rather than written as `%{id: String.t()}`
+  because a bare map type in a spec is a *closed* one — it would
+  exclude every struct, which is all this is ever called with.
+  """
+  @type subject :: User.t() | String.t() | nil
 
   @doc """
   Captures `event` for `subject`, or does nothing when the subject
@@ -41,7 +49,7 @@ defmodule Camelot.Telemetry.Capture do
   Person properties (`$set`) every signed-in capture can attach so
   cohorts need no joins back to the database.
   """
-  @spec person_properties(%{email: String.t() | Ash.CiString.t()}) :: map()
+  @spec person_properties(User.t()) :: map()
   def person_properties(%{email: email} = user) do
     %{
       "email" => to_string(email),

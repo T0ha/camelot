@@ -16,6 +16,8 @@ defmodule Camelot.Telemetry.TaskFailure do
   instead of leaking an unbounded string.
   """
 
+  alias Camelot.Board.Task
+
   @typedoc "Phase of a run a failure is attributed to."
   @type stage :: :clone | :boot | :plan | :execute | :pr
 
@@ -30,6 +32,14 @@ defmodule Camelot.Telemetry.TaskFailure do
           | :interrupted
           | :timeout
           | :unexplained
+
+  @typedoc """
+  Anything carrying the two fields a failure is read from.
+
+  The plain-map arm is not redundant: a bare map type in a spec is a
+  *closed* one, so `Task.t()` alone would exclude it, and vice versa.
+  """
+  @type failed :: Task.t() | %{stage: atom(), last_error: String.t() | nil}
 
   @stages [:clone, :boot, :plan, :execute, :pr]
 
@@ -70,7 +80,7 @@ defmodule Camelot.Telemetry.TaskFailure do
   @doc """
   Classifies a failed task into `{stage, reason}`.
   """
-  @spec classify(%{stage: atom(), last_error: String.t() | nil}) :: {stage(), reason()}
+  @spec classify(failed()) :: {stage(), reason()}
   def classify(%{last_error: last_error} = task) do
     message = String.downcase(to_string(last_error))
     reason = reason(message)
