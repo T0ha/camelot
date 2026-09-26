@@ -83,17 +83,32 @@ defmodule Camelot.Github.RepositoryCatalog do
   defp capture_resolve_failed(user, reason, installation_id) do
     {classified, http_status} = Reason.classify(reason)
 
-    Logger.warning("GitHub repository listing failed",
-      user_id: user.id,
-      installation_id: installation_id,
-      reason: classified,
-      http_status: http_status
-    )
+    log_resolve_failed(classified, http_status, user, installation_id)
 
     Capture.capture("project_repo_resolve_failed", user, %{
       reason: classified,
       http_status: http_status
     })
+  end
+
+  # Not having connected an installation yet is the ordinary state of
+  # a user who hasn't reached that step, not a fault. It is worth an
+  # event — it is exactly where the funnel stalls — but logging it as
+  # a failure would raise a warning on the commonest path through the
+  # picker, which is how warnings stop being read.
+  @spec log_resolve_failed(Reason.reason(), non_neg_integer() | nil, User.t(), integer() | nil) ::
+          :ok
+  defp log_resolve_failed(:no_installation, _http_status, user, _installation_id) do
+    Logger.info("GitHub repository listing skipped: no installation", user_id: user.id)
+  end
+
+  defp log_resolve_failed(reason, http_status, user, installation_id) do
+    Logger.warning("GitHub repository listing failed",
+      user_id: user.id,
+      installation_id: installation_id,
+      reason: reason,
+      http_status: http_status
+    )
   end
 
   # No installation at all is the commonest way to reach an empty

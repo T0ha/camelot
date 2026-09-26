@@ -217,6 +217,12 @@ them: `CamelotWeb.LiveUserAuth.attach_posthog_hook/1` sets `user_id`,
 `task_id=<uuid> stage=boot|clone` so the collector's container logs
 join to a task.
 
+A capture is not automatically a warning. `project_repo_resolve_failed`
+with `reason: no_installation` is the ordinary state of a user who has
+not connected GitHub yet — it is an event, because that is where the
+funnel stalls, but it logs at `info`. Only reasons that describe
+something actually going wrong log at `warning`.
+
 ## Testing
 
 `config/test.exs` keeps PostHog enabled with `test_mode: true`, so
@@ -225,6 +231,12 @@ on them. Captures made inside a LiveView process are not owned by the
 test process — those tests use `setup_all {PostHog.Test,
 :set_posthog_shared}` and `async: false` (see
 `test/camelot_web/live/project_telemetry_test.exs`).
+
+In shared mode the stash belongs to the `setup_all` process, so it
+**accumulates across every test in the module** and is ordered
+newest-first. Finding one event by name is therefore safe, but a
+`refute` or a count is not: those must also match the user the test
+is about, or they assert over the whole file.
 
 The catalogue is matched to actions by *name*, so renaming an action
 or dropping a resource's notifier would take its event off the air

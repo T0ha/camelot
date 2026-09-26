@@ -3,6 +3,7 @@ defmodule Camelot.Github.RepositoryCatalogTest do
 
   alias Camelot.Github.Installation
   alias Camelot.Github.RepositoryCatalog
+  alias Camelot.Telemetry.Reason
 
   defp unique_installation_id, do: System.unique_integer([:positive])
 
@@ -50,6 +51,46 @@ defmodule Camelot.Github.RepositoryCatalogTest do
     end
   end
 
+  # An empty repository picker was the quietest failure in the
+  # product: the user sees nothing to pick and we saw nothing at all,
+  # while PostHog's dead clicks piled up on the field it feeds. Both
+  # ways of arriving there now carry a bounded reason.
+  describe "list_for_user/1 telemetry" do
+    test "a user with no installation is reported rather than just left empty" do
+      user = user!()
+
+      RepositoryCatalog.list_for_user(user)
+
+      assert %{distinct_id: distinct_id, properties: properties} = captured_resolve_failure()
+      assert distinct_id == user.id
+      assert properties.reason == :no_installation
+    end
+
+    test "an installation whose listing fails is reported with a bounded reason" do
+      user = user!()
+      link!(installation!(), user)
+
+      RepositoryCatalog.list_for_user(user)
+
+      assert %{properties: properties} = captured_resolve_failure()
+      assert properties.reason in Reason.reasons()
+      refute properties.reason == :no_installation
+    end
+
+    test "a suspended installation is counted as having none" do
+      user = user!()
+
+      %{account_login: "acme"}
+      |> installation!()
+      |> link!(user)
+      |> Ash.update!(%{}, action: :suspend, authorize?: false)
+
+      RepositoryCatalog.list_for_user(user)
+
+      assert %{properties: %{reason: :no_installation}} = captured_resolve_failure()
+    end
+  end
+
   describe "merge_repos/1" do
     test "dedupes by full_name and sorts alphabetically" do
       list_a = [
@@ -70,5 +111,9 @@ defmodule Camelot.Github.RepositoryCatalogTest do
     test "is empty for an empty input" do
       assert RepositoryCatalog.merge_repos([]) == []
     end
+  end
+
+  defp captured_resolve_failure do
+    Enum.find(PostHog.Test.all_captured(), &(&1.event == "project_repo_resolve_failed"))
   end
 end

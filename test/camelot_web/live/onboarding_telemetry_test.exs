@@ -87,10 +87,19 @@ defmodule CamelotWeb.OnboardingTelemetryTest do
 
     render_patch(view, ~p"/projects")
 
-    assert Enum.count(all_captured("onboarding_step_completed")) == 1
+    assert Enum.count(all_captured("onboarding_step_completed", user.id)) == 1
   end
 
   defp captured(event), do: Enum.find(PostHog.Test.all_captured(), &(&1.event == event))
 
-  defp all_captured(event), do: Enum.filter(PostHog.Test.all_captured(), &(&1.event == event))
+  # The shared-mode stash is owned by `setup_all` and so accumulates
+  # across the whole module. `captured/1` is unaffected — the stash is
+  # newest-first — but a count has to name the user it is about, or it
+  # asserts over every test in the file rather than this one.
+  defp all_captured(event, distinct_id) do
+    Enum.filter(
+      PostHog.Test.all_captured(),
+      &(&1.event == event and &1.distinct_id == distinct_id)
+    )
+  end
 end
