@@ -17,6 +17,8 @@ defmodule Camelot.Telemetry.PostHogHandler do
   alias Camelot.Telemetry.Capture
   alias Camelot.Telemetry.Events
 
+  require Logger
+
   @ash_notify_event [:camelot, :ash, :notify]
   @user_signed_in_event [:camelot, :user, :signed_in]
 
@@ -40,11 +42,29 @@ defmodule Camelot.Telemetry.PostHogHandler do
   @spec handle_event(:telemetry.event_name(), :telemetry.event_measurements(), map(), term()) ::
           :ok
   def handle_event(@ash_notify_event, _measurements, metadata, _config) do
-    handle_ash_notify(metadata)
+    safely(fn -> handle_ash_notify(metadata) end)
   end
 
   def handle_event(@user_signed_in_event, _measurements, metadata, _config) do
-    handle_user_signed_in(metadata)
+    safely(fn -> handle_user_signed_in(metadata) end)
+  end
+
+  # `:telemetry` detaches a handler that raises, and it does so
+  # globally and permanently: one bad notification would take the
+  # whole product funnel offline until the node restarts, silently.
+  # Enriching an event now reads the database (`Events.resolve/4`), so
+  # that is no longer a theoretical risk — analytics must fail closed
+  # on the single event, never on the handler.
+  @spec safely((-> :ok)) :: :ok
+  defp safely(fun) do
+    fun.()
+  rescue
+    error ->
+      Logger.warning("PostHog capture failed", reason: error.__struct__)
+
+      :ok
+  catch
+    :exit, _reason -> :ok
   end
 
   @spec handle_ash_notify(%{

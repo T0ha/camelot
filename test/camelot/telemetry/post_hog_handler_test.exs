@@ -8,6 +8,7 @@ defmodule Camelot.Telemetry.PostHogHandlerTest do
   alias Camelot.Projects.Project
   alias Camelot.Telemetry.Context
   alias Camelot.Telemetry.Events
+  alias Camelot.Telemetry.PostHogHandler
 
   setup do
     {:ok, project} =
@@ -307,5 +308,13 @@ defmodule Camelot.Telemetry.PostHogHandlerTest do
 
     assert properties.has_github_installation == false
     assert properties.has_github_repo == false
+  end
+
+  test "a malformed notification is swallowed instead of detaching the handler", _ctx do
+    assert :ok ==
+             PostHogHandler.handle_event([:camelot, :ash, :notify], %{}, %{}, nil)
+
+    assert :ok ==
+             PostHogHandler.handle_event([:camelot, :user, :signed_in], %{}, %{}, nil)
   end
 end
