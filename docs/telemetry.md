@@ -78,13 +78,26 @@ original signup time and is correctly skipped.
 | `onboarding_shown` | `steps_total`, `steps_done`, `next_step` |
 | `onboarding_step_clicked` | `step` (`github \| claude_token \| project \| task`) |
 | `onboarding_step_completed` | `step` |
-| `onboarding_dismissed` | `steps_total`, `steps_done`, `next_step` (from process context) |
-| `onboarding_completed` | `duration_since_signup_s` |
+| `onboarding_dismissed` | `steps_total`, `steps_done`, `next_step`, `via` (`close \| step_click`) |
+| `onboarding_completed` | `steps_total`, `steps_done`, `next_step`, `duration_since_signup_s` |
 
 `onboarding_shown` and `onboarding_step_completed` also set the person
 properties `onboarding_next_step`, `github_connected`,
 `has_claude_token`, `has_project`, `has_task`, so the "stuck at step
 X" cohort is a person-property filter with no joins.
+
+Clicking a step dismisses the guide as a side effect, so
+`onboarding_dismissed` fires for the most engaged action the guide
+offers as well as for genuine abandonment. `via` separates the two:
+filter to `via = close` for the "gave up" cohort.
+
+`onboarding_dismissed` and `onboarding_completed` are captured from
+the `User` resource's notifier, which sees the user but not the
+guide, so the guide's own numbers are handed over as *event-scoped*
+PostHog context (`PostHog.set_event_context/2`). Event-scoped rather
+than process-wide because `PostHog.Context` only ever merges and
+cannot delete: a process-wide write would stamp one guide's
+`steps_done` onto every later capture from the same LiveView process.
 
 ### GitHub App
 

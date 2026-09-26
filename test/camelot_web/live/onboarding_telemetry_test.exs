@@ -52,6 +52,25 @@ defmodule CamelotWeb.OnboardingTelemetryTest do
     assert properties.next_step == "claude_token"
   end
 
+  # Clicking a step dismisses the guide as a side effect. Without
+  # `via` the abandonment event would also fire for the most engaged
+  # action in the guide, and the funnel could not tell them apart.
+  test "a dismissal is distinguishable from a click-through", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/projects")
+
+    view |> element("button[phx-click=onboarding_dismiss]") |> render_click()
+
+    assert %{properties: %{via: "close"}} = captured("onboarding_dismissed")
+  end
+
+  test "clicking through a step marks the dismissal as a step click", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/projects")
+
+    view |> element("button[phx-click=onboarding_go]") |> render_click()
+
+    assert %{properties: %{via: "step_click"}} = captured("onboarding_dismissed")
+  end
+
   # Only the false -> true flip: a navigation that changes nothing
   # must not re-report a step the user finished long ago.
   test "finishing a step is captured once, on the transition", %{conn: conn, user: user} do

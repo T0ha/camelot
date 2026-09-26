@@ -94,6 +94,42 @@ defmodule Camelot.Telemetry.PostHogHandlerTest do
     assert properties[:"$current_url"] == "https://camelot.test/projects"
   end
 
+  # `PostHog.Context` only ever merges and offers no delete, so a
+  # property written process-wide rides along on every later capture
+  # from the same LiveView process. Event-scoped context is how the
+  # onboarding guide hands `steps_done` to a notifier-driven capture
+  # without stamping it on everything that follows.
+  test "event-scoped context reaches its own event and no other", ctx do
+    PostHog.set_event_context("task_created", %{via: "scoped"})
+
+    assert {:ok, task} =
+             Ash.create(Task, %{
+               title: "Scoped context task",
+               project_id: ctx.project.id,
+               creator_id: ctx.user.id,
+               agent_id: agent!("claude_code").id
+             })
+
+    assert {:ok, _project} =
+             Ash.create(
+               Project,
+               %{
+                 name: "scoped-#{System.unique_integer([:positive])}",
+                 path: "/tmp/scoped"
+               },
+               actor: ctx.user
+             )
+
+    assert %{properties: %{via: "scoped"}} =
+             Enum.find(PostHog.Test.all_captured(), fn event ->
+               event.event == "task_created" && event.properties.data_id == task.id
+             end)
+
+    refute Enum.any?(PostHog.Test.all_captured(), fn event ->
+             event.event == "project_created" && Map.has_key?(event.properties, :via)
+           end)
+  end
+
   test "explicit event properties take precedence over same-key context", ctx do
     PostHog.set_context(%{data_id: "context-value-should-not-win"})
 

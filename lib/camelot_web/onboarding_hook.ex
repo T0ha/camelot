@@ -82,7 +82,7 @@ defmodule CamelotWeb.OnboardingHook do
   # account that predates the guide, say — is stamped as
   # complete and never bothered again.
   defp apply_status(socket, user, %Status{complete?: true} = status) do
-    set_guide_context(status)
+    set_guide_context("onboarding_completed", status, %{})
 
     socket
     |> assign(current_user: Onboarding.mark_complete!(user))
@@ -102,7 +102,7 @@ defmodule CamelotWeb.OnboardingHook do
   defp handle_info(_message, socket), do: {:cont, socket}
 
   defp handle_event("onboarding_dismiss", _params, socket) do
-    {:halt, dismiss(socket)}
+    {:halt, dismiss(socket, "close")}
   end
 
   defp handle_event("onboarding_open", _params, socket) do
@@ -125,20 +125,30 @@ defmodule CamelotWeb.OnboardingHook do
   defp go_to_step(socket, step, {:ok, path}) do
     capture("onboarding_step_clicked", socket.assigns.current_user, %{step: step})
 
-    push_navigate(dismiss(socket), to: path)
+    push_navigate(dismiss(socket, "step_click"), to: path)
   end
 
   defp go_to_step(socket, _step, :error), do: socket
 
-  defp dismiss(%Socket{assigns: %{onboarding: %Status{} = status}} = socket) do
-    set_guide_context(status)
+  # Clicking a step dismisses the guide too, so without `via` the
+  # "gave up" event and the most engaged action the guide offers
+  # would be indistinguishable — and `onboarding_dismissed` would
+  # measure engagement rather than abandonment.
+  @spec dismiss(Socket.t(), String.t()) :: Socket.t()
+  defp dismiss(%Socket{assigns: %{onboarding: %Status{} = status}} = socket, via) do
+    set_guide_context("onboarding_dismissed", status, %{via: via})
 
-    socket
-    |> assign(current_user: Onboarding.dismiss!(socket.assigns.current_user))
-    |> assign(onboarding_modal?: false)
+    forget_guide(socket)
   end
 
-  defp dismiss(socket) do
+  defp dismiss(socket, via) do
+    PostHog.set_event_context("onboarding_dismissed", %{via: via})
+
+    forget_guide(socket)
+  end
+
+  @spec forget_guide(Socket.t()) :: Socket.t()
+  defp forget_guide(socket) do
     socket
     |> assign(current_user: Onboarding.dismiss!(socket.assigns.current_user))
     |> assign(onboarding_modal?: false)
@@ -189,9 +199,15 @@ defmodule CamelotWeb.OnboardingHook do
   # `onboarding_dismissed` / `onboarding_completed` are captured from
   # the User resource's own notifier, which sees the user but not the
   # guide. The process context carries the missing half across.
-  @spec set_guide_context(Status.t()) :: :ok
-  defp set_guide_context(%Status{} = status) do
-    PostHog.set_context(status_properties(status))
+  #
+  # Scoped to the one event rather than the whole process:
+  # `PostHog.Context` only ever merges and cannot delete, so a
+  # process-wide write would stamp this guide's `steps_done` onto
+  # every later capture from the same LiveView — `project_created`,
+  # `task_form_blocked` — at whatever value it held here.
+  @spec set_guide_context(String.t(), Status.t(), map()) :: :ok
+  defp set_guide_context(event, %Status{} = status, extra) do
+    PostHog.set_event_context(event, Map.merge(status_properties(status), extra))
   end
 
   @spec status_properties(Status.t()) :: map()

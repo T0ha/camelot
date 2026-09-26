@@ -9,6 +9,15 @@ defmodule Camelot.Telemetry.Capture do
   own `PostHog` context are merged in exactly once, and a capture with
   no `distinct_id` is dropped rather than creating an anonymous person.
 
+  The context is read with `PostHog.get_event_context/1` rather than
+  `PostHog.get_context/0`. Both include the process-wide (`:all`)
+  scope — `$current_url`, set in `CamelotWeb.LiveUserAuth` — but the
+  event-scoped read also picks up properties a caller set for one
+  event only. That matters because `PostHog.Context` has no delete and
+  only ever merges: anything written process-wide rides along on every
+  later capture from a long-lived LiveView process, frozen at the
+  value it had when it was written.
+
   Precedence, lowest to highest: process context, global properties,
   the caller's explicit properties.
   """
@@ -37,7 +46,8 @@ defmodule Camelot.Telemetry.Capture do
   def capture(event, %{id: id}, properties), do: capture(event, id, properties)
 
   def capture(event, distinct_id, properties) do
-    PostHog.get_context()
+    event
+    |> PostHog.get_event_context()
     |> Map.merge(Context.global_properties())
     |> Map.merge(properties)
     |> then(&PostHog.bare_capture(event, distinct_id, &1))
