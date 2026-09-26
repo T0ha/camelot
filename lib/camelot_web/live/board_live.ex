@@ -13,6 +13,7 @@ defmodule CamelotWeb.BoardLive do
   alias Camelot.Agents.ModelLabel
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
+  alias Camelot.Telemetry.Capture
   alias CamelotWeb.Scope
   alias CamelotWeb.TaskAttachments
   alias Phoenix.LiveView.Socket
@@ -39,6 +40,11 @@ defmodule CamelotWeb.BoardLive do
       |> load_board()
       |> allow_upload(:attachment, accept: :any, max_entries: 5, max_file_size: 25_000_000)
 
+    # The setup guide's last step lands here with the modal already
+    # open, which is precisely the case where it may have nothing to
+    # pick from.
+    connected?(socket) && socket.assigns.new_task_open? && capture_form_blocked(socket)
+
     {:ok, socket}
   end
 
@@ -56,6 +62,8 @@ defmodule CamelotWeb.BoardLive do
 
   @impl true
   def handle_event("open_new_task", _params, socket) do
+    capture_form_blocked(socket)
+
     {:noreply, assign(socket, new_task_open?: true)}
   end
 
@@ -162,6 +170,21 @@ defmodule CamelotWeb.BoardLive do
     )
     |> assign_new(:task_form, fn -> new_task_form(user) end)
   end
+
+  # The new-task modal is reachable before a project or an agent
+  # exists, and PostHog's dead clicks cluster on exactly those two
+  # empty selects. Gating the button is a separate question; this only
+  # makes the dead end countable.
+  @spec capture_form_blocked(Socket.t()) :: :ok
+  defp capture_form_blocked(%Socket{assigns: %{projects: [], current_user: user}}) do
+    Capture.capture("task_form_blocked", user, %{reason: :no_project})
+  end
+
+  defp capture_form_blocked(%Socket{assigns: %{agents: [], current_user: user}}) do
+    Capture.capture("task_form_blocked", user, %{reason: :no_agent})
+  end
+
+  defp capture_form_blocked(_socket), do: :ok
 
   @spec new_task_form(Camelot.Accounts.User.t()) :: Phoenix.HTML.Form.t()
   defp new_task_form(user) do

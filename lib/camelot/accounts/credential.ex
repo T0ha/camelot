@@ -18,7 +18,8 @@ defmodule Camelot.Accounts.Credential do
     domain: Camelot.Accounts,
     data_layer: AshPostgres.DataLayer,
     extensions: [AshCloak],
-    authorizers: []
+    authorizers: [],
+    simple_notifiers: [Camelot.Telemetry.Notifier]
 
   @kinds [
     :claude_api_key,

@@ -9,6 +9,8 @@ defmodule CamelotWeb.LiveUserAuth do
 
   alias Phoenix.LiveView.Socket
 
+  require Logger
+
   @spec on_mount(atom(), map(), map(), Socket.t()) ::
           {:cont | :halt, Socket.t()}
   def on_mount(:live_user_required, _params, _session, socket) do
@@ -56,6 +58,8 @@ defmodule CamelotWeb.LiveUserAuth do
   """
   @spec attach_posthog_hook(Socket.t()) :: Socket.t()
   def attach_posthog_hook(socket) do
+    put_logger_metadata(socket.assigns[:current_user])
+
     attach_hook(socket, :posthog_current_url, :handle_params, &set_posthog_current_url/3)
   end
 
@@ -63,4 +67,10 @@ defmodule CamelotWeb.LiveUserAuth do
     PostHog.set_context(%{"$current_url": uri})
     {:cont, socket}
   end
+
+  # Every `Logger` call from this LiveView process inherits these, so
+  # the JSON log pipeline can filter a user's whole session without
+  # the id having to be interpolated into each message.
+  defp put_logger_metadata(%{id: id}), do: Logger.metadata(user_id: id)
+  defp put_logger_metadata(_anonymous), do: :ok
 end

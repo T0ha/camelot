@@ -9,8 +9,13 @@ defmodule Camelot.Github.RepositoryCatalog do
   in their own assigns for the life of that popup.
   """
 
+  alias Camelot.Accounts.User
   alias Camelot.Github.Client
   alias Camelot.Github.Installation
+  alias Camelot.Telemetry.Capture
+  alias Camelot.Telemetry.Reason
+
+  require Logger
 
   @type repo :: %{
           owner: String.t(),
@@ -29,14 +34,17 @@ defmodule Camelot.Github.RepositoryCatalog do
   bad/expired installation shouldn't block the picker from
   showing repos from the others.
   """
-  @spec list_for_user(Camelot.Accounts.User.t()) :: {:ok, [repo()]} | {:error, term()}
+  @spec list_for_user(User.t()) :: {:ok, [repo()]} | {:error, term()}
   def list_for_user(user) do
     with {:ok, user} <- Ash.load(user, :github_installations, actor: user) do
+      live = Enum.reject(user.github_installations, &suspended?/1)
+
       repos =
-        user.github_installations
-        |> Enum.reject(&suspended?/1)
-        |> Enum.map(&fetch_repos/1)
+        live
+        |> Enum.map(&fetch_repos(&1, user))
         |> merge_repos()
+
+      report_empty(live, repos, user)
 
       {:ok, repos}
     end
@@ -56,10 +64,43 @@ defmodule Camelot.Github.RepositoryCatalog do
 
   defp suspended?(%Installation{suspended_at: suspended_at}), do: not is_nil(suspended_at)
 
-  defp fetch_repos(%Installation{installation_id: installation_id}) do
+  # Dropping a failing installation keeps the picker useful, but it
+  # also used to make the failure invisible: a user staring at an
+  # empty repository list produced no signal at all. The listing still
+  # degrades silently for the user; it no longer does so for us.
+  defp fetch_repos(%Installation{installation_id: installation_id}, user) do
     case Client.list_installation_repositories(installation_id) do
-      {:ok, repos} -> repos
-      {:error, _reason} -> []
+      {:ok, repos} ->
+        repos
+
+      {:error, reason} ->
+        capture_resolve_failed(user, reason, installation_id)
+        []
     end
   end
+
+  @spec capture_resolve_failed(User.t(), term(), integer() | nil) :: :ok
+  defp capture_resolve_failed(user, reason, installation_id) do
+    {classified, http_status} = Reason.classify(reason)
+
+    Logger.warning("GitHub repository listing failed",
+      user_id: user.id,
+      installation_id: installation_id,
+      reason: classified,
+      http_status: http_status
+    )
+
+    Capture.capture("project_repo_resolve_failed", user, %{
+      reason: classified,
+      http_status: http_status
+    })
+  end
+
+  # No installation at all is the commonest way to reach an empty
+  # picker, and the one the onboarding funnel most needs to see.
+  defp report_empty([], _repos, user) do
+    capture_resolve_failed(user, :no_installation, nil)
+  end
+
+  defp report_empty(_installations, _repos, _user), do: :ok
 end

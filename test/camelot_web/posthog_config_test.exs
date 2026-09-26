@@ -1,6 +1,7 @@
 defmodule CamelotWeb.PostHogConfigTest do
   use ExUnit.Case, async: false
 
+  alias Camelot.Telemetry.Context
   alias CamelotWeb.PostHogConfig
 
   setup do
@@ -43,7 +44,9 @@ defmodule CamelotWeb.PostHogConfigTest do
                api_key: "phc_test",
                api_host: "https://us.i.posthog.com",
                distinct_id: nil,
-               email: nil
+               email: nil,
+               environment: Context.environment(),
+               is_internal: to_string(Context.internal?(nil))
              }
     end
 
@@ -56,7 +59,9 @@ defmodule CamelotWeb.PostHogConfigTest do
                api_key: "phc_test",
                api_host: "https://us.i.posthog.com",
                distinct_id: nil,
-               email: nil
+               email: nil,
+               environment: Context.environment(),
+               is_internal: to_string(Context.internal?(nil))
              }
     end
 
@@ -70,8 +75,56 @@ defmodule CamelotWeb.PostHogConfigTest do
                  api_key: "phc_test",
                  api_host: "https://us.i.posthog.com",
                  distinct_id: "user-123",
-                 email: "a@example.com"
+                 email: "a@example.com",
+                 environment: Context.environment(),
+                 is_internal: to_string(Context.internal?(%{email: "a@example.com"}))
                }
+    end
+  end
+
+  describe "environment and internal traffic" do
+    setup do
+      previous = Application.get_env(:camelot, :telemetry)
+      Application.put_env(:posthog, :enable, true)
+      Application.put_env(:posthog, :api_key, "phc_test")
+
+      on_exit(fn -> Application.put_env(:camelot, :telemetry, previous) end)
+
+      %{previous: previous}
+    end
+
+    defp put_environment(environment, ctx) do
+      Application.put_env(
+        :camelot,
+        :telemetry,
+        Keyword.put(ctx.previous, :environment, environment)
+      )
+    end
+
+    test "the browser gets the same environment the server captures carry", ctx do
+      put_environment("production", ctx)
+
+      assert %{environment: "production"} =
+               PostHogConfig.for(%{current_user: %{id: "u1", email: "a@example.com"}})
+    end
+
+    # The two clusters share one PostHog project, so staging traffic
+    # has to be excludable without excluding a real customer.
+    test "the maintainer is internal in production, a client is not", ctx do
+      put_environment("production", ctx)
+
+      assert %{is_internal: "true"} =
+               PostHogConfig.for(%{current_user: %{id: "u1", email: "t0hashvein@gmail.com"}})
+
+      assert %{is_internal: "false"} =
+               PostHogConfig.for(%{current_user: %{id: "u2", email: "someone@rollhub.com"}})
+    end
+
+    test "everything on the test cluster is internal", ctx do
+      put_environment("test", ctx)
+
+      assert %{environment: "test", is_internal: "true"} =
+               PostHogConfig.for(%{current_user: %{id: "u2", email: "someone@rollhub.com"}})
     end
   end
 end

@@ -159,6 +159,11 @@ if posthog_api_key = System.get_env("POSTHOG_API_KEY") do
     api_host: System.get_env("POSTHOG_API_HOST", "https://us.i.posthog.com")
 end
 
+# Deployment environment name, mirroring the otel collector gateway's
+# DEPLOYMENT_ENV so PostHog captures and OTLP data agree on which
+# cluster they came from. Unset means "not production" on purpose.
+config :camelot, :telemetry, environment: System.get_env("DEPLOYMENT_ENV", to_string(config_env()))
+
 # Ahrefs Web Analytics. Set AHREFS_ANALYTICS_KEY on the production app
 # only: the test cluster runs the same MIX_ENV=prod release, so leaving
 # the var unset there is what keeps its traffic out of the report.
@@ -219,7 +224,20 @@ if config_env() == :prod do
   # being recovered with a regex.
   config :logger, :default_handler,
     # In prod, default to swarm if RUNNER_BACKEND wasn't set above.
-    formatter: LoggerJSON.Formatters.Basic.new(metadata: [:request_id, :mfa, :crash_reason])
+    formatter:
+      LoggerJSON.Formatters.Basic.new(
+        metadata: [
+          :request_id,
+          :mfa,
+          :crash_reason,
+          :user_id,
+          :project_id,
+          :task_id,
+          :installation_id,
+          :reason,
+          :http_status
+        ]
+      )
 
   if !System.get_env("RUNNER_BACKEND") do
     config :camelot, :attachment_store, attachment_store_for.(Swarm)

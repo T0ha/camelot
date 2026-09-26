@@ -14,11 +14,19 @@ defmodule CamelotWeb.OnboardingHook do
   recomputes on navigation, `:handle_info` recomputes on a
   `{:onboarding, :refresh}` nudge from the host LiveView,
   and `:handle_event` serves the guide's own buttons.
+
+  The guide is also where the activation funnel is measured:
+  every render, click and step completion is captured
+  (`Camelot.Telemetry.Capture`), and each refresh restates
+  the user's progress as PostHog person properties, so the
+  "stuck at step X" cohort is a person-property filter
+  rather than a join.
   """
   import Phoenix.Component
   import Phoenix.LiveView
 
   alias Camelot.Accounts.User
+  alias Camelot.Telemetry.Capture
   alias CamelotWeb.Onboarding
   alias CamelotWeb.Onboarding.Status
   alias CamelotWeb.OnboardingComponents
@@ -35,6 +43,7 @@ defmodule CamelotWeb.OnboardingHook do
     socket
     |> apply_status(user, Onboarding.status(user))
     |> attach_guide_hooks(user)
+    |> capture_shown(user)
   end
 
   defp install(socket, _anonymous), do: socket
@@ -51,10 +60,30 @@ defmodule CamelotWeb.OnboardingHook do
 
   defp attach_guide_hooks(socket, _user), do: socket
 
+  # Only on the connected mount: the dead render would double every
+  # impression, and a disconnected client never saw the modal.
+  defp capture_shown(%Socket{assigns: %{onboarding: %Status{} = status, onboarding_modal?: true}} = socket, user) do
+    if connected?(socket) do
+      capture(
+        "onboarding_shown",
+        user,
+        Map.put(status_properties(status), "$set", person_properties(status))
+      )
+    else
+      :ok
+    end
+
+    socket
+  end
+
+  defp capture_shown(socket, _user), do: socket
+
   # A user who arrives with everything already done — an
   # account that predates the guide, say — is stamped as
   # complete and never bothered again.
-  defp apply_status(socket, user, %Status{complete?: true}) do
+  defp apply_status(socket, user, %Status{complete?: true} = status) do
+    set_guide_context(status)
+
     socket
     |> assign(current_user: Onboarding.mark_complete!(user))
     |> assign(onboarding: nil, onboarding_modal?: false)
@@ -83,16 +112,31 @@ defmodule CamelotWeb.OnboardingHook do
   # Persisting the dismissal server-side before pushing the
   # navigation keeps the two in a deterministic order.
   defp handle_event("onboarding_go", %{"step" => step}, socket) do
-    {:halt, go_to_step(socket, OnboardingComponents.fetch_step_path(step))}
+    {:halt, go_to_step(socket, step, OnboardingComponents.fetch_step_path(step))}
   end
 
   defp handle_event(_event, _params, socket), do: {:cont, socket}
 
   # `phx-value-step` arrives off the wire. Anything that isn't
   # a step we render is left alone rather than quietly sending
-  # the user somewhere they didn't ask for.
-  defp go_to_step(socket, {:ok, path}), do: push_navigate(dismiss(socket), to: path)
-  defp go_to_step(socket, :error), do: socket
+  # the user somewhere they didn't ask for — and is not
+  # captured either, so the event's `step` property stays a
+  # bounded enum.
+  defp go_to_step(socket, step, {:ok, path}) do
+    capture("onboarding_step_clicked", socket.assigns.current_user, %{step: step})
+
+    push_navigate(dismiss(socket), to: path)
+  end
+
+  defp go_to_step(socket, _step, :error), do: socket
+
+  defp dismiss(%Socket{assigns: %{onboarding: %Status{} = status}} = socket) do
+    set_guide_context(status)
+
+    socket
+    |> assign(current_user: Onboarding.dismiss!(socket.assigns.current_user))
+    |> assign(onboarding_modal?: false)
+  end
 
   defp dismiss(socket) do
     socket
@@ -107,6 +151,57 @@ defmodule CamelotWeb.OnboardingHook do
 
   defp refresh(%Socket{assigns: %{onboarding: %Status{} = status}} = socket) do
     user = socket.assigns.current_user
-    apply_status(socket, user, Onboarding.refresh(status, user))
+    refreshed = Onboarding.refresh(status, user)
+
+    capture_completed_steps(user, status, refreshed)
+    apply_status(socket, user, refreshed)
   end
+
+  # One event per `false -> true` flip, so a step that was already
+  # done before this session never inflates the funnel — and nothing
+  # at all on the (overwhelmingly common) navigation that changes
+  # nothing.
+  defp capture_completed_steps(user, %Status{steps: before}, %Status{} = refreshed) do
+    refreshed.steps
+    |> Enum.filter(fn {step, done?} -> newly_done?(Keyword.get(before, step, true), done?) end)
+    |> Enum.each(fn {step, _done?} ->
+      capture("onboarding_step_completed", user, %{
+        "$set" => person_properties(refreshed),
+        step: to_string(step)
+      })
+    end)
+  end
+
+  defp newly_done?(false, true), do: true
+  defp newly_done?(_before, _now), do: false
+
+  @spec person_properties(Status.t()) :: map()
+  defp person_properties(%Status{steps: steps} = status) do
+    %{
+      "onboarding_next_step" => to_string(status.next),
+      "github_connected" => Keyword.get(steps, :github, false),
+      "has_claude_token" => Keyword.get(steps, :claude_token, false),
+      "has_project" => Keyword.get(steps, :project, false),
+      "has_task" => Keyword.get(steps, :task, false)
+    }
+  end
+
+  # `onboarding_dismissed` / `onboarding_completed` are captured from
+  # the User resource's own notifier, which sees the user but not the
+  # guide. The process context carries the missing half across.
+  @spec set_guide_context(Status.t()) :: :ok
+  defp set_guide_context(%Status{} = status) do
+    PostHog.set_context(status_properties(status))
+  end
+
+  @spec status_properties(Status.t()) :: map()
+  defp status_properties(%Status{} = status) do
+    %{
+      steps_total: Status.total_count(status),
+      steps_done: Status.done_count(status),
+      next_step: to_string(status.next)
+    }
+  end
+
+  defp capture(event, user, properties), do: Capture.capture(event, user, properties)
 end

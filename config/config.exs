@@ -98,6 +98,16 @@ config :camelot, :runner,
   max_interrupt_requeues: 3,
   redeploy_wait_ms: 60_000
 
+# Global properties on every PostHog capture. `environment` keeps the
+# test cluster and production apart (they share one PostHog project) and
+# mirrors the collector's DEPLOYMENT_ENV; the default is deliberately
+# non-production so an unset env var never invents production data.
+# The internal-email pattern is a string, not a Regex: a release's
+# sys.config cannot serialise a compiled regex.
+config :camelot, :telemetry,
+  environment: "dev",
+  internal_email_pattern: "^t0hashvein.*@gmail\\.com$"
+
 config :camelot, :token_signing_secret, "dev-only-signing-secret-change-in-prod"
 
 config :camelot,

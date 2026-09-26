@@ -1,8 +1,13 @@
 defmodule Camelot.Telemetry.PostHogHandlerTest do
   use Camelot.DataCase, async: true
 
+  alias Camelot.Accounts.Credential
+  alias Camelot.Accounts.User
+  alias Camelot.Agents.Agent
   alias Camelot.Board.Task
   alias Camelot.Projects.Project
+  alias Camelot.Telemetry.Context
+  alias Camelot.Telemetry.Events
 
   setup do
     {:ok, project} =
@@ -105,5 +110,202 @@ defmodule Camelot.Telemetry.PostHogHandlerTest do
              end)
 
     assert properties.data_id == task.id
+  end
+
+  describe "signup and sign-in" do
+    test "a brand new account emits user_signed_up with its auth method" do
+      {:ok, user} =
+        Ash.create(
+          User,
+          %{email: "signup-#{System.unique_integer([:positive])}@example.com", role: :user},
+          action: :create_user,
+          authorize?: false
+        )
+
+      assert %{distinct_id: distinct_id, properties: properties} =
+               Enum.find(PostHog.Test.all_captured(), &(&1.event == "user_signed_up"))
+
+      assert distinct_id == user.id
+      assert properties.auth_method == "invite"
+    end
+
+    # Both GitHub and magic-link sign-in run upsert *create* actions,
+    # so without the signup window every login would look like a
+    # conversion.
+    test "a returning account's upsert does not re-emit user_signed_up" do
+      old = DateTime.add(DateTime.utc_now(), -3600, :second)
+      returning = %User{id: Ash.UUID.generate(), inserted_at: old}
+
+      assert Events.resolve(User, :register_with_github, returning, nil) == :skip
+    end
+
+    test "a fresh GitHub registration is reported as such" do
+      fresh = %User{id: Ash.UUID.generate(), inserted_at: DateTime.utc_now()}
+
+      assert {:ok, "user_signed_up", %{auth_method: "github"}} =
+               Events.resolve(User, :register_with_github, fresh, nil)
+    end
+
+    test "user_signed_in sets the person properties funnels filter on", ctx do
+      :telemetry.execute([:camelot, :user, :signed_in], %{}, %{
+        user: ctx.user,
+        auth_method: :magic_link
+      })
+
+      assert %{properties: properties} =
+               Enum.find(PostHog.Test.all_captured(), &(&1.event == "user_signed_in"))
+
+      assert properties["$set"]["email"] == to_string(ctx.user.email)
+      assert properties["$set"]["auth_method"] == "magic_link"
+      assert is_boolean(properties["$set"]["is_internal"])
+      assert properties["$set_once"]["signed_up_at"]
+    end
+
+    test "every capture carries the environment it came from", ctx do
+      :telemetry.execute([:camelot, :user, :signed_in], %{}, %{user: ctx.user})
+
+      assert %{properties: properties} =
+               Enum.find(PostHog.Test.all_captured(), &(&1.event == "user_signed_in"))
+
+      assert properties.environment == Context.environment()
+    end
+  end
+
+  describe "onboarding" do
+    test "dismissing the guide is captured", ctx do
+      {:ok, _user} = Ash.update(ctx.user, %{}, action: :dismiss_onboarding, actor: ctx.user)
+
+      assert %{distinct_id: distinct_id} =
+               Enum.find(PostHog.Test.all_captured(), &(&1.event == "onboarding_dismissed"))
+
+      assert distinct_id == ctx.user.id
+    end
+
+    test "completing the guide reports how long it took", ctx do
+      {:ok, _user} = Ash.update(ctx.user, %{}, action: :complete_onboarding, actor: ctx.user)
+
+      assert %{properties: properties} =
+               Enum.find(PostHog.Test.all_captured(), &(&1.event == "onboarding_completed"))
+
+      assert is_integer(properties.duration_since_signup_s)
+    end
+  end
+
+  describe "credentials" do
+    test "adding a Claude key is the funnel's credential step", ctx do
+      {:ok, _credential} =
+        Ash.create(Credential, %{kind: :claude_api_key, value: "sk-test", user_id: ctx.user.id})
+
+      assert %{distinct_id: distinct_id, properties: properties} =
+               Enum.find(PostHog.Test.all_captured(), &(&1.event == "claude_token_added"))
+
+      assert distinct_id == ctx.user.id
+      assert properties.kind == "claude_api_key"
+      refute Map.has_key?(properties, :value)
+    end
+
+    test "another credential kind gets its own, non-Claude event", ctx do
+      {:ok, _credential} =
+        Ash.create(Credential, %{kind: :openai_api_key, value: "sk-test", user_id: ctx.user.id})
+
+      assert %{properties: properties} =
+               Enum.find(PostHog.Test.all_captured(), &(&1.event == "credential_added"))
+
+      assert properties.kind == "openai_api_key"
+      refute Enum.any?(PostHog.Test.all_captured(), &(&1.event == "claude_token_added"))
+    end
+
+    test "the server-generated SSH key is not a step the user took", ctx do
+      {:ok, _credential} =
+        Ash.create(Credential, %{
+          kind: :ssh_private_key,
+          name: "default",
+          value: "key",
+          metadata: %{"source" => "server_generated"},
+          user_id: ctx.user.id
+        })
+
+      refute Enum.any?(PostHog.Test.all_captured(), &(&1.event == "credential_added"))
+    end
+
+    test "removing a Claude key is captured too", ctx do
+      {:ok, credential} =
+        Ash.create(Credential, %{kind: :claude_api_key, value: "sk-test", user_id: ctx.user.id})
+
+      :ok = Ash.destroy(credential)
+
+      assert Enum.any?(PostHog.Test.all_captured(), &(&1.event == "claude_token_removed"))
+    end
+  end
+
+  test "linking a GitHub installation is captured against its user", ctx do
+    installation = github_installation!(ctx.user, %{user_id: nil})
+
+    {:ok, _installation} =
+      Ash.update(installation, %{user_id: ctx.user.id},
+        action: :link_user,
+        authorize?: false
+      )
+
+    assert %{distinct_id: distinct_id, properties: properties} =
+             Enum.find(PostHog.Test.all_captured(), &(&1.event == "github_installation_linked"))
+
+    assert distinct_id == ctx.user.id
+    assert properties.installation_id == installation.installation_id
+  end
+
+  test "creating an agent CLI is captured", ctx do
+    assert {:ok, agent} =
+             Ash.create(
+               Agent,
+               %{
+                 slug: "agent-#{System.unique_integer([:positive])}",
+                 name: "Test agent",
+                 executable: "claude"
+               },
+               actor: ctx.user
+             )
+
+    assert %{distinct_id: distinct_id, properties: properties} =
+             Enum.find(PostHog.Test.all_captured(), &(&1.event == "agent_created"))
+
+    assert distinct_id == ctx.user.id
+    assert properties.slug == agent.slug
+  end
+
+  test "task_errored carries the stage and the bounded reason", ctx do
+    {:ok, task} =
+      Ash.create(Task, %{
+        title: "Failing task",
+        project_id: ctx.project.id,
+        creator_id: ctx.user.id,
+        agent_id: agent!("claude_code").id
+      })
+
+    {:ok, _task} =
+      Ash.update(task, %{last_error: "[entrypoint] cloning repo\nfatal: Authentication failed"}, action: :mark_error)
+
+    assert %{properties: properties} =
+             Enum.find(PostHog.Test.all_captured(), &(&1.event == "task_errored"))
+
+    assert properties.stage == :clone
+    assert properties.reason == :git_auth_failed
+  end
+
+  test "project_created says whether the creator could actually run it", _ctx do
+    actor = user!()
+
+    {:ok, _project} =
+      Ash.create(
+        Project,
+        %{name: "posthog-installations-#{System.unique_integer([:positive])}"},
+        actor: actor
+      )
+
+    assert %{properties: properties} =
+             Enum.find(PostHog.Test.all_captured(), &(&1.event == "project_created"))
+
+    assert properties.has_github_installation == false
+    assert properties.has_github_repo == false
   end
 end

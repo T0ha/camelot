@@ -7,6 +7,8 @@ defmodule CamelotWeb.ProjectLive.Index do
   import CamelotWeb.OnboardingComponents
 
   alias Camelot.Projects.Project
+  alias Camelot.Telemetry.Capture
+  alias Camelot.Telemetry.Reason
   alias CamelotWeb.Components.FolderPicker
   alias CamelotWeb.Components.GithubRepoPicker
   alias CamelotWeb.Components.RunnerImagePicker
@@ -92,10 +94,12 @@ defmodule CamelotWeb.ProjectLive.Index do
       {:ok, attrs} ->
         save_project(socket, socket.assigns.live_action, attrs)
 
-      {:error, msg} ->
+      {:error, {field, code}} ->
+        capture_create_failed(socket, %{error_fields: [to_string(field)], error_codes: [to_string(code)]})
+
         {:noreply,
          socket
-         |> put_flash(:error, msg)
+         |> put_flash(:error, override_error_message(field, code))
          |> assign(form: to_form(project_params))}
     end
   end
@@ -143,6 +147,8 @@ defmodule CamelotWeb.ProjectLive.Index do
          |> push_navigate(to: ~p"/projects")}
 
       {:error, changeset} ->
+        capture_create_failed(socket, Reason.changeset_summary(changeset))
+
         {:noreply, assign(socket, form: to_form(changeset_params(changeset)))}
     end
   end
@@ -270,6 +276,28 @@ defmodule CamelotWeb.ProjectLive.Index do
     end
   end
 
+  # Project creation is where the funnel actually dies — PostHog's
+  # dead clicks pile up on this form's repository field — so both
+  # failure branches report which fields failed and how, and never
+  # the messages, which would carry whatever the user typed.
+  @spec capture_create_failed(Socket.t(), %{
+          error_fields: [String.t()],
+          error_codes: [String.t()]
+        }) :: :ok
+  defp capture_create_failed(%Socket{assigns: %{live_action: :new}} = socket, summary) do
+    Capture.capture("project_create_failed", socket.assigns.current_user, summary)
+  end
+
+  defp capture_create_failed(_socket, _summary), do: :ok
+
+  @spec override_error_message(String.t(), atom()) :: String.t()
+  defp override_error_message(field, :not_json_object), do: "#{field} must be a JSON object"
+  defp override_error_message(field, :invalid_json), do: "#{field} is not valid JSON"
+
+  defp override_error_message(field, :invalid_integer) do
+    "#{field} must be a positive integer"
+  end
+
   defp parse_optional_lines(nil), do: {:ok, nil}
   defp parse_optional_lines(""), do: {:ok, nil}
 
@@ -291,8 +319,8 @@ defmodule CamelotWeb.ProjectLive.Index do
       text ->
         case Jason.decode(text) do
           {:ok, %{} = map} -> {:ok, map}
-          {:ok, _} -> {:error, "#{key} must be a JSON object"}
-          {:error, _} -> {:error, "#{key} is not valid JSON"}
+          {:ok, _other} -> {:error, {key, :not_json_object}}
+          {:error, _reason} -> {:error, {key, :invalid_json}}
         end
     end
   end
@@ -308,7 +336,7 @@ defmodule CamelotWeb.ProjectLive.Index do
       text ->
         case Integer.parse(text) do
           {n, ""} when n > 0 -> {:ok, n}
-          _ -> {:error, "#{key} must be a positive integer"}
+          _not_a_positive_integer -> {:error, {key, :invalid_integer}}
         end
     end
   end

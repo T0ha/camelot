@@ -16,11 +16,33 @@ export function initPostHog({autoPageview}) {
     capture_pageview: autoPageview,
   })
 
+  // Super-properties, so autocaptured events — $pageview and the
+  // $exception volume nothing else tags — carry the same environment
+  // and internal-traffic flags the server puts on its own captures.
+  // Without these, prod and the test cluster are indistinguishable in
+  // a shared PostHog project.
+  posthog.register({
+    environment: posthogConfig.environment,
+    is_internal: posthogConfig.isInternal === "true",
+  })
+
   if (posthogConfig.distinctId) {
-    posthog.identify(posthogConfig.distinctId, {email: posthogConfig.email})
+    posthog.identify(posthogConfig.distinctId, {
+      email: posthogConfig.email,
+      environment: posthogConfig.environment,
+      is_internal: posthogConfig.isInternal === "true",
+    })
   }
 
   window.posthog = posthog
+
+  // LiveViews push this to attach page-scoped context (a task id, say)
+  // to everything captured while that page is open, including
+  // autocaptured exceptions. Cleared on navigation by the next page's
+  // own registration.
+  window.addEventListener("phx:posthog:register", event => {
+    window.posthog?.register(event.detail || {})
+  })
 
   if (autoPageview) {
     return

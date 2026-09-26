@@ -171,7 +171,7 @@ clone_workspace() {
 
   [ -n "$url" ] || { log "no REPO_URL set; skipping clone"; return 0; }
 
-  log "cloning $url into /workspace"
+  log "task_id=${CAMELOT_TASK_ID:-unknown} stage=clone cloning $url into /workspace"
   cd /workspace
   if [ -n "$branch" ]; then
     git clone --depth 50 --branch "$branch" "$url" .
@@ -224,6 +224,8 @@ main() {
   # Truncate any stale env from a previous container lifecycle (only
   # relevant if /tmp is somehow persisted; defensive).
   : > "$CAMELOT_ENV_FILE"
+
+  log "task_id=${CAMELOT_TASK_ID:-unknown} stage=boot starting"
 
   materialise_secrets
   merge_mcp_config

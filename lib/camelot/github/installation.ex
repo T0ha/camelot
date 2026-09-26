@@ -16,7 +16,8 @@ defmodule Camelot.Github.Installation do
   use Ash.Resource,
     domain: Camelot.Github,
     data_layer: AshPostgres.DataLayer,
-    authorizers: [Ash.Policy.Authorizer]
+    authorizers: [Ash.Policy.Authorizer],
+    simple_notifiers: [Camelot.Telemetry.Notifier]
 
   @account_types [:user, :organization]
 
