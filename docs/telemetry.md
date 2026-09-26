@@ -55,11 +55,16 @@ The browser gets both as PostHog super-properties
 them too. A LiveView can add page context on top by pushing
 `posthog:register` — `CamelotWeb.TaskLive` sends `task_id` /
 `project_id`, which is what makes an exception on a task page
-attributable. PostHog persists registered properties, so
-`posthog_client.js` unregisters that page context again on the next
-non-patch `phx:navigate` and on the following page load: page context
-must not outlive the page, or the first task a browser opens ends up
-tagging everything it sends afterwards.
+attributable. PostHog persists registered properties, so page context
+must not outlive the page — otherwise the first task a browser opens
+tags everything it sends afterwards. `posthog_client.js` therefore
+unregisters it on the way *out* of a page, before the next one mounts:
+on `phx:page-loading-start{kind: "redirect"}` (link clicks and server
+`push_navigate`, where `phx:navigate` arrives only after the
+replacement view has already joined and registered its own context),
+on `phx:navigate{pop: true}` (back/forward), and again on the
+following page load. A `patch` stays inside the same LiveView and is
+left alone.
 
 ## Event catalogue
 

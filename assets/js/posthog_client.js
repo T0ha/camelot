@@ -72,35 +72,37 @@ export function initPostHog({autoPageview}) {
   // A LiveView pushes this to attach its own context — a task id, say —
   // to everything captured while that page is open, autocaptured
   // exceptions included.
-  let navigation = 0
-  let registeredAt = 0
-
   window.addEventListener("phx:posthog:register", event => {
     const properties = event.detail || {}
 
     clearPageProperties()
     posthog.register(properties)
     writePageProperties(Object.keys(properties))
-    registeredAt = navigation
   })
 
-  // Leaving the page takes its context off again. A live redirect
-  // dispatches phx:navigate *after* the events of the view it navigated
-  // to, so "was anything registered since the last navigation?" is what
-  // separates the context of the page being left from the context of the
-  // page being entered — comparing hrefs would not, and neither order of
-  // the two events breaks this one. A patch stays inside the same
-  // LiveView, so it leaves the context alone.
-  window.addEventListener("phx:navigate", event => {
-    if (event.detail?.patch) {
-      return
-    }
-
-    if (registeredAt !== navigation) {
+  // Leaving a page takes its context off again. The clear has to land
+  // *before* the page being entered mounts, or it wipes the context that
+  // page just registered — and phx:navigate is too late for that on a
+  // link click or a server push_navigate, where LiveView dispatches it
+  // only after the replacement view has joined. The two signals below
+  // are both strictly earlier than the new view's mount:
+  //
+  //   * phx:page-loading-start{kind: "redirect"} — dispatched by
+  //     historyRedirect before it swaps the main view;
+  //   * phx:navigate{pop: true} — back/forward, dispatched from the
+  //     popstate handler before the swap.
+  //
+  // A patch stays inside the same LiveView, so it leaves context alone.
+  window.addEventListener("phx:page-loading-start", event => {
+    if (event.detail?.kind === "redirect") {
       clearPageProperties()
     }
+  })
 
-    navigation += 1
+  window.addEventListener("phx:navigate", event => {
+    if (event.detail?.pop && !event.detail?.patch) {
+      clearPageProperties()
+    }
   })
 
   if (autoPageview) {
