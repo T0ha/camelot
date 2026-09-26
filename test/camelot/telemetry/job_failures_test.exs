@@ -122,5 +122,15 @@ defmodule Camelot.Telemetry.JobFailuresTest do
       refute Map.has_key?(exception.properties, :secret)
       refute Map.has_key?(exception.properties, :args)
     end
+
+    # The struct permits it, and losing the whole report to a missing
+    # args map would be a worse outcome than losing the ids.
+    test "a job with no args at all is still reported" do
+      capture_log(fn -> fail(job(nil)) end)
+
+      assert [exception | _rest] = exceptions()
+      assert exception.properties[:worker] == "Camelot.Board.Workers.SendTaskStateEmail"
+      assert exception.distinct_id == "unknown"
+    end
   end
 end

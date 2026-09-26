@@ -87,8 +87,8 @@ defmodule Camelot.Telemetry.JobFailures do
   # `distinct_id` is what PostHog's error-tracking handler reads to
   # decide whose crash this is; a job that knows nothing about a user
   # stays on `"unknown"` rather than being attributed to a guess.
-  @spec ids(map() | nil) :: keyword()
-  defp ids(%{} = args) do
+  @spec ids(map()) :: keyword()
+  defp ids(args) do
     ids = Enum.flat_map(@id_keys, &id(args, &1))
 
     case Keyword.fetch(ids, :user_id) do
@@ -97,13 +97,14 @@ defmodule Camelot.Telemetry.JobFailures do
     end
   end
 
-  defp ids(_no_args), do: []
-
+  # Matched rather than fetched so a job with no args at all — which
+  # the struct permits — reports no ids instead of taking the whole
+  # report down.
   @spec id(map(), {String.t(), atom()}) :: keyword()
   defp id(args, {arg_key, metadata_key}) do
-    case Map.get(args, arg_key) do
-      value when is_binary(value) -> [{metadata_key, value}]
-      _not_an_id -> []
+    case args do
+      %{^arg_key => value} when is_binary(value) -> [{metadata_key, value}]
+      _no_id -> []
     end
   end
 end
