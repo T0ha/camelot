@@ -7,6 +7,7 @@ defmodule CamelotWeb.ProjectLive.Index do
   import CamelotWeb.OnboardingComponents
 
   alias Camelot.Accounts.User
+  alias Camelot.Github.RepositoryCatalog
   alias Camelot.Github.Resolver
   alias Camelot.Projects.Project
   alias Camelot.Telemetry.Capture
@@ -132,7 +133,7 @@ defmodule CamelotWeb.ProjectLive.Index do
       |> Map.put("github_repo", repo.repo)
       |> Map.put("github_repo_url", repo.html_url)
 
-    {:noreply, assign(socket, form: to_form(form_params))}
+    {:noreply, assign(socket, form: to_form(form_params), picked_repo: repo)}
   end
 
   def handle_info({:runner_image_selected, image}, socket) do
@@ -142,6 +143,8 @@ defmodule CamelotWeb.ProjectLive.Index do
   end
 
   defp save_project(socket, :new, params) do
+    set_repo_visibility(socket, params)
+
     case Ash.create(Project, params, action: :create, actor: socket.assigns.current_user) do
       {:ok, project} ->
         report_repo_resolution(socket, project)
@@ -282,6 +285,44 @@ defmodule CamelotWeb.ProjectLive.Index do
        |> Map.put("base_retry_delay_ms_override", retry_ms)}
     end
   end
+
+  # Whether the repository is private is what separates a project the
+  # App can clone from one whose first task dies on `Authentication
+  # failed`, so `project_created` carries it. The Project record does
+  # not store it and the resource's notifier is what captures the
+  # event, so the picker's answer is handed over in the event's own
+  # PostHog context.
+  #
+  # Scoped to this one event, and written on *every* create including
+  # when it is unknown: `PostHog.Context` only ever merges, so a
+  # project submitted after a rejected one would otherwise inherit
+  # whatever repository was picked before it.
+  @spec set_repo_visibility(Socket.t(), map()) :: :ok
+  defp set_repo_visibility(socket, params) do
+    PostHog.set_event_context("project_created", %{
+      repo_visibility: picked_visibility(socket.assigns[:picked_repo], params)
+    })
+  end
+
+  # The owner/repo fields stay editable after a pick, so the picker's
+  # answer only describes the repository actually submitted.
+  @spec picked_visibility(RepositoryCatalog.repo() | nil, map()) :: String.t() | nil
+  defp picked_visibility(%{full_name: full_name, visibility: visibility}, %{
+         "github_owner" => owner,
+         "github_repo" => repo
+       }) do
+    visibility_for(
+      String.downcase(to_string(full_name)),
+      String.downcase("#{owner}/#{repo}"),
+      visibility
+    )
+  end
+
+  defp picked_visibility(_picked, _params), do: nil
+
+  @spec visibility_for(String.t(), String.t(), String.t() | nil) :: String.t() | nil
+  defp visibility_for(submitted, submitted, visibility), do: visibility
+  defp visibility_for(_picked, _submitted, _visibility), do: nil
 
   # Project creation is where the funnel actually dies — PostHog's
   # dead clicks pile up on this form's repository field — so both

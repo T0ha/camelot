@@ -86,6 +86,75 @@ defmodule CamelotWeb.ProjectTelemetryTest do
     end
   end
 
+  # `repo_visibility` is the half of `project_created` that says
+  # whether the project can actually be cloned: a private repository
+  # the App was never granted is the documented route to
+  # `[entrypoint] cloning … Authentication failed`. Only the picker
+  # knows it, and the Project record does not store it, so it travels
+  # in the event's own PostHog context — which is exactly the sort of
+  # carriage that goes stale unnoticed.
+  describe "repository visibility" do
+    test "a repository picked from the list reports its visibility", %{conn: conn, user: user} do
+      {:ok, view, _html} = live(conn, ~p"/projects/new")
+
+      pick(view, "alice", "widgets", "private")
+      submit(view, %{"github_owner" => "alice", "github_repo" => "widgets"})
+
+      assert %{properties: properties} = captured(user, "project_created")
+      assert properties.repo_visibility == "private"
+    end
+
+    test "a repository typed by hand reports no visibility", %{conn: conn, user: user} do
+      {:ok, view, _html} = live(conn, ~p"/projects/new")
+
+      submit(view, %{"github_owner" => "alice", "github_repo" => "widgets"})
+
+      assert %{properties: properties} = captured(user, "project_created")
+      assert properties.repo_visibility == nil
+    end
+
+    # A rejected submit keeps the same LiveView process, and
+    # `PostHog.Context` only ever merges — so the repository picked
+    # before the rejection is still in the process when the next one
+    # is submitted by hand.
+    test "a later repository does not inherit the picked one's visibility",
+         %{conn: conn, user: user} do
+      {:ok, view, _html} = live(conn, ~p"/projects/new")
+
+      pick(view, "alice", "widgets", "private")
+      view |> form("#project-form", %{"name" => ""}) |> render_submit()
+
+      submit(view, %{"github_owner" => "bigcorp", "github_repo" => "gadgets"})
+
+      assert %{properties: properties} = captured(user, "project_created")
+      assert properties.repo_visibility == nil
+    end
+  end
+
+  # The picker is a LiveComponent that messages its parent; this is
+  # the message it sends, so the test drives the real handler rather
+  # than a stand-in for it.
+  defp pick(view, owner, repo, visibility) do
+    send(view.pid, {
+      :github_repo_selected,
+      %{
+        owner: owner,
+        repo: repo,
+        full_name: "#{owner}/#{repo}",
+        html_url: "https://github.com/#{owner}/#{repo}",
+        visibility: visibility
+      }
+    })
+
+    render(view)
+  end
+
+  defp submit(view, attrs) do
+    params = Map.put(attrs, "name", "telemetry-#{System.unique_integer([:positive])}")
+
+    view |> form("#project-form", params) |> render_submit()
+  end
+
   defp create_project(conn, user, attrs) do
     {:ok, view, _html} = live(conn, ~p"/projects/new")
 

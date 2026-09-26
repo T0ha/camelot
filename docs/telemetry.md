@@ -256,7 +256,7 @@ every signup is skipped — it is not something the user did.
 
 | Event | Properties |
 |---|---|
-| `project_created` | `has_github_repo`, `has_github_installation` |
+| `project_created` | `has_github_repo`, `has_github_installation`, `repo_visibility` |
 | `project_create_failed` | `error_fields`, `error_codes` |
 | `agent_created` / `agent_updated` | `slug` |
 | `task_created`, `task_started`, `task_plan_submitted`, `task_plan_approved`, `task_pr_created`, `task_completed`, `task_cancelled` | `data_id` |
@@ -277,6 +277,27 @@ whenever anybody had connected the App would report the whole cohort
 as equipped, which is the opposite of what this event is for, so the
 tests pin it from both ends: another user's installation and a
 suspended one must both read `false`.
+
+`project_created.repo_visibility` ∈ `public | private | internal`, or
+`nil` when it is not known. A private repository the App was never
+granted is the documented route to `[entrypoint] cloning …
+Authentication failed`, so it is worth telling apart from a public one
+at the point the project is made rather than when its first task dies.
+
+It is `nil` more often than the others, and deliberately so. The
+`Project` record does not store visibility and the event is captured
+from the resource's notifier, so the only source is the repository
+picker (`Camelot.Github.Client.normalize_repository/1`): a repository
+typed straight into `github_repo_url` reports `nil`, as does one
+picked and then edited before submitting. Reporting the last pick
+regardless would attach a fact about one repository to another —
+`nil` says "not known", which is true.
+
+Carried across on `PostHog.set_event_context/2`, written on *every*
+create including when it is unknown. `PostHog.Context` only ever
+merges, so a project submitted after a rejected one in the same
+LiveView would otherwise inherit whatever was picked before it; the
+test suite pins that case.
 
 `project_create_failed.error_codes` are the short names of Ash error
 structs (`required`, `invalid_attribute`, …) or, for the advanced

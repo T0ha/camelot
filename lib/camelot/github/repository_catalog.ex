@@ -17,12 +17,12 @@ defmodule Camelot.Github.RepositoryCatalog do
 
   require Logger
 
-  @type repo :: %{
-          owner: String.t(),
-          repo: String.t(),
-          full_name: String.t(),
-          html_url: String.t()
-        }
+  @typedoc """
+  One picker row. Defined by `Camelot.Github.Client`, which is what
+  builds them, so the two cannot drift — `visibility` in particular
+  is read back out in `CamelotWeb.ProjectLive.Index`.
+  """
+  @type repo :: Client.repository()
 
   @doc """
   Loads `user.github_installations`, drops suspended ones,
