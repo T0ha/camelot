@@ -52,8 +52,14 @@ keeps staging traffic out of the funnel.
 The browser gets both as PostHog super-properties
 (`assets/js/posthog_client.js`), so autocaptured events —
 `$pageview`, and the `$exception` volume nothing else tags — carry
-them too. `CamelotWeb.TaskLive` additionally registers `task_id` /
-`project_id` for the life of the page.
+them too. A LiveView can add page context on top by pushing
+`posthog:register` — `CamelotWeb.TaskLive` sends `task_id` /
+`project_id`, which is what makes an exception on a task page
+attributable. PostHog persists registered properties, so
+`posthog_client.js` unregisters that page context again on the next
+non-patch `phx:navigate` and on the following page load: page context
+must not outlive the page, or the first task a browser opens ends up
+tagging everything it sends afterwards.
 
 ## Event catalogue
 
