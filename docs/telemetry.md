@@ -172,10 +172,20 @@ cannot delete: a process-wide write would stamp one guide's
 `project_repo_resolve_failed` also has two capture points, for the two
 ways a repository can turn out to be unreachable.
 `Camelot.Github.RepositoryCatalog` reports the picker's view — an
-installation whose repository listing errored (`http_status` set), or
-no installation at all. `CamelotWeb.ProjectLive.Index` reports the
-saved project's own owner, on create **and** on update, since the
-`:update` action accepts `github_owner` too.
+installation whose repository listing errored (`http_status` set), no
+installation at all, or installations that answered and granted no
+repository between them (`no_repositories`). `CamelotWeb.ProjectLive.Index`
+reports the saved project's own owner, on create **and** on update,
+since the `:update` action accepts `github_owner` too.
+
+`no_repositories` is the quietest of the three, and the reason
+`report_empty/3` looks at the per-installation outcomes rather than
+just the merged list: nothing errored, so no installation reported
+anything of its own, and the user is left on `#github_repo_url` — the
+field the dead clicks pile up on — with an empty picker and no signal
+behind it. An installation that *did* error is deliberately not also
+counted as an empty grant; that would report one picker open twice,
+under two different causes.
 
 That second one is `repo_not_in_installation`, and it is the answer to
 a failure that used to surface only as `[entrypoint] cloning …
@@ -235,7 +245,7 @@ failures are worth logging.
 `missing_state`, `not_authenticated`, `actor_mismatch`,
 `invalid_state`, `expired_state`, `invalid_installation_id`,
 `missing_installation_id`, `not_configured`, `no_installation`,
-`repo_not_in_installation`,
+`no_repositories`, `repo_not_in_installation`,
 `not_found`, `forbidden`, `rate_limited`, `http_error`,
 `transport_error`, `upsert_failed`, `link_failed`, `invalid_json`,
 `invalid_integer`, `unknown`.
@@ -405,8 +415,9 @@ is shown to the user as their progress line. `log_stage` is for the
 collector, `log` is for the person watching the task.
 
 A capture is not automatically a warning. `project_repo_resolve_failed`
-with `reason: no_installation` is the ordinary state of a user who has
-not connected GitHub yet — it is an event, because that is where the
+with `reason: no_installation` or `no_repositories` is the ordinary
+state of a user who has not connected GitHub yet, or has connected it
+to nothing Camelot can see — it is an event, because that is where the
 funnel stalls, but it logs at `info`. Only reasons that describe
 something actually going wrong log at `warning`.
 

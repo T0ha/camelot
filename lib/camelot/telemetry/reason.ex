@@ -22,6 +22,7 @@ defmodule Camelot.Telemetry.Reason do
           | :missing_installation_id
           | :not_configured
           | :no_installation
+          | :no_repositories
           | :repo_not_in_installation
           | :not_found
           | :forbidden
@@ -45,6 +46,7 @@ defmodule Camelot.Telemetry.Reason do
     :missing_installation_id,
     :not_configured,
     :no_installation,
+    :no_repositories,
     :repo_not_in_installation,
     :not_found,
     :forbidden,

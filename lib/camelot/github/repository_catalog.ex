@@ -24,6 +24,12 @@ defmodule Camelot.Github.RepositoryCatalog do
   """
   @type repo :: Client.repository()
 
+  # One installation's listing. A failure is `:reported` rather than
+  # its cause because `fetch_repos/2` has already captured it — all
+  # the caller still needs to know is whether the empty list it left
+  # behind should also count as an empty grant.
+  @typep outcome :: {:ok, [repo()]} | {:error, :reported}
+
   @doc """
   Loads `user.github_installations`, drops suspended ones,
   fetches each installation's repositories, then merges,
@@ -37,14 +43,14 @@ defmodule Camelot.Github.RepositoryCatalog do
   @spec list_for_user(User.t()) :: {:ok, [repo()]} | {:error, term()}
   def list_for_user(user) do
     with {:ok, user} <- Ash.load(user, :github_installations, actor: user) do
-      live = Enum.reject(user.github_installations, &suspended?/1)
-
-      repos =
-        live
+      outcomes =
+        user.github_installations
+        |> Enum.reject(&suspended?/1)
         |> Enum.map(&fetch_repos(&1, user))
-        |> merge_repos()
 
-      report_empty(live, repos, user)
+      repos = outcomes |> Enum.map(&listed/1) |> merge_repos()
+
+      report_empty(outcomes, repos, user)
 
       {:ok, repos}
     end
@@ -68,16 +74,22 @@ defmodule Camelot.Github.RepositoryCatalog do
   # also used to make the failure invisible: a user staring at an
   # empty repository list produced no signal at all. The listing still
   # degrades silently for the user; it no longer does so for us.
+  @spec fetch_repos(Installation.t(), User.t()) :: outcome()
   defp fetch_repos(%Installation{installation_id: installation_id}, user) do
     case Client.list_installation_repositories(installation_id) do
       {:ok, repos} ->
-        repos
+        {:ok, repos}
 
       {:error, reason} ->
         capture_resolve_failed(user, reason, installation_id)
-        []
+
+        {:error, :reported}
     end
   end
+
+  @spec listed(outcome()) :: [repo()]
+  defp listed({:ok, repos}), do: repos
+  defp listed({:error, :reported}), do: []
 
   @spec capture_resolve_failed(User.t(), term(), integer() | nil) :: :ok
   defp capture_resolve_failed(user, reason, installation_id) do
@@ -102,6 +114,12 @@ defmodule Camelot.Github.RepositoryCatalog do
     Logger.info("GitHub repository listing skipped: no installation", user_id: user.id)
   end
 
+  # Nothing went wrong here either: the App is installed and holds no
+  # repository the user can pick. Same reasoning, same level.
+  defp log_resolve_failed(:no_repositories, _http_status, user, _installation_id) do
+    Logger.info("GitHub repository listing granted no repositories", user_id: user.id)
+  end
+
   defp log_resolve_failed(reason, http_status, user, installation_id) do
     Logger.warning("GitHub repository listing failed",
       user_id: user.id,
@@ -113,9 +131,31 @@ defmodule Camelot.Github.RepositoryCatalog do
 
   # No installation at all is the commonest way to reach an empty
   # picker, and the one the onboarding funnel most needs to see.
+  @spec report_empty([outcome()], [repo()], User.t()) :: :ok
   defp report_empty([], _repos, user) do
     capture_resolve_failed(user, :no_installation, nil)
   end
 
-  defp report_empty(_installations, _repos, _user), do: :ok
+  # The quietest way to reach it is not a failure at all: every
+  # installation answered, none of them with a repository the App was
+  # granted. Nothing errored, so `fetch_repos/2` reported nothing, and
+  # the user is left on `#github_repo_url` — where PostHog's dead
+  # clicks pile up — with no signal behind them.
+  defp report_empty(outcomes, [], user) do
+    outcomes
+    |> Enum.find(&match?({:error, _reason}, &1))
+    |> report_no_repositories(user)
+  end
+
+  defp report_empty(_outcomes, _repos, _user), do: :ok
+
+  # A listing that failed already reported its own bounded reason.
+  # Counting the empty list it left behind as an empty grant as well
+  # would report one picker open twice, under two different causes.
+  @spec report_no_repositories(outcome() | nil, User.t()) :: :ok
+  defp report_no_repositories(nil, user) do
+    capture_resolve_failed(user, :no_repositories, nil)
+  end
+
+  defp report_no_repositories(_failure, _user), do: :ok
 end
