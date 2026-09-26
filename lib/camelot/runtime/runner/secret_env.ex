@@ -32,7 +32,6 @@ defmodule Camelot.Runtime.Runner.SecretEnv do
   end
 
   def to_env(%{kind: :openai_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]
-  def to_env(%{kind: :codex_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]
 
   def to_env(%{kind: :github_app_token, value: v}) do
     ["GH_TOKEN=#{v}", "GITHUB_TOKEN=#{v}"]

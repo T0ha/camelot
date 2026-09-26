@@ -27,7 +27,6 @@ defmodule CamelotWeb.UserProfileLive do
   @credential_kinds [
     :claude_api_key,
     :openai_api_key,
-    :codex_api_key,
     :ssh_private_key,
     :generic
   ]
@@ -46,6 +45,16 @@ defmodule CamelotWeb.UserProfileLive do
 
     {:ok, load_state(socket)}
   end
+
+  @doc false
+  # The raw atom names don't say which agent CLI reads which key, which
+  # is how a user could pick a kind no agent was looking for and see
+  # only a bare 401 from the CLI.
+  @spec kind_label(atom()) :: String.t()
+  def kind_label(:claude_api_key), do: "claude_api_key — Claude Code"
+  def kind_label(:openai_api_key), do: "openai_api_key — Codex"
+  def kind_label(:ssh_private_key), do: "ssh_private_key — git over SSH"
+  def kind_label(kind), do: Atom.to_string(kind)
 
   @impl true
   def handle_info(:pool_changed, socket) do
@@ -503,7 +512,7 @@ defmodule CamelotWeb.UserProfileLive do
             field={@credential_form[:kind]}
             type="select"
             label="Kind"
-            options={Enum.map(@kinds, &{Atom.to_string(&1), Atom.to_string(&1)})}
+            options={Enum.map(@kinds, &{kind_label(&1), Atom.to_string(&1)})}
           />
           <.input field={@credential_form[:name]} label="Name (optional)" />
           <.input

@@ -21,10 +21,16 @@ defmodule Camelot.Accounts.Credential do
     authorizers: [],
     simple_notifiers: [Camelot.Telemetry.Notifier]
 
+  # `:codex_api_key` was retired in favour of `:openai_api_key`: both
+  # mounted the same `OPENAI_API_KEY`, nothing ever branched on the
+  # difference, and offering both made a user's choice load-bearing
+  # when it wasn't (see
+  # `20260925110000_retire_codex_api_key_credential_kind.exs`). Kinds
+  # name the provider, not the agent CLI that happens to read them —
+  # `:claude_api_key`, not `:claude_code_api_key`.
   @kinds [
     :claude_api_key,
     :openai_api_key,
-    :codex_api_key,
     :ssh_private_key,
     :generic
   ]

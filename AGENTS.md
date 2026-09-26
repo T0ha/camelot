@@ -67,6 +67,7 @@ Follow the [Elixir Style Guide](https://github.com/christopheradams/elixir_style
 - Product events go through `Camelot.Telemetry.Capture` — never `PostHog.capture` directly. Which Ash actions are events lives in `Camelot.Telemetry.Events`; failure branches classify their cause with `Camelot.Telemetry.Reason` (or `Camelot.Telemetry.TaskFailure` for a failed run) so every `reason` property is a bounded enum, never an `inspect/1` string. The full event catalogue is `docs/telemetry.md`
 - `DEPLOYMENT_ENV` names the deployment (`production` on the prod app only, mirroring the otel collector gateway). It becomes the `environment` property on every PostHog capture, server-side and in the browser, and drives `is_internal` — the two clusters share one PostHog project, so an unset value must never look like production
 - `AHREFS_ANALYTICS_KEY` renders the Ahrefs Web Analytics snippet in the app and docs layouts (`CamelotWeb.AhrefsConfig`) — set it on the production app only, since the test cluster runs the same `MIX_ENV=prod` release
+- Tasks can link to each other (`:blocks`, `:parent_of`, `:relates_to`), including across projects — see `docs/task-links.md` for gating, stacked branches and the rebase-notice flow
 
 ### Phoenix v1.8 Guidelines
 

@@ -141,6 +141,12 @@ docker node update --label-add otel_role=gateway vmic-camelotai-arm-01
 ```yaml
 TaskTemplate:
     ContainerSpec:
+      # Swarm templates this per task, so the container's hostname is the
+      # node's name. host.name then resolves correctly even when the
+      # docker detector times out at startup - which it did on the 1 GB
+      # manager, leaving that agent reporting its own container id as a
+      # host, and as a service, for a week.
+      Hostname: "{{.Node.Hostname}}"
       Mounts:
         - Source: /var/run/docker.sock
           Target: /var/run/docker.sock
@@ -282,6 +288,13 @@ Raise `OTEL_LOG_LEVEL` to `info` on either app to see pipeline activity.
   declared temporality rather than differencing, so if counters read as
   ever-growing totals in the viewer, insert a `cumulativetodelta`
   processor ahead of the exporter rather than changing the receivers.
+- **A wrong `host.name` shows up as a wrong service.** Node metrics have
+  no container, so `service.name` falls back to `host.name`. If that is
+  wrong, an impostor service appears — a bare 12-hex-character name is a
+  container short id, and means the agent on that node failed detection
+  at startup. Restarting that agent re-runs detection; the
+  `Hostname: "{{.Node.Hostname}}"` template above is what stops it
+  recurring.
 - **Corrupt log lines are forwarded, not dropped.** A disk-full event on
   2026-09-02 left a handful of truncated, spliced-together records in
   these files, and docker will do it again the next time a node fills

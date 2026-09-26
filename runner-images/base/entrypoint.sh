@@ -65,6 +65,25 @@ materialise_secrets() {
   done < <(compgen -e)
 }
 
+# Codex reads its credentials from $CODEX_HOME/auth.json, never from
+# OPENAI_API_KEY. With the key only in the environment every request
+# goes out unauthenticated and the CLI reports
+#
+#   401 Unauthorized: Missing bearer or basic authentication in header
+#
+# which reads as a bad key rather than an unused one. `codex login
+# --with-api-key` takes the key on stdin, so it never lands in argv or
+# `ps`. No-op in images without the CLI (base, elixir, python).
+codex_login() {
+  command -v codex >/dev/null 2>&1 || return 0
+
+  if printf '%s' "$1" | codex login --with-api-key >/dev/null 2>&1; then
+    log "codex login: authenticated from the mounted API key"
+  else
+    log "codex login failed; Codex runs will 401"
+  fi
+}
+
 materialise_one() {
   local kind="$1"
   local value="$2"
@@ -85,6 +104,7 @@ materialise_one() {
     openai_api_key|codex_api_key)
       export OPENAI_API_KEY="$value"
       persist_env OPENAI_API_KEY "$value"
+      codex_login "$value"
       ;;
     github_app_token)
       export GH_TOKEN="$value"
