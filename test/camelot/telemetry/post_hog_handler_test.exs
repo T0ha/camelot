@@ -273,6 +273,20 @@ defmodule Camelot.Telemetry.PostHogHandlerTest do
 
       assert Enum.any?(PostHog.Test.all_captured(), &(&1.event == "claude_token_removed"))
     end
+
+    test "removing another credential kind keeps its own, non-Claude event", ctx do
+      {:ok, credential} =
+        Ash.create(Credential, %{kind: :openai_api_key, value: "sk-test", user_id: ctx.user.id})
+
+      :ok = Ash.destroy(credential)
+
+      assert %{distinct_id: distinct_id, properties: properties} =
+               Enum.find(PostHog.Test.all_captured(), &(&1.event == "credential_removed"))
+
+      assert distinct_id == ctx.user.id
+      assert properties.kind == "openai_api_key"
+      refute Enum.any?(PostHog.Test.all_captured(), &(&1.event == "claude_token_removed"))
+    end
   end
 
   test "linking a GitHub installation is captured against its user", ctx do
@@ -291,6 +305,24 @@ defmodule Camelot.Telemetry.PostHogHandlerTest do
     assert properties.installation_id == installation.installation_id
   end
 
+  # Suspension arrives from a GitHub webhook, so there is no actor at
+  # all — the capture has to fall back to the installation's own
+  # `user_id` or the account silently drops out of the funnel.
+  test "suspending and unsuspending an installation is captured against its user", ctx do
+    installation = github_installation!(ctx.user)
+
+    {:ok, suspended} = Ash.update(installation, %{}, action: :suspend, authorize?: false)
+    {:ok, _installation} = Ash.update(suspended, %{}, action: :unsuspend, authorize?: false)
+
+    for event_name <- ["github_installation_suspended", "github_installation_unsuspended"] do
+      assert %{distinct_id: distinct_id, properties: properties} =
+               Enum.find(PostHog.Test.all_captured(), &(&1.event == event_name))
+
+      assert distinct_id == ctx.user.id
+      assert properties.installation_id == installation.installation_id
+    end
+  end
+
   test "creating an agent CLI is captured", ctx do
     assert {:ok, agent} =
              Ash.create(
@@ -305,6 +337,28 @@ defmodule Camelot.Telemetry.PostHogHandlerTest do
 
     assert %{distinct_id: distinct_id, properties: properties} =
              Enum.find(PostHog.Test.all_captured(), &(&1.event == "agent_created"))
+
+    assert distinct_id == ctx.user.id
+    assert properties.slug == agent.slug
+  end
+
+  test "editing an agent CLI is captured separately from creating one", ctx do
+    {:ok, agent} =
+      Ash.create(
+        Agent,
+        %{
+          slug: "agent-#{System.unique_integer([:positive])}",
+          name: "Test agent",
+          executable: "claude"
+        },
+        actor: ctx.user
+      )
+
+    assert {:ok, _agent} =
+             Ash.update(agent, %{name: "Renamed agent"}, action: :update, actor: ctx.user)
+
+    assert %{distinct_id: distinct_id, properties: properties} =
+             Enum.find(PostHog.Test.all_captured(), &(&1.event == "agent_updated"))
 
     assert distinct_id == ctx.user.id
     assert properties.slug == agent.slug
@@ -327,6 +381,30 @@ defmodule Camelot.Telemetry.PostHogHandlerTest do
 
     assert properties.stage == :clone
     assert properties.reason == :git_auth_failed
+  end
+
+  # A lost runner is infrastructure, not the agent, and used to be
+  # indistinguishable from `task_errored` — it gets its own event so
+  # the two failure populations can be counted apart.
+  test "task_runner_lost is its own event and carries the same bounded pair", ctx do
+    {:ok, task} =
+      Ash.create(Task, %{
+        title: "Lost runner",
+        project_id: ctx.project.id,
+        creator_id: ctx.user.id,
+        agent_id: agent!("claude_code").id
+      })
+
+    {:ok, _task} =
+      Ash.update(task, %{last_error: "Swarm could not provision a node for this task"}, action: :mark_runner_lost)
+
+    assert %{distinct_id: distinct_id, properties: properties} =
+             Enum.find(PostHog.Test.all_captured(), &(&1.event == "task_runner_lost"))
+
+    assert distinct_id == ctx.user.id
+    assert properties.stage == :boot
+    assert properties.reason == :provision_failed
+    refute Enum.any?(PostHog.Test.all_captured(), &(&1.event == "task_errored"))
   end
 
   test "project_created says whether the creator could actually run it", _ctx do

@@ -191,6 +191,12 @@ test process — those tests use `setup_all {PostHog.Test,
 :set_posthog_shared}` and `async: false` (see
 `test/camelot_web/live/project_telemetry_test.exs`).
 
+The catalogue is matched to actions by *name*, so renaming an action
+or dropping a resource's notifier would take its event off the air
+without breaking the build. `test/camelot/telemetry/events_test.exs`
+guards both: every `{resource, action}` pair must resolve to a real
+action on a resource that registers `Camelot.Telemetry.Notifier`.
+
 ## Not here yet
 
 OpenTelemetry traces and application metrics (sections 2 and 3 of
