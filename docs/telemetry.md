@@ -159,6 +159,17 @@ link it actually made: an installation already owned by this user
 emits nothing, and the `:link_user` Ash update is skipped so
 `github_installation_linked` counts links rather than logins.
 
+For the same reason `github_setup_failed` is reported **once per
+sync**, and only when the sync left the user with no installation of
+their own — neither newly linked nor already theirs. GitHub's
+`/user/installations` keeps returning an org installation another
+Camelot account owns, so a capture per payload would re-report the
+same unclaimable installation at every login, and would report a user
+who linked their own installation in that very sync as connected and
+failed at once. Each skipped installation is still logged
+individually (`info`, with its `installation_id`) — that is what the
+log line is for.
+
 `reason` is a `Camelot.Telemetry.Reason` value:
 `missing_state`, `not_authenticated`, `actor_mismatch`,
 `invalid_state`, `expired_state`, `invalid_installation_id`,

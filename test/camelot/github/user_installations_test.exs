@@ -32,6 +32,12 @@ defmodule Camelot.Github.UserInstallationsTest do
     Enum.filter(PostHog.Test.all_captured(), &(&1.event == event))
   end
 
+  # Several of these tests link installations for two different users
+  # in one test process, so "was this captured" has to name whose.
+  defp captured(event, %User{id: id}) do
+    Enum.filter(captured(event), &(&1.distinct_id == id))
+  end
+
   defp installation!(installation_id) do
     Installation
     |> Ash.Query.filter(installation_id == ^installation_id)
@@ -141,6 +147,55 @@ defmodule Camelot.Github.UserInstallationsTest do
       assert distinct_id == newcomer.id
       assert properties.reason == :link_failed
       assert properties.http_status == nil
+    end
+
+    # An org installation another Camelot account owns stays in this
+    # user's `/user/installations` response for good, so a per-payload
+    # capture would report the *same* login as both connected and
+    # failed, then repeat the failure at every login afterwards.
+    test "reports no failure when something did end up the user's" do
+      owner = seed_user!("owner-mixed@example.com")
+      newcomer = seed_user!("newcomer-mixed@example.com")
+      taken = unique_id()
+      own = unique_id()
+
+      assert :ok = UserInstallations.link([payload(taken)], owner)
+      assert :ok = UserInstallations.link([payload(taken), payload(own)], newcomer)
+
+      assert [_succeeded] = captured("github_setup_succeeded", newcomer)
+      assert [] = captured("github_setup_failed", newcomer)
+    end
+
+    # The funnel question is "did this login leave them connected?",
+    # which an already-linked installation answers with yes.
+    test "reports no failure on a later login by a connected user" do
+      owner = seed_user!("owner-repeat@example.com")
+      newcomer = seed_user!("newcomer-repeat@example.com")
+      taken = unique_id()
+      own = unique_id()
+      payloads = [payload(taken), payload(own)]
+
+      assert :ok = UserInstallations.link([payload(taken)], owner)
+      assert :ok = UserInstallations.link(payloads, newcomer)
+      assert :ok = UserInstallations.link(payloads, newcomer)
+      assert :ok = UserInstallations.link(payloads, newcomer)
+
+      assert [] = captured("github_setup_failed", newcomer)
+    end
+
+    # One sync, one verdict: two unclaimable installations are a
+    # single failed connect, not two.
+    test "reports one failure per sync, not one per installation" do
+      owner = seed_user!("owner-single@example.com")
+      newcomer = seed_user!("newcomer-single@example.com")
+      first = unique_id()
+      second = unique_id()
+
+      assert :ok = UserInstallations.link([payload(first), payload(second)], owner)
+      assert :ok = UserInstallations.link([payload(first), payload(second)], newcomer)
+
+      assert [%{properties: %{reason: :link_failed}}] =
+               captured("github_setup_failed", newcomer)
     end
 
     test "handles an empty list" do
