@@ -121,6 +121,30 @@ properties `onboarding_next_step`, `github_connected`,
 `has_claude_token`, `has_project`, `has_task`, so the "stuck at step
 X" cohort is a person-property filter with no joins.
 
+Those two events are not enough on their own to keep the cohort
+honest, so **every connected mount with onboarding outstanding
+restates them**, as a bare `$set` — PostHog's own person-update event,
+which carries no product meaning and so stays out of the funnels built
+on the events around it. Both of the other writers stop for exactly
+the users who engage with the guide:
+
+* clicking a step dismisses the guide, and a dismissed guide never
+  auto-opens again, so `onboarding_shown` stops;
+* three of the four steps finish across a navigation or a full page
+  redirect — GitHub connect redirects to `/profile`, project creation
+  `push_navigate`s — so the next mount recomputes the status from
+  scratch and `refresh/1` has no `false -> true` flip left to see.
+
+Without the restatement those users would show as stuck at a step they
+had already finished. `onboarding_step_completed` still only fires on
+a flip the hook actually observes, which needs the step to complete in
+the same LiveView process: `/profile` and the board both nudge the
+guide with `send(self(), {:onboarding, :refresh})` after completing
+one — the convention `AGENTS.md` documents.
+
+Re-opening the guide from the setup strip captures `onboarding_shown`
+too; it is the only impression a dismissed guide can still produce.
+
 Clicking a step dismisses the guide as a side effect, so
 `onboarding_dismissed` fires for the most engaged action the guide
 offers as well as for genuine abandonment. `via` separates the two:

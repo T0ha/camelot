@@ -85,6 +85,11 @@ defmodule CamelotWeb.UserProfileLive do
     case Ash.create(Credential, Map.put(attrs, :user_id, socket.assigns.current_user.id)) do
       {:ok, cred} ->
         SecretSync.reconcile(socket.assigns.current_user.id, cred.kind)
+        # A Claude key is one of the setup guide's four steps, and this
+        # is the only place it gets added. Without the nudge the strip
+        # keeps showing it outstanding until the next navigation, and
+        # `onboarding_step_completed` never sees the transition at all.
+        send(self(), {:onboarding, :refresh})
 
         {:noreply,
          socket

@@ -43,7 +43,7 @@ defmodule CamelotWeb.OnboardingHook do
     socket
     |> apply_status(user, Onboarding.status(user))
     |> attach_guide_hooks(user)
-    |> capture_shown(user)
+    |> report_progress(user)
   end
 
   defp install(socket, _anonymous), do: socket
@@ -61,14 +61,10 @@ defmodule CamelotWeb.OnboardingHook do
   defp attach_guide_hooks(socket, _user), do: socket
 
   # Only on the connected mount: the dead render would double every
-  # impression, and a disconnected client never saw the modal.
-  defp capture_shown(%Socket{assigns: %{onboarding: %Status{} = status, onboarding_modal?: true}} = socket, user) do
+  # impression, and a disconnected client never saw the guide.
+  defp report_progress(%Socket{assigns: %{onboarding: %Status{} = status}} = socket, user) do
     if connected?(socket) do
-      capture(
-        "onboarding_shown",
-        user,
-        Map.put(status_properties(status), "$set", person_properties(status))
-      )
+      capture_progress(socket.assigns.onboarding_modal?, status, user)
     else
       :ok
     end
@@ -76,7 +72,34 @@ defmodule CamelotWeb.OnboardingHook do
     socket
   end
 
-  defp capture_shown(socket, _user), do: socket
+  defp report_progress(socket, _user), do: socket
+
+  # The person properties are the whole basis of the "stuck at step X"
+  # cohort, so they have to keep up with a user who is moving — and
+  # the modal is not a reliable moment to restate them. Clicking a
+  # step dismisses the guide, after which it never auto-opens again,
+  # and three of the four steps finish across a navigation or a full
+  # page redirect, where `refresh/1` recomputes from scratch and has
+  # no `false -> true` flip left to see. Left on the impression alone,
+  # the cohort would show everyone who engaged with the guide stuck at
+  # a step they had already finished.
+  #
+  # A strip-only render is not an impression, so it restates the
+  # person and nothing else: `$set` is PostHog's own person-update
+  # event and carries no product meaning, which keeps it out of every
+  # funnel built on the events around it.
+  @spec capture_progress(boolean(), Status.t(), User.t()) :: :ok
+  defp capture_progress(true, status, user) do
+    capture(
+      "onboarding_shown",
+      user,
+      Map.put(status_properties(status), "$set", person_properties(status))
+    )
+  end
+
+  defp capture_progress(false, status, user) do
+    capture("$set", user, %{"$set" => person_properties(status)})
+  end
 
   # A user who arrives with everything already done — an
   # account that predates the guide, say — is stamped as
@@ -103,6 +126,15 @@ defmodule CamelotWeb.OnboardingHook do
 
   defp handle_event("onboarding_dismiss", _params, socket) do
     {:halt, dismiss(socket, "close")}
+  end
+
+  # Re-opening the guide from the strip puts it back in front of the
+  # user, so it is an impression like any other — and the only one a
+  # dismissed guide can still produce.
+  defp handle_event("onboarding_open", _params, %Socket{assigns: %{onboarding: %Status{} = status}} = socket) do
+    capture_progress(true, status, socket.assigns.current_user)
+
+    {:halt, assign(socket, onboarding_modal?: true)}
   end
 
   defp handle_event("onboarding_open", _params, socket) do
