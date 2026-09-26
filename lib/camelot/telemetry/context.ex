@@ -36,8 +36,15 @@ defmodule Camelot.Telemetry.Context do
   def production?, do: environment() == @production
 
   @doc """
-  Properties merged into every capture made through
+  Properties every capture carries, whether or not it went through
   `Camelot.Telemetry.Capture`.
+
+  Nothing in this application merges them. They are configured into
+  the PostHog instance in `config/runtime.exs`, which cannot call this
+  function — `config/2` there has not been applied yet — so the two
+  are pinned together by `Camelot.Telemetry.ContextTest` instead. This
+  function is the definition; that test is what keeps the config
+  equal to it.
   """
   @spec global_properties() :: %{environment: String.t()}
   def global_properties, do: %{environment: environment()}

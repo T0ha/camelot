@@ -1,6 +1,7 @@
 defmodule Camelot.Telemetry.ContextTest do
   use ExUnit.Case, async: false
 
+  alias Camelot.Telemetry.Capture
   alias Camelot.Telemetry.Context
 
   setup do
@@ -71,6 +72,39 @@ defmodule Camelot.Telemetry.ContextTest do
     test "falls back to the Mix environment outside a release" do
       assert Context.environment() == "test"
       refute Context.production?()
+    end
+  end
+
+  # `environment` does not reach the wire through anything this module
+  # merges. The library merges the PostHog instance's configured
+  # `global_properties` *last* (`deps/posthog/lib/posthog.ex`), after
+  # the caller's own, so the `config :posthog, global_properties:`
+  # block in `config/runtime.exs` is the only thing deciding whether
+  # the acceptance criterion's `environment = production` filter
+  # matches anything at all.
+  #
+  # That block is introduced there for backend `$exception`s and
+  # documented as such, so it reads as error-tracking-only: removing
+  # it would silently take `environment` off every product event too,
+  # with nothing failing. These two tests are what fails instead.
+  describe "the PostHog instance's global properties" do
+    test "carry what this module defines" do
+      configured = PostHog.Registry.config(PostHog).global_properties
+
+      for {key, value} <- Context.global_properties() do
+        assert configured[key] == value,
+               "config :posthog, global_properties: must carry " <>
+                 "#{inspect(key)} => #{inspect(value)}, the value " <>
+                 "Camelot.Telemetry.Context defines"
+      end
+    end
+
+    test "reach a capture, and a caller cannot forge one" do
+      Capture.capture("global_properties_probe", "person-1", %{environment: "forged"})
+
+      assert [event] = Enum.filter(PostHog.Test.all_captured(), &(&1.event == "global_properties_probe"))
+
+      assert event.properties[:environment] == Context.environment()
     end
   end
 end

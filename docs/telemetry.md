@@ -375,6 +375,17 @@ close the gap:
 | `global_properties: %{environment: …}` | otherwise a backend crash carries no `environment` at all, and the two clusters stay mixed in exactly the way the rest of this document exists to prevent |
 | `metadata: […]` | the handler reports only the `Logger` metadata keys named here, so `user_id` / `task_id` / `project_id` / `worker` / `queue` reach the exception |
 
+`global_properties` is not error-tracking-only, despite living in this
+section: the library merges it into **every** capture, product events
+included, and it does so *last* — after the caller's own properties.
+So this one config line is what decides whether `environment =
+production` matches anything at all, and a caller cannot override it.
+Nothing in `lib/` merges `environment`; `Camelot.Telemetry.Context.global_properties/0`
+defines the value and `Camelot.Telemetry.ContextTest` pins the config
+to it, from both ends — the configured properties must equal what the
+module defines, and a capture must carry that value rather than one a
+caller passed.
+
 `distinct_id` is always included, and decides *whose* crash it is.
 `Camelot.Telemetry.Context.put_person_metadata/1` is the one writer —
 it sets `user_id` and `distinct_id` together so the logs and error

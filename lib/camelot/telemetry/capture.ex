@@ -4,10 +4,18 @@ defmodule Camelot.Telemetry.Capture do
 
   Everything that captures — the Ash notifier handler
   (`Camelot.Telemetry.PostHogHandler`), controllers and LiveViews —
-  goes through here, so the global properties
-  (`Camelot.Telemetry.Context.global_properties/0`) and the process's
-  own `PostHog` context are merged in exactly once, and a capture with
-  no `distinct_id` is dropped rather than creating an anonymous person.
+  goes through here, so the process's own `PostHog` context is merged
+  in exactly once and a capture with no `distinct_id` is dropped
+  rather than creating an anonymous person.
+
+  The global properties (`Camelot.Telemetry.Context.global_properties/0`)
+  are deliberately *not* merged here. They are configured into the
+  PostHog instance itself (`config :posthog, global_properties:` in
+  `config/runtime.exs`), and the library merges them last — after the
+  caller's own — on every capture, including the backend `$exception`s
+  that never reach this module. Merging them here as well would be
+  dead code that reads like the control point: a change to
+  `global_properties/0` alone would have no effect on anything.
 
   The context is read with `PostHog.get_event_context/1` rather than
   `PostHog.get_context/0`. Both include the process-wide (`:all`)
@@ -18,8 +26,11 @@ defmodule Camelot.Telemetry.Capture do
   later capture from a long-lived LiveView process, frozen at the
   value it had when it was written.
 
-  Precedence, lowest to highest: process context, global properties,
-  the caller's explicit properties.
+  Precedence, lowest to highest: process context, the caller's
+  explicit properties, and — above both, applied by the library — the
+  configured global properties. A caller therefore cannot override
+  `environment`, which is the point: it names the cluster, not the
+  event.
   """
 
   alias Camelot.Accounts.User
@@ -48,7 +59,6 @@ defmodule Camelot.Telemetry.Capture do
   def capture(event, distinct_id, properties) do
     event
     |> PostHog.get_event_context()
-    |> Map.merge(Context.global_properties())
     |> Map.merge(properties)
     |> then(&PostHog.bare_capture(event, distinct_id, &1))
 

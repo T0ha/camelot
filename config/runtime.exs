@@ -179,15 +179,23 @@ deployment_environment =
 
 config :camelot, :telemetry, environment: deployment_environment
 
-# PostHog's error-tracking logger handler captures anything logged
-# with a `crash_reason` — a LiveView crash, a GenServer crash, the
-# Oban job failures `Camelot.Telemetry.JobFailures` reports — through
-# `PostHog.bare_capture/4`. That bypasses `Camelot.Telemetry.Capture`,
-# so without these two options a backend crash carries no
-# `environment` (leaving the two clusters mixed in the exact way this
-# whole configuration exists to prevent) and none of the ids the
-# application puts in `Logger.metadata`. `distinct_id` is always
-# included, and is what decides whose crash it is.
+# `global_properties` is merged by the library into *every* capture —
+# product events as much as the backend `$exception`s below — and is
+# merged last, so it overrides the caller. Nothing in `lib/` adds
+# `environment`: this line is the only thing putting it on the wire,
+# and removing it would leave the two clusters mixed in the exact way
+# this whole configuration exists to prevent. It is pinned to
+# `Camelot.Telemetry.Context.global_properties/0` by
+# `Camelot.Telemetry.ContextTest`.
+#
+# `metadata` is what the error-tracking half needs. PostHog's logger
+# handler captures anything logged with a `crash_reason` — a LiveView
+# crash, a GenServer crash, the Oban job failures
+# `Camelot.Telemetry.JobFailures` reports — through
+# `PostHog.bare_capture/4`, which bypasses `Camelot.Telemetry.Capture`
+# and so carries none of the ids the application puts in
+# `Logger.metadata` unless they are named here. `distinct_id` is
+# always included, and is what decides whose crash it is.
 config :posthog,
   global_properties: %{environment: deployment_environment},
   metadata: [
