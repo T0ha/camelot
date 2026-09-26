@@ -154,11 +154,35 @@ invalid_integer` — never the message, which would embed user input.
 
 `task_errored.stage` ∈ `clone | boot | plan | execute | pr` and
 `reason` ∈ `git_auth_failed | image_pull_failed | provision_failed |
-agent_exit_nonzero | empty_plan | no_pr_url | interrupted | timeout |
-unexplained`, classified by `Camelot.Telemetry.TaskFailure` from the
-task's `stage` and `last_error`. Unrecognised wording degrades to
-`unexplained` rather than leaking a string, so new runner failure
-messages land there until a pattern is added.
+runner_died | agent_exit_nonzero | empty_plan | empty_output |
+interrupted | timeout | unexplained`, classified by
+`Camelot.Telemetry.TaskFailure` from the task's `stage` and
+`last_error`. Unrecognised wording degrades to `unexplained` rather
+than leaking a string, so new runner failure messages land there
+until a pattern is added.
+
+Each reason maps to a message `Camelot.Runtime.TaskRunner` or
+`Camelot.Board.Interruption` actually writes — they are the only two
+writers of `last_error`:
+
+| `reason` | Written when |
+|---|---|
+| `git_auth_failed` | the entrypoint's clone could not authenticate |
+| `image_pull_failed` | the runner image could not be pulled |
+| `provision_failed` | no runner could be started for the task |
+| `runner_died` | the runner exited before streaming any output |
+| `agent_exit_nonzero` | the agent exited non-zero with no reason |
+| `empty_plan` | a planning run produced no plan |
+| `empty_output` | the agent produced no output (after its retries) |
+| `interrupted` | a run was interrupted, or hit the re-queue cap |
+| `timeout` | a run exceeded its time budget |
+
+`task_failure_test.exs` pins this table from both ends: each of those
+messages must classify, and each advertised reason must be reachable
+from one of them. A reason nothing can produce is documentation for a
+failure that cannot happen, and re-wording a runner message without
+re-classifying it silently moves that failure into `unexplained` —
+both fail the test rather than the funnel.
 
 ## The funnel
 

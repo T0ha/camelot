@@ -26,9 +26,10 @@ defmodule Camelot.Telemetry.TaskFailure do
           :git_auth_failed
           | :image_pull_failed
           | :provision_failed
+          | :runner_died
           | :agent_exit_nonzero
           | :empty_plan
-          | :no_pr_url
+          | :empty_output
           | :interrupted
           | :timeout
           | :unexplained
@@ -47,25 +48,38 @@ defmodule Camelot.Telemetry.TaskFailure do
     :git_auth_failed,
     :image_pull_failed,
     :provision_failed,
+    :runner_died,
     :agent_exit_nonzero,
     :empty_plan,
-    :no_pr_url,
+    :empty_output,
     :interrupted,
     :timeout,
     :unexplained
   ]
 
   # Matched in order, first hit wins, so the specific causes come
-  # before the generic "it exited badly" catch.
+  # before the generic "it exited badly" catch. A dead runner's
+  # container log tail is *prepended* to the generic summary by
+  # `TaskRunner.runner_died_message/2`, which is why the causes that
+  # only ever appear in such a tail are matched ahead of it.
+  #
+  # Every needle below is taken from a message the application really
+  # writes: `Camelot.Runtime.TaskRunner` and
+  # `Camelot.Board.Interruption` are the only two writers of
+  # `last_error`. A reason with no writer would be a promise the
+  # funnel cannot keep, so `task_failure_test.exs` pins both halves —
+  # each real message classifies, and each advertised reason is
+  # reachable.
   @patterns [
     {["authentication failed", "could not read username", "invalid username or token", "permission denied (publickey)"],
      :git_auth_failed},
     {["pull access denied", "manifest unknown", "no such image", "image pull"], :image_pull_failed},
-    {["no suitable node", "could not provision", "failed to provision"], :provision_failed},
+    {["no suitable node", "could not provision", "failed to provision", "failed to start"], :provision_failed},
     {["without producing a plan"], :empty_plan},
-    {["interrupted because"], :interrupted},
+    {["without producing any output"], :empty_output},
+    {["interrupted because", "runner was interrupted"], :interrupted},
     {["timed out", "timeout"], :timeout},
-    {["pr url", "pull request url"], :no_pr_url},
+    {["exited before producing output"], :runner_died},
     {["non-zero status", "exit code", "exited with"], :agent_exit_nonzero}
   ]
 
