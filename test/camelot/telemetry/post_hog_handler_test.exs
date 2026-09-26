@@ -468,21 +468,47 @@ defmodule Camelot.Telemetry.PostHogHandlerTest do
     refute Enum.any?(PostHog.Test.all_captured(), &(&1.event == "task_errored"))
   end
 
-  test "project_created says whether the creator could actually run it", _ctx do
-    actor = user!()
+  # `has_github_installation` is what separates "made a project" from
+  # "made a project that can actually run", so it has to be pinned
+  # from both ends: a property that is always false measures nothing,
+  # and one that is true whenever *anybody* has connected the App
+  # would report the whole cohort as equipped.
+  describe "project_created's has_github_installation" do
+    test "is false when the creator has connected nothing", _ctx do
+      actor = user!()
 
-    {:ok, _project} =
-      Ash.create(
-        Project,
-        %{name: "posthog-installations-#{System.unique_integer([:positive])}"},
-        actor: actor
-      )
+      create_project!(actor)
 
-    assert %{properties: properties} =
-             Enum.find(PostHog.Test.all_captured(), &(&1.event == "project_created"))
+      assert project_created_properties().has_github_installation == false
+      assert project_created_properties().has_github_repo == false
+    end
 
-    assert properties.has_github_installation == false
-    assert properties.has_github_repo == false
+    test "is true when the creator has a live installation", _ctx do
+      actor = user!()
+      github_installation!(actor)
+
+      create_project!(actor)
+
+      assert project_created_properties().has_github_installation == true
+    end
+
+    test "is false when the only installation is another user's", _ctx do
+      actor = user!()
+      github_installation!(user!())
+
+      create_project!(actor)
+
+      assert project_created_properties().has_github_installation == false
+    end
+
+    test "is false when the creator's installation is suspended", _ctx do
+      actor = user!()
+      github_installation!(actor, %{suspended_at: DateTime.utc_now()})
+
+      create_project!(actor)
+
+      assert project_created_properties().has_github_installation == false
+    end
   end
 
   test "a malformed notification is swallowed instead of detaching the handler", _ctx do
@@ -523,5 +549,23 @@ defmodule Camelot.Telemetry.PostHogHandlerTest do
       PostHog.Test.all_captured(),
       &(&1.event == "user_signed_up" and &1.distinct_id == user_id)
     )
+  end
+
+  defp create_project!(actor) do
+    {:ok, project} =
+      Ash.create(
+        Project,
+        %{name: "posthog-installations-#{System.unique_integer([:positive])}"},
+        actor: actor
+      )
+
+    project
+  end
+
+  defp project_created_properties do
+    assert %{properties: properties} =
+             Enum.find(PostHog.Test.all_captured(), &(&1.event == "project_created"))
+
+    properties
   end
 end

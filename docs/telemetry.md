@@ -258,6 +258,14 @@ installed on their personal account who points a project at an org
 repo gets `has_github_installation: true` and a
 `project_repo_resolve_failed` with `repo_not_in_installation`.
 
+"Any live installation" still means *the creator's own*, and suspended
+does not count — the same reading of "connected" that `Onboarding`,
+`RepositoryCatalog` and `Resolver` use. A property that were true
+whenever anybody had connected the App would report the whole cohort
+as equipped, which is the opposite of what this event is for, so the
+tests pin it from both ends: another user's installation and a
+suspended one must both read `false`.
+
 `project_create_failed.error_codes` are the short names of Ash error
 structs (`required`, `invalid_attribute`, …) or, for the advanced
 override fields, `not_json_object \| invalid_json \|
