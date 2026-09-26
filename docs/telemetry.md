@@ -42,12 +42,19 @@ Every capture, server-side and browser-side, carries:
 
 | Property | Source |
 |---|---|
-| `environment` | `DEPLOYMENT_ENV` (`config :camelot, :telemetry`), mirroring the otel collector gateway. Defaults to the **non**-production value so an unset variable never invents production data |
+| `environment` | `DEPLOYMENT_ENV` (`config :camelot, :telemetry`), the same variable *and the same unset default* as the otel collector gateway (`${env:DEPLOYMENT_ENV:-test}`) |
 | `is_internal` | `Camelot.Telemetry.Context.internal?/1` — true outside production, or for a maintainer email. Client domains are *not* internal |
 
-Set `DEPLOYMENT_ENV=production` on the production CapRover app only;
-the test cluster runs the same release, and leaving it unset is what
-keeps staging traffic out of the funnel.
+Set `DEPLOYMENT_ENV=production` on the production CapRover app only.
+Both clusters run the same `MIX_ENV=prod` release, so `config_env()`
+cannot tell them apart and is deliberately *not* the fallback: it
+would label staging and production alike, leaving the shared PostHog
+project as mixed as it was before this existed, with
+`environment = production` matching nothing. Unset means `test`,
+which is also what the collector reports for the same box — so a
+PostHog capture and its OTLP data name the same cluster.
+`config/runtime.exs` and `otel-collector/gateway.yaml` are pinned to
+each other by a test in `test/camelot/telemetry/context_test.exs`.
 
 The browser gets both as PostHog super-properties
 (`assets/js/posthog_client.js`), so autocaptured events —
@@ -124,7 +131,8 @@ cannot delete: a process-wide write would stamp one guide's
 `reason` is a `Camelot.Telemetry.Reason` value:
 `missing_state`, `not_authenticated`, `actor_mismatch`,
 `invalid_state`, `expired_state`, `invalid_installation_id`,
-`not_configured`, `no_installation`, `repo_not_in_installation`,
+`missing_installation_id`, `not_configured`, `no_installation`,
+`repo_not_in_installation`,
 `not_found`, `forbidden`, `rate_limited`, `http_error`,
 `transport_error`, `upsert_failed`, `link_failed`, `invalid_json`,
 `invalid_integer`, `unknown`.

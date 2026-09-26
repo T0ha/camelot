@@ -99,9 +99,10 @@ config :camelot, :runner,
   redeploy_wait_ms: 60_000
 
 # Global properties on every PostHog capture. `environment` keeps the
-# test cluster and production apart (they share one PostHog project) and
-# mirrors the collector's DEPLOYMENT_ENV; the default is deliberately
-# non-production so an unset env var never invents production data.
+# test cluster and production apart (they share one PostHog project);
+# `config/runtime.exs` resolves it from DEPLOYMENT_ENV, the same
+# variable and the same unset default as the collector gateway, so only
+# the production app ever reports itself as production.
 # The internal-email pattern is a string, not a Regex: a release's
 # sys.config cannot serialise a compiled regex.
 config :camelot, :telemetry,

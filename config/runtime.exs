@@ -159,10 +159,25 @@ if posthog_api_key = System.get_env("POSTHOG_API_KEY") do
     api_host: System.get_env("POSTHOG_API_HOST", "https://us.i.posthog.com")
 end
 
-# Deployment environment name, mirroring the otel collector gateway's
-# DEPLOYMENT_ENV so PostHog captures and OTLP data agree on which
-# cluster they came from. Unset means "not production" on purpose.
-config :camelot, :telemetry, environment: System.get_env("DEPLOYMENT_ENV", to_string(config_env()))
+# Deployment environment name. Both clusters run the same MIX_ENV=prod
+# release, so `config_env()` cannot tell test.camelotai.tech from
+# app.camelotai.tech — falling back to it would label them both "prod"
+# and leave the shared PostHog project exactly as mixed as it is today,
+# with `environment = production` matching nothing at all.
+#
+# DEPLOYMENT_ENV is the only thing that can tell them apart, and the
+# unset default is the *gateway's* own default
+# (`${env:DEPLOYMENT_ENV:-test}`, otel-collector/gateway.yaml), so a
+# capture and the collector's data for the same box name the same
+# cluster. Set DEPLOYMENT_ENV=production on the production app only.
+deployment_environment =
+  case {System.get_env("DEPLOYMENT_ENV"), config_env()} do
+    {nil, :prod} -> "test"
+    {nil, mix_env} -> to_string(mix_env)
+    {name, _mix_env} -> name
+  end
+
+config :camelot, :telemetry, environment: deployment_environment
 
 # Ahrefs Web Analytics. Set AHREFS_ANALYTICS_KEY on the production app
 # only: the test cluster runs the same MIX_ENV=prod release, so leaving

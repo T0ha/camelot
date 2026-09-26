@@ -19,6 +19,7 @@ defmodule Camelot.Telemetry.Reason do
           | :invalid_state
           | :expired_state
           | :invalid_installation_id
+          | :missing_installation_id
           | :not_configured
           | :no_installation
           | :repo_not_in_installation
@@ -41,6 +42,7 @@ defmodule Camelot.Telemetry.Reason do
     :not_authenticated,
     :actor_mismatch,
     :invalid_installation_id,
+    :missing_installation_id,
     :not_configured,
     :no_installation,
     :repo_not_in_installation,

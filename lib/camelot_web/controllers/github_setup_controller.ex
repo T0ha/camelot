@@ -47,8 +47,13 @@ defmodule CamelotWeb.GithubSetupController do
     end
   end
 
+  # GitHub comes back here with no installation_id when the install
+  # never happened — an org owner has to approve it first, or the user
+  # backed out of the install screen. That is a funnel stop of its own,
+  # and reporting it as `invalid_installation_id` would blame a parse
+  # that was never attempted.
   def new(conn, _params) do
-    report_failure(conn.assigns[:current_user], :invalid_installation_id)
+    report_failure(conn.assigns[:current_user], :missing_installation_id)
 
     conn
     |> put_flash(:error, "Missing installation_id from GitHub.")

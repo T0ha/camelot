@@ -94,12 +94,15 @@ defmodule CamelotWeb.GithubSetupControllerTest do
       assert %{properties: %{reason: :invalid_installation_id}} = captured_failure()
     end
 
-    test "a callback with no installation_id at all is still counted", ctx do
+    # An install that needs an org owner's approval, or one the user
+    # backed out of, comes back with no installation_id at all — a
+    # different place to lose someone than an id we could not parse.
+    test "a callback with no installation_id at all is its own reason", ctx do
       %{conn: conn} = register_and_log_in_user(ctx)
 
       get(conn, ~p"/github/setup")
 
-      assert %{properties: %{reason: :invalid_installation_id}} = captured_failure()
+      assert %{properties: %{reason: :missing_installation_id}} = captured_failure()
     end
   end
 

@@ -11,6 +11,7 @@ defmodule Camelot.Telemetry.ReasonTest do
             :not_authenticated,
             :actor_mismatch,
             :invalid_installation_id,
+            :missing_installation_id,
             :not_configured
           ] do
         assert Reason.classify(reason) == {reason, nil}
@@ -49,6 +50,7 @@ defmodule Camelot.Telemetry.ReasonTest do
         :not_authenticated,
         :actor_mismatch,
         :invalid_installation_id,
+        :missing_installation_id,
         :not_configured,
         :no_installation,
         :invalid,
