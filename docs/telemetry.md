@@ -169,6 +169,31 @@ cannot delete: a process-wide write would stamp one guide's
 | `github_installation_suspended` / `_unsuspended` | `installation_id` |
 | `project_repo_resolve_failed` | `reason`, `http_status` |
 
+`project_repo_resolve_failed` also has two capture points, for the two
+ways a repository can turn out to be unreachable.
+`Camelot.Github.RepositoryCatalog` reports the picker's view — an
+installation whose repository listing errored (`http_status` set), or
+no installation at all. `CamelotWeb.ProjectLive.Index` reports the
+saved project's own owner, on create **and** on update, since the
+`:update` action accepts `github_owner` too.
+
+That second one is `repo_not_in_installation`, and it is the answer to
+a failure that used to surface only as `[entrypoint] cloning …
+Authentication failed` on a task page. The form accepts any
+`github_repo_url`; `Camelot.Github.Resolver.installation_id/2` then
+falls back to the sole installation when nothing matches the owner's
+login, so the runner mints a token for an account that does not hold
+the repository and the clone is rejected. `Resolver.owner_coverage/2`
+deliberately has no such fallback — it answers whether the owner was
+ever installed, which is the question a drop-off needs — and a
+suspended installation is not coverage, matching what "connected"
+means in `CamelotWeb.Onboarding` and `RepositoryCatalog`.
+
+So a `task_errored` with `stage: clone, reason: git_auth_failed` is
+expected to have a `project_repo_resolve_failed` with `reason:
+repo_not_in_installation` against the same project behind it; the pair
+is what turns that error alert into a cause.
+
 `github_setup_succeeded` has two capture points, because GitHub can
 be connected two ways. `CamelotWeb.GithubSetupController` handles the
 profile's "Connect GitHub App" round-trip, and
@@ -225,6 +250,13 @@ every signup is skipped — it is not something the user did.
 | `task_created`, `task_started`, `task_plan_submitted`, `task_plan_approved`, `task_pr_created`, `task_completed`, `task_cancelled` | `data_id` |
 | `task_form_blocked` | `reason` (`no_project \| no_agent`) |
 | `task_errored` / `task_runner_lost` | `stage`, `reason` |
+
+`project_created.has_github_installation` asks only whether the
+creator had *any* live installation — not whether it covers this
+project's repository. The two disagree often enough to matter: a user
+installed on their personal account who points a project at an org
+repo gets `has_github_installation: true` and a
+`project_repo_resolve_failed` with `repo_not_in_installation`.
 
 `project_create_failed.error_codes` are the short names of Ash error
 structs (`required`, `invalid_attribute`, …) or, for the advanced

@@ -6,6 +6,8 @@ defmodule CamelotWeb.ProjectLive.Index do
 
   import CamelotWeb.OnboardingComponents
 
+  alias Camelot.Accounts.User
+  alias Camelot.Github.Resolver
   alias Camelot.Projects.Project
   alias Camelot.Telemetry.Capture
   alias Camelot.Telemetry.Reason
@@ -16,6 +18,7 @@ defmodule CamelotWeb.ProjectLive.Index do
   alias Phoenix.LiveView.Socket
 
   require Ash.Query
+  require Logger
 
   @impl true
   @spec mount(map(), map(), Socket.t()) ::
@@ -140,7 +143,9 @@ defmodule CamelotWeb.ProjectLive.Index do
 
   defp save_project(socket, :new, params) do
     case Ash.create(Project, params, action: :create, actor: socket.assigns.current_user) do
-      {:ok, _project} ->
+      {:ok, project} ->
+        report_repo_resolution(socket, project)
+
         {:noreply,
          socket
          |> put_flash(:info, "Project created")
@@ -155,7 +160,9 @@ defmodule CamelotWeb.ProjectLive.Index do
 
   defp save_project(socket, :edit, params) do
     case Ash.update(socket.assigns.project, params, action: :update) do
-      {:ok, _project} ->
+      {:ok, project} ->
+        report_repo_resolution(socket, project)
+
         {:noreply,
          socket
          |> put_flash(:info, "Project updated")
@@ -289,6 +296,67 @@ defmodule CamelotWeb.ProjectLive.Index do
   end
 
   defp capture_create_failed(_socket, _summary), do: :ok
+
+  # The form accepts a repository whose owner the user never installed
+  # the App on, and nothing notices until the runner reaches `git
+  # clone` and GitHub answers `Authentication failed` — because
+  # `Camelot.Github.Resolver.installation_id/2` falls back to the sole
+  # installation and mints a token for the wrong account. This is the
+  # last point at which that failure is still attributable to the
+  # field PostHog's dead clicks pile up on, so it is reported here
+  # rather than left to be guessed from a task's error alert.
+  @spec report_repo_resolution(Socket.t(), Project.t()) :: :ok
+  defp report_repo_resolution(_socket, %Project{github_owner: nil}), do: :ok
+
+  defp report_repo_resolution(socket, project) do
+    user = socket.assigns.current_user
+
+    case Ash.load(user, :github_installations, actor: user) do
+      {:ok, %User{github_installations: installations}} ->
+        installations
+        |> Enum.filter(&is_nil(&1.suspended_at))
+        |> Resolver.owner_coverage(project.github_owner)
+        |> capture_repo_resolution(user, project)
+
+      # A load that failed says nothing about coverage, and reporting
+      # it anyway would invent a drop-off.
+      {:error, _reason} ->
+        :ok
+    end
+  end
+
+  @spec capture_repo_resolution(Resolver.coverage(), User.t(), Project.t()) :: :ok
+  defp capture_repo_resolution(:ok, _user, _project), do: :ok
+
+  defp capture_repo_resolution({:error, reason}, user, project) do
+    log_repo_resolution(reason, user, project)
+
+    Capture.capture("project_repo_resolve_failed", user, %{
+      reason: reason,
+      http_status: nil
+    })
+  end
+
+  # Same split as `Camelot.Github.RepositoryCatalog`: not having
+  # connected the App is the ordinary state of a user who has not
+  # reached that step, while a repository outside every installation
+  # is a clone failure already scheduled.
+  @spec log_repo_resolution(Resolver.unresolved(), User.t(), Project.t()) :: :ok
+  defp log_repo_resolution(:no_installation, user, project) do
+    Logger.info("Project saved before any GitHub installation",
+      user_id: user.id,
+      project_id: project.id,
+      reason: :no_installation
+    )
+  end
+
+  defp log_repo_resolution(reason, user, project) do
+    Logger.warning("Project repository is outside every installation",
+      user_id: user.id,
+      project_id: project.id,
+      reason: reason
+    )
+  end
 
   @spec override_error_message(String.t(), atom()) :: String.t()
   defp override_error_message(field, :not_json_object), do: "#{field} must be a JSON object"
