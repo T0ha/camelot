@@ -106,11 +106,19 @@ defmodule Camelot.Telemetry.PostHogHandler do
 
   defp signed_up_at(_user), do: nil
 
+  # A notification whose subject *is* a user is about that user, not
+  # about whoever ran the action. Both `:create_user` call sites pass
+  # the inviter as the actor — the admin screen and a project invite
+  # — so crediting them would drop the invited account out of the
+  # funnel's first step for good (a returning login is an upsert and
+  # never re-emits `user_signed_up`) and count the inviter as signing
+  # up once per invite.
   @spec distinct_id(Ash.Resource.record(), Ash.Resource.record() | nil) :: String.t() | nil
+  defp distinct_id(%User{id: id}, _actor), do: id
+
   defp distinct_id(data, actor) do
     case {actor, data} do
       {%{id: actor_id}, _data} -> actor_id
-      {_actor, %User{id: id}} -> id
       {_actor, %{creator_id: creator_id}} when is_binary(creator_id) -> creator_id
       {_actor, %{user_id: user_id}} when is_binary(user_id) -> user_id
       _no_distinct_id -> nil

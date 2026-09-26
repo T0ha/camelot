@@ -167,6 +167,33 @@ defmodule Camelot.Telemetry.PostHogHandlerTest do
       assert properties.auth_method == "invite"
     end
 
+    # Both real `:create_user` call sites pass the *inviter* as the
+    # actor: the admin screen (`CamelotWeb.AdminLive.Users`) and a
+    # project invite
+    # (`Camelot.Projects.Membership.Changes.ResolveInvitee`).
+    # Crediting the invitee's signup to them would drop the invited
+    # account out of the funnel's first step for good — a returning
+    # login is an upsert and never re-emits it — while counting the
+    # inviter as signing up once per invite.
+    test "an invited account's signup is attributed to the invitee" do
+      inviter = user!(%{role: :admin})
+
+      {:ok, invitee} =
+        Ash.create(
+          User,
+          %{
+            email: "invited-#{System.unique_integer([:positive])}@example.com",
+            role: :user
+          },
+          action: :create_user,
+          actor: inviter
+        )
+
+      assert [%{distinct_id: distinct_id}] = signups_for(invitee.id)
+      assert distinct_id == invitee.id
+      assert signups_for(inviter.id) == []
+    end
+
     # Both GitHub and magic-link sign-in run upsert *create* actions,
     # so without the signup window every login would look like a
     # conversion.

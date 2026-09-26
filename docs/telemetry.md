@@ -97,6 +97,15 @@ first step a silent copy of `user_signed_in`. Both actions are pinned
 by `test/camelot/telemetry/post_hog_handler_test.exs`, which asserts
 the `upsert_fields` directly *and* drives a real returning login.
 
+A notifier-driven capture is attributed to the action's actor, except
+when the notification's subject *is* a user — then it is attributed to
+that user. Both `:create_user` call sites (the admin screen and a
+project invite) pass the inviter as the actor, so the exception is
+what keeps an invited account's `user_signed_up` on the invitee: a
+returning login is an upsert and never re-emits it, so crediting the
+inviter would leave the invited account outside the funnel's first
+step permanently, and count the inviter as signing up once per invite.
+
 ### Onboarding guide
 
 | Event | Properties |
