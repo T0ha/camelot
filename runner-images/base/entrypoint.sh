@@ -14,6 +14,19 @@ set -euo pipefail
 
 log() { printf '[entrypoint] %s\n' "$*" >&2; }
 
+# Machine-readable counterpart to log(). The collector tails
+# `camelot-task-<uuid>` containers, so each stage prints one line that
+# joins the container's output back to a task.
+#
+# It deliberately does NOT use the `[entrypoint] ` prefix:
+# `Camelot.Runtime.Runner.Swarm.ProvisionMonitor.entrypoint_line/1`
+# takes the last such line and renders it to the user verbatim as the
+# task page's progress line, where a uuid and a stage token read as a
+# leak rather than as a status.
+log_stage() {
+  printf '[camelot] task_id=%s stage=%s\n' "${CAMELOT_TASK_ID:-unknown}" "$1" >&2
+}
+
 # Per-task containers boot once with this entrypoint, then sleep.
 # Per-session `docker exec` invocations bypass entrypoint.sh and
 # inherit only the container's create-time env — so they don't see
@@ -191,7 +204,8 @@ clone_workspace() {
 
   [ -n "$url" ] || { log "no REPO_URL set; skipping clone"; return 0; }
 
-  log "task_id=${CAMELOT_TASK_ID:-unknown} stage=clone cloning $url into /workspace"
+  log_stage clone
+  log "cloning $url into /workspace"
   cd /workspace
   if [ -n "$branch" ]; then
     git clone --depth 50 --branch "$branch" "$url" .
@@ -245,7 +259,7 @@ main() {
   # relevant if /tmp is somehow persisted; defensive).
   : > "$CAMELOT_ENV_FILE"
 
-  log "task_id=${CAMELOT_TASK_ID:-unknown} stage=boot starting"
+  log_stage boot
 
   materialise_secrets
   merge_mcp_config

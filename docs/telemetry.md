@@ -220,10 +220,18 @@ metadata keys are emitted as fields rather than buried in the message:
 They are set per process, so every log line from that process inherits
 them: `CamelotWeb.LiveUserAuth.attach_posthog_hook/1` sets `user_id`,
 `CamelotWeb.TaskLive` adds `task_id` / `project_id`, and
-`Camelot.Runtime.TaskRunner` sets all three. Runner containers export
-`CAMELOT_TASK_ID`, and `runner-images/base/entrypoint.sh` prints
-`task_id=<uuid> stage=boot|clone` so the collector's container logs
-join to a task.
+`Camelot.Runtime.TaskRunner` sets all three.
+
+Runner containers export `CAMELOT_TASK_ID`, and
+`runner-images/base/entrypoint.sh` prints
+`[camelot] task_id=<uuid> stage=boot|clone` so the collector's
+container logs join to a task. That prefix is not `[entrypoint] `,
+and the difference is load-bearing:
+`Camelot.Runtime.Runner.Swarm.ProvisionMonitor.entrypoint_line/1`
+takes the last `[entrypoint] ` line and `workspace_progress/1` renders
+it into the task page verbatim, so metadata put on one of those lines
+is shown to the user as their progress line. `log_stage` is for the
+collector, `log` is for the person watching the task.
 
 A capture is not automatically a warning. `project_repo_resolve_failed`
 with `reason: no_installation` is the ordinary state of a user who has

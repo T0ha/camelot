@@ -160,6 +160,29 @@ defmodule Camelot.Runtime.Runner.Swarm.ProvisionMonitorTest do
     test "no logs yet" do
       assert ProvisionMonitor.entrypoint_line("") == nil
     end
+
+    # The entrypoint also prints a machine-readable `[camelot] ` line
+    # per stage, so the collector can join a container's logs to a
+    # task. Whatever this function returns is rendered to the user
+    # verbatim by `workspace_progress/1`, so those lines have to stay
+    # out of it: a progress line reading "task_id=<uuid> stage=clone"
+    # is a leak, not a status.
+    test "skips the machine-readable stage lines" do
+      logs =
+        frame("[camelot] task_id=8193f1e6 stage=clone\n") <>
+          frame("[entrypoint] cloning https://github.com/acme/app into /workspace\n")
+
+      assert ProvisionMonitor.entrypoint_line(logs) ==
+               "cloning https://github.com/acme/app into /workspace"
+    end
+
+    test "skips a trailing stage line rather than showing it" do
+      logs =
+        frame("[entrypoint] cloning https://github.com/acme/app into /workspace\n") <>
+          frame("[camelot] task_id=8193f1e6 stage=clone\n")
+
+      refute ProvisionMonitor.entrypoint_line(logs) =~ "task_id="
+    end
   end
 
   describe "workspace_progress/1" do
