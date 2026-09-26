@@ -53,6 +53,7 @@ defmodule Camelot.Runtime.TaskRunner do
   alias Camelot.Runtime.SecretSync
   alias Camelot.Runtime.SessionRegistry
   alias Camelot.Runtime.TaskRegistry
+  alias Camelot.Telemetry.Context
 
   require Ash.Query
   require Logger
@@ -544,8 +545,10 @@ defmodule Camelot.Runtime.TaskRunner do
 
     # Every subsequent `Logger` call in this process inherits these,
     # so runner failures are filterable by user and project in the
-    # JSON log pipeline instead of being anonymous container noise.
-    Logger.metadata(user_id: task.creator_id, project_id: task.project_id)
+    # JSON log pipeline instead of being anonymous container noise —
+    # and a crash here is reported to error tracking as this user's.
+    Logger.metadata(project_id: task.project_id)
+    Context.put_person_metadata(task.creator_id)
 
     config = AgentConfig.resolve(task.agent, task.project)
 

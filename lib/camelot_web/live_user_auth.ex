@@ -7,9 +7,8 @@ defmodule CamelotWeb.LiveUserAuth do
   import Phoenix.Component
   import Phoenix.LiveView
 
+  alias Camelot.Telemetry.Context
   alias Phoenix.LiveView.Socket
-
-  require Logger
 
   @spec on_mount(atom(), map(), map(), Socket.t()) ::
           {:cont | :halt, Socket.t()}
@@ -70,7 +69,9 @@ defmodule CamelotWeb.LiveUserAuth do
 
   # Every `Logger` call from this LiveView process inherits these, so
   # the JSON log pipeline can filter a user's whole session without
-  # the id having to be interpolated into each message.
-  defp put_logger_metadata(%{id: id}), do: Logger.metadata(user_id: id)
+  # the id having to be interpolated into each message — and a crash
+  # in this LiveView is reported to error tracking as this person's
+  # rather than as `"unknown"`.
+  defp put_logger_metadata(%{id: id}), do: Context.put_person_metadata(id)
   defp put_logger_metadata(_anonymous), do: :ok
 end

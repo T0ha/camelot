@@ -30,7 +30,12 @@ defmodule CamelotWeb.Plugs.RequestContext do
   # the process logs afterwards — by `CamelotWeb.LiveUserAuth` and
   # `CamelotWeb.TaskLive`. Keys passed per call site
   # (`reason`, `http_status`, `installation_id`) never persist.
-  @process_scoped [:user_id, :project_id, :task_id]
+  #
+  # `distinct_id` is the same identity in PostHog's terms: it is what
+  # the error-tracking handler reads to decide whose crash an
+  # `$exception` is, so leaving it behind files the next visitor's
+  # error under the last person to use the connection.
+  @process_scoped [:user_id, :distinct_id, :project_id, :task_id]
 
   @spec init(keyword()) :: keyword()
   def init(opts), do: opts

@@ -32,9 +32,10 @@ credential setup were silent.
 | `Camelot.Telemetry.PostHogHandler` | Transport and identity: attaches to the telemetry events, resolves the `distinct_id` |
 | `Camelot.Telemetry.Events` | The catalogue: which Ash actions are events, and what each carries |
 | `Camelot.Telemetry.Capture` | The only capture API; merges global + process properties |
-| `Camelot.Telemetry.Context` | `environment` and `internal?/1` |
+| `Camelot.Telemetry.Context` | `environment`, `internal?/1`, and the person a process logs as |
 | `Camelot.Telemetry.Reason` | Error term → bounded `{reason, http_status}` |
 | `Camelot.Telemetry.TaskFailure` | Failed task → bounded `{stage, reason}` |
+| `Camelot.Telemetry.JobFailures` | Oban job failure → a log record error tracking can see |
 
 ## Global properties
 
@@ -346,6 +347,51 @@ failure that cannot happen, and re-wording a runner message without
 re-classifying it silently moves that failure into `unexplained` —
 both fail the test rather than the funnel.
 
+## Backend exceptions
+
+`$exception` is not a product event and is not in the catalogue —
+PostHog's own logger handler produces it from anything logged with a
+`crash_reason`, which is how a LiveView crash, a GenServer crash or a
+failed background job reaches error tracking.
+
+That handler calls `PostHog.bare_capture/4` directly, so it never
+passes through `Camelot.Telemetry.Capture` and picks up none of the
+properties that module merges. Two options in `config/runtime.exs`
+close the gap:
+
+| Option | Why |
+|---|---|
+| `global_properties: %{environment: …}` | otherwise a backend crash carries no `environment` at all, and the two clusters stay mixed in exactly the way the rest of this document exists to prevent |
+| `metadata: […]` | the handler reports only the `Logger` metadata keys named here, so `user_id` / `task_id` / `project_id` / `worker` / `queue` reach the exception |
+
+`distinct_id` is always included, and decides *whose* crash it is.
+`Camelot.Telemetry.Context.put_person_metadata/1` is the one writer —
+it sets `user_id` and `distinct_id` together so the logs and error
+tracking can never disagree about who a process is working for.
+Without it every backend crash in the deployment is filed under one
+synthetic person, `"unknown"`. It is cleared per request by
+`CamelotWeb.Plugs.RequestContext` alongside the other ids; a stale one
+would file the next visitor's crash under the last person to use the
+connection.
+
+### Background jobs
+
+Oban announces a failed job through `[:oban, :job, :exception]` and
+nothing else — `Oban.Telemetry.attach_default_logger/1` is not called
+anywhere here and `Oban.Queue.Executor` writes no log of its own — so
+a job that raised used to produce nothing at all.
+`Camelot.Telemetry.JobFailures` reports it as a `Logger` record
+carrying `worker`, `queue`, `job_attempt` and the bounded id keys
+(`user_id`, `task_id`, `project_id`) from the job's args. The args map
+itself is never reported: it is application data and can hold
+anything a caller put there.
+
+Only the *terminal* failure carries a `crash_reason`, and so only the
+terminal failure becomes an `$exception`. Oban emits the event once
+per attempt, and a job that retries three times is one failure, not
+three; the attempts in between log at `warning`, which the handler
+ignores.
+
 ## The funnel
 
 ```
@@ -373,13 +419,18 @@ person.
 
 The released build logs JSON (`config/runtime.exs`), and these
 metadata keys are emitted as fields rather than buried in the message:
-`user_id`, `project_id`, `task_id`, `installation_id`, `reason`,
-`http_status`.
+`user_id`, `project_id`, `task_id`, `installation_id`, `worker`,
+`queue`, `job_attempt`, `reason`, `http_status`.
 
 They are set per process, so every log line from that process inherits
 them: `CamelotWeb.LiveUserAuth.attach_posthog_hook/1` sets `user_id`,
 `CamelotWeb.TaskLive` adds `task_id` / `project_id`, and
-`Camelot.Runtime.TaskRunner` sets all three.
+`Camelot.Runtime.TaskRunner` sets all three. `worker` / `queue` /
+`job_attempt` are per call site, from `Camelot.Telemetry.JobFailures`.
+
+`distinct_id` travels with `user_id` but is deliberately *not* in any
+formatter's metadata list: it is read by PostHog's error-tracking
+handler, and in the logs it would only repeat `user_id` on every line.
 
 "Per process" is only the same as "per request" once something resets
 it. `CamelotWeb.Plugs.RequestContext` is that reset, and it is not
@@ -441,6 +492,14 @@ or dropping a resource's notifier would take its event off the air
 without breaking the build. `test/camelot/telemetry/events_test.exs`
 guards both: every `{resource, action}` pair must resolve to a real
 action on a resource that registers `Camelot.Telemetry.Notifier`.
+
+`$exception` is captured by the PostHog library rather than by this
+application, so it is pinned separately:
+`test/camelot/telemetry/backend_exception_test.exs` asserts a crash
+carries `environment` and the process's person and ids, and
+`test/camelot/telemetry/job_failures_test.exs` drives
+`[:oban, :job, :exception]` and asserts that a retryable attempt
+produces no exception and that the job's args never leave the log.
 
 ## Not here yet
 

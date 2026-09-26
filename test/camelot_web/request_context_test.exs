@@ -71,6 +71,21 @@ defmodule CamelotWeb.RequestContextTest do
       refute metadata[:user_id]
     end
 
+    # `distinct_id` is what PostHog's error-tracking handler reads to
+    # decide whose crash it is, so a stale one files the next
+    # visitor's error under the last person to use the connection.
+    test "the next request on the same connection is not attributed to the last person", %{
+      conn: conn,
+      task: task
+    } do
+      get(conn, ~p"/tasks/#{task.id}")
+      assert Logger.metadata()[:distinct_id] == task.creator_id
+
+      get(build_conn(), ~p"/sign-in")
+
+      refute Logger.metadata()[:distinct_id]
+    end
+
     test "signing out does not leave the signed-in user on later requests", %{
       conn: conn,
       user: user

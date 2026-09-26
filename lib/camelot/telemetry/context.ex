@@ -17,6 +17,8 @@ defmodule Camelot.Telemetry.Context do
 
   alias Camelot.Accounts.User
 
+  require Logger
+
   @production "production"
 
   # Configured as a string rather than a `Regex` because release
@@ -53,6 +55,30 @@ defmodule Camelot.Telemetry.Context do
 
   def internal?(email) do
     not production?() or Regex.match?(email_pattern(), String.trim(email))
+  end
+
+  @doc """
+  Records, in this process's `Logger` metadata, the person whose work
+  it is doing.
+
+  `user_id` is what the JSON logs filter on. `distinct_id` is the key
+  PostHog's error-tracking handler reads to decide whose crash an
+  `$exception` is: without it every backend crash in the deployment
+  is reported as one synthetic person, `"unknown"`, and a LiveView or
+  runner failure cannot be traced back to the account it happened to.
+  Both are written here so the two can never drift apart, and both
+  are cleared per request by `CamelotWeb.Plugs.RequestContext`.
+  """
+  @spec put_person_metadata(String.t() | nil) :: :ok
+  def put_person_metadata(nil), do: :ok
+
+  def put_person_metadata(user_id) do
+    # `distinct_id` is deliberately absent from every `Logger`
+    # formatter config: it is read by PostHog's handler, never
+    # printed. In the logs it would only repeat `user_id` on every
+    # line.
+    # credo:disable-for-next-line Credo.Check.Warning.MissedMetadataKeyInLoggerConfig
+    Logger.metadata(user_id: user_id, distinct_id: user_id)
   end
 
   @spec email_pattern() :: Regex.t()

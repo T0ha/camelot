@@ -179,6 +179,30 @@ deployment_environment =
 
 config :camelot, :telemetry, environment: deployment_environment
 
+# PostHog's error-tracking logger handler captures anything logged
+# with a `crash_reason` — a LiveView crash, a GenServer crash, the
+# Oban job failures `Camelot.Telemetry.JobFailures` reports — through
+# `PostHog.bare_capture/4`. That bypasses `Camelot.Telemetry.Capture`,
+# so without these two options a backend crash carries no
+# `environment` (leaving the two clusters mixed in the exact way this
+# whole configuration exists to prevent) and none of the ids the
+# application puts in `Logger.metadata`. `distinct_id` is always
+# included, and is what decides whose crash it is.
+config :posthog,
+  global_properties: %{environment: deployment_environment},
+  metadata: [
+    :request_id,
+    :user_id,
+    :project_id,
+    :task_id,
+    :installation_id,
+    :worker,
+    :queue,
+    :job_attempt,
+    :reason,
+    :http_status
+  ]
+
 # Ahrefs Web Analytics. Set AHREFS_ANALYTICS_KEY on the production app
 # only: the test cluster runs the same MIX_ENV=prod release, so leaving
 # the var unset there is what keeps its traffic out of the report.
@@ -249,6 +273,9 @@ if config_env() == :prod do
           :project_id,
           :task_id,
           :installation_id,
+          :worker,
+          :queue,
+          :job_attempt,
           :reason,
           :http_status
         ]
