@@ -11,6 +11,8 @@ defmodule CamelotWeb.OnboardingTelemetryTest do
   import Phoenix.LiveViewTest
 
   alias Camelot.Accounts.Credential
+  alias Camelot.Board.Task
+  alias Camelot.Projects.Project
 
   setup_all {PostHog.Test, :set_posthog_shared}
 
@@ -154,6 +156,53 @@ defmodule CamelotWeb.OnboardingTelemetryTest do
     assert properties.step == "claude_token"
     assert properties["$set"]["has_claude_token"] == true
     assert Enum.count(all_captured("onboarding_step_completed", user.id)) == 1
+  end
+
+  # The guide is just as often finished across a navigation as inside
+  # one — connecting the App redirects to /profile, saving a project
+  # pushes to /projects — and a fresh mount reaches completion through
+  # `install/2`, which has no `false -> true` flip to report and so
+  # restates nothing. Left there, the person properties keep whatever
+  # they held when the guide was last on screen, and the account that
+  # finished stays in the "stuck at step X" cohort for good.
+  test "finishing the guide across a navigation restates the person", %{
+    conn: conn,
+    user: user
+  } do
+    finish_every_step!(user)
+
+    {:ok, _view, _html} = live(conn, ~p"/projects")
+
+    assert %{properties: %{"$set" => person}} = captured("onboarding_completed")
+    assert person["onboarding_next_step"] == ""
+    assert person["has_claude_token"] == true
+    assert person["has_project"] == true
+    assert person["has_task"] == true
+  end
+
+  # Every applicable step, done the way the product does it, before
+  # the guide is ever rendered — which is what forces completion
+  # through the mount path rather than through a refresh.
+  defp finish_every_step!(user) do
+    {:ok, _credential} =
+      Ash.create(Credential, %{kind: :claude_api_key, value: "sk-test", user_id: user.id})
+
+    {:ok, project} =
+      Ash.create(
+        Project,
+        %{name: "onboarding-#{System.unique_integer([:positive])}"},
+        actor: user
+      )
+
+    {:ok, _task} =
+      Ash.create(Task, %{
+        title: "Onboarding task",
+        project_id: project.id,
+        creator_id: user.id,
+        agent_id: agent!("claude_code").id
+      })
+
+    :ok
   end
 
   defp captured(event), do: Enum.find(PostHog.Test.all_captured(), &(&1.event == event))

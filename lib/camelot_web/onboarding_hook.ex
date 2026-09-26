@@ -104,8 +104,19 @@ defmodule CamelotWeb.OnboardingHook do
   # A user who arrives with everything already done — an
   # account that predates the guide, say — is stamped as
   # complete and never bothered again.
+  #
+  # The completion restates the person, because it is the last thing
+  # the guide ever says about this account: after it, `install/2`
+  # short-circuits and no further `$set` is sent. Reaching completion
+  # on a fresh mount also skips `capture_completed_steps/3` entirely
+  # — there is no `false -> true` flip to see when the status arrives
+  # already complete — so without this the properties would keep the
+  # values they held when the guide was last on screen, leaving an
+  # account that finished in the "stuck at step X" cohort for good.
   defp apply_status(socket, user, %Status{complete?: true} = status) do
-    set_guide_context("onboarding_completed", status, %{})
+    set_guide_context("onboarding_completed", status, %{
+      "$set" => person_properties(status)
+    })
 
     socket
     |> assign(current_user: Onboarding.mark_complete!(user))

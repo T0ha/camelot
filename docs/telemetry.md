@@ -117,10 +117,20 @@ step permanently, and count the inviter as signing up once per invite.
 | `onboarding_dismissed` | `steps_total`, `steps_done`, `next_step`, `via` (`close \| step_click`) |
 | `onboarding_completed` | `steps_total`, `steps_done`, `next_step`, `duration_since_signup_s` |
 
-`onboarding_shown` and `onboarding_step_completed` also set the person
-properties `onboarding_next_step`, `github_connected`,
-`has_claude_token`, `has_project`, `has_task`, so the "stuck at step
-X" cohort is a person-property filter with no joins.
+`onboarding_shown`, `onboarding_step_completed` and
+`onboarding_completed` also set the person properties
+`onboarding_next_step`, `github_connected`, `has_claude_token`,
+`has_project`, `has_task`, so the "stuck at step X" cohort is a
+person-property filter with no joins.
+
+`onboarding_completed` carries them because it is the last thing the
+guide ever says about an account: after it the hook short-circuits on
+`onboarding_completed_at` and no further `$set` is sent. Completion
+reached on a fresh mount — the usual case, since the last outstanding
+step is as often finished across a navigation as inside one — also
+skips the `false -> true` diff entirely, there being no flip to see in
+a status that arrives already complete. Without it an account that
+finished would keep whatever the cohort last saw of it.
 
 Those two events are not enough on their own to keep the cohort
 honest, so **every connected mount with onboarding outstanding
