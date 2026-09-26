@@ -21,10 +21,15 @@ defmodule Camelot.Github.UserInstallationsTest do
     Map.merge(
       %{
         "id" => id,
-        "account" => %{"login" => "octocat", "type" => "User"}
+        "account" => %{"login" => "octocat", "type" => "User"},
+        "repository_selection" => "selected"
       },
       overrides
     )
+  end
+
+  defp captured(event) do
+    Enum.filter(PostHog.Test.all_captured(), &(&1.event == event))
   end
 
   defp installation!(installation_id) do
@@ -83,6 +88,59 @@ defmodule Camelot.Github.UserInstallationsTest do
 
       assert installation!(taken).user_id == owner.id
       assert installation!(free).user_id == newcomer.id
+    end
+
+    # The login round-trip is the intended way to connect: a
+    # first-time GitHub sign-in lands on the board already connected,
+    # with no second step on /profile. Without a capture here the
+    # funnel's GitHub step could only be reached through the profile
+    # link, so everyone who took the intended path looked like a
+    # drop-off.
+    test "reports a first link as the GitHub setup step of the funnel" do
+      user = seed_user!("funnel@example.com")
+      id = unique_id()
+
+      assert :ok = UserInstallations.link([payload(id)], user)
+
+      assert [%{distinct_id: distinct_id, properties: properties}] =
+               captured("github_setup_succeeded")
+
+      assert distinct_id == user.id
+      assert properties.installation_id == id
+      assert properties.account_type == "User"
+      assert properties.repository_selection == "selected"
+    end
+
+    # This runs on every GitHub login, so re-linking what is already
+    # the user's would make both events count logins, not links.
+    test "reports nothing for an installation that is already the user's" do
+      user = seed_user!("relink@example.com")
+      id = unique_id()
+
+      assert :ok = UserInstallations.link([payload(id)], user)
+      assert [_linked] = captured("github_installation_linked")
+      assert [_succeeded] = captured("github_setup_succeeded")
+
+      assert :ok = UserInstallations.link([payload(id)], user)
+
+      assert [_still_one_link] = captured("github_installation_linked")
+      assert [_still_one_setup] = captured("github_setup_succeeded")
+    end
+
+    test "reports a bounded reason when the installation is someone else's" do
+      owner = seed_user!("owner-event@example.com")
+      newcomer = seed_user!("newcomer-event@example.com")
+      taken = unique_id()
+
+      assert :ok = UserInstallations.link([payload(taken)], owner)
+      assert :ok = UserInstallations.link([payload(taken)], newcomer)
+
+      assert [%{distinct_id: distinct_id, properties: properties}] =
+               captured("github_setup_failed")
+
+      assert distinct_id == newcomer.id
+      assert properties.reason == :link_failed
+      assert properties.http_status == nil
     end
 
     test "handles an empty list" do

@@ -145,6 +145,20 @@ cannot delete: a process-wide write would stamp one guide's
 | `github_installation_suspended` / `_unsuspended` | `installation_id` |
 | `project_repo_resolve_failed` | `reason`, `http_status` |
 
+`github_setup_succeeded` has two capture points, because GitHub can
+be connected two ways. `CamelotWeb.GithubSetupController` handles the
+profile's "Connect GitHub App" round-trip, and
+`Camelot.Github.UserInstallations` handles the login one — a
+first-time GitHub sign-in lands on the board already connected, with
+no second step on /profile, which is the *intended* path. Reporting
+only the first would have shown everyone who took the intended path
+as a drop-off at the funnel's GitHub step.
+
+The login path runs on **every** GitHub login, so it reports only a
+link it actually made: an installation already owned by this user
+emits nothing, and the `:link_user` Ash update is skipped so
+`github_installation_linked` counts links rather than logins.
+
 `reason` is a `Camelot.Telemetry.Reason` value:
 `missing_state`, `not_authenticated`, `actor_mismatch`,
 `invalid_state`, `expired_state`, `invalid_installation_id`,
