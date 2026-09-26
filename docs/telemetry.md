@@ -349,6 +349,16 @@ user_signed_up
 
 Filter on `environment = production` and `is_internal = false`.
 
+A funnel step is only a step if it lands on the same person as its
+neighbours, and which person that is, is decided per resource by
+`PostHogHandler.distinct_id/2` — so no single-event test can see a
+step that has drifted onto someone else.
+`test/camelot/telemetry/activation_funnel_test.exs` walks one account
+through all six steps, through the same code paths the product uses,
+and asserts the order, the shared `distinct_id`, the `environment` on
+every capture along the way, and that `is_internal` reaches the same
+person.
+
 ## Structured logging
 
 The released build logs JSON (`config/runtime.exs`), and these
