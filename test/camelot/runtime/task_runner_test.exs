@@ -4,6 +4,7 @@ defmodule Camelot.Runtime.TaskRunnerTest do
   alias Camelot.Accounts.Credential
   alias Camelot.Accounts.User
   alias Camelot.Agents.Agent
+  alias Camelot.Agents.CodexDefaults
   alias Camelot.Agents.Session
   alias Camelot.Board.AttachmentStore
   alias Camelot.Board.Task
@@ -12,6 +13,7 @@ defmodule Camelot.Runtime.TaskRunnerTest do
   alias Camelot.Projects.Membership
   alias Camelot.Projects.Project
   alias Camelot.Runtime.AgentConfig
+  alias Camelot.Runtime.Runner.SecretEnv
   alias Camelot.Runtime.TaskRegistry
   alias Camelot.Runtime.TaskRunner
   alias Camelot.Settings.SystemSetting
@@ -103,6 +105,43 @@ defmodule Camelot.Runtime.TaskRunnerTest do
       assert [%{kind: :ssh_private_key, value: value}] = secrets
       # First-match dedupe preserves the agent-fetched credential.
       assert value in ["PRIV-manual", "PRIV-default"]
+    end
+
+    test "an openai_api_key satisfies the codex CLI", ctx do
+      # The case that broke the first real Codex run on the test
+      # cluster: the row required the since-retired :codex_api_key, the
+      # user had stored the obvious :openai_api_key, so no key was
+      # mounted and the CLI failed with a bare 401.
+      {:ok, _openai} =
+        Ash.create(Credential, %{
+          user_id: ctx.task.creator_id,
+          kind: :openai_api_key,
+          value: "OPENAI-KEY"
+        })
+
+      config =
+        build_config(required_credential_kinds: CodexDefaults.required_credential_kinds())
+
+      assert [%{kind: :openai_api_key, value: "OPENAI-KEY"}] =
+               TaskRunner.build_secrets(ctx.task, config)
+    end
+
+    test "it mounts exactly one OPENAI_API_KEY", ctx do
+      {:ok, _openai} =
+        Ash.create(Credential, %{
+          user_id: ctx.task.creator_id,
+          kind: :openai_api_key,
+          value: "OPENAI-KEY"
+        })
+
+      config =
+        build_config(required_credential_kinds: CodexDefaults.required_credential_kinds())
+
+      assert ctx.task
+             |> TaskRunner.build_secrets(config)
+             |> Enum.flat_map(&SecretEnv.to_env/1)
+             |> Enum.filter(&String.starts_with?(&1, "OPENAI_API_KEY="))
+             |> length() == 1
     end
 
     defp build_config(overrides \\ []) do

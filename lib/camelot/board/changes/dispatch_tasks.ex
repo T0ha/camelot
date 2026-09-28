@@ -12,11 +12,11 @@ defmodule Camelot.Board.Changes.DispatchTasks do
 
   alias Camelot.Board.PromptBuilder
   alias Camelot.Board.Task
-  alias Camelot.Projects.Project
   alias Camelot.Runtime.TaskRegistry
   alias Camelot.Runtime.TaskRunner
   alias Camelot.Runtime.TaskRunnerSupervisor
 
+  require Ash.Query
   require Logger
 
   @dispatchable_stages [:todo, :planning, :executing, :pr]
@@ -28,37 +28,29 @@ defmodule Camelot.Board.Changes.DispatchTasks do
           Ash.Resource.Actions.Implementation.Context.t()
         ) :: :ok
   def run(_input, _opts, _context) do
-    dispatchable_tasks()
-    |> Enum.sort_by(& &1.priority, :desc)
-    |> Enum.each(&dispatch_task/1)
-
+    Enum.each(dispatchable_tasks(), &dispatch_task/1)
     :ok
   end
 
+  # `project.status == :active` keeps an archived project's tasks out
+  # of the dispatch loop the same way `not blocked?` keeps a task
+  # waiting on an incomplete dependency out of it — both gates belong
+  # in the query, not a post-fetch `Enum.filter`, so a board with many
+  # queued tasks isn't paying to load and inspect rows it will discard.
   defp dispatchable_tasks do
     Task
+    |> Ash.Query.filter(
+      state == :queued and stage in ^@dispatchable_stages and not blocked? and
+        project.status == :active
+    )
+    |> Ash.Query.sort(priority: :desc)
     |> Ash.read!(
-      load: [:messages, :attachments, :project, creator: [:github_installations]],
+      load:
+        [:blocked?, :messages, :attachments, :project] ++
+          Task.link_load() ++ [creator: [:github_installations]],
       authorize?: false
     )
-    |> Enum.filter(&dispatchable?/1)
   end
-
-  @doc """
-  True when `task` is waiting for an agent and its project is still
-  active.
-
-  `:project` must be loaded. An `%Ash.NotLoaded{}` project reads as
-  inactive and the task is skipped rather than dispatched blind, so a
-  dropped preload would show up as tasks sitting queued — check the
-  load list in `dispatchable_tasks/0` before suspecting the gate.
-  """
-  @spec dispatchable?(Task.t()) :: boolean()
-  def dispatchable?(%Task{state: :queued, stage: stage, project: project}) when stage in @dispatchable_stages do
-    Project.active?(project)
-  end
-
-  def dispatchable?(%Task{}), do: false
 
   defp dispatch_task(task) do
     case Ash.update(task, %{}, action: :begin_work) do

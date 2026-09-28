@@ -24,6 +24,7 @@ defmodule Camelot.Runtime.Runner.Spec do
             profile_volume: nil,
             secrets: [],
             mcp_config_json: nil,
+            output_schema_json: nil,
             repo_url: nil,
             repo_branch: nil,
             attachments_json: nil,
@@ -47,6 +48,7 @@ defmodule Camelot.Runtime.Runner.Spec do
           profile_volume: String.t() | nil,
           secrets: [secret()],
           mcp_config_json: String.t() | nil,
+          output_schema_json: String.t() | nil,
           repo_url: String.t() | nil,
           repo_branch: String.t() | nil,
           attachments_json: String.t() | nil,
@@ -58,6 +60,23 @@ defmodule Camelot.Runtime.Runner.Spec do
           adopt?: boolean(),
           adopt_since: DateTime.t() | nil
         }
+
+  @doc """
+  Path the run's JSON output schema is materialised at.
+
+  A CLI that takes its structured-output schema as a file
+  (Codex's `--output-schema`) needs one to exist next to the run.
+  Every backend writes the same session-scoped path so the argv —
+  built before the backend is chosen — can name it unconditionally:
+  `exec-wrapper.sh` writes it inside the container from
+  `CAMELOT_OUTPUT_SCHEMA_JSON`, and `LocalPort` writes it on the host
+  itself. Session-scoped rather than fixed so two tasks planning at
+  once on the same host can't race each other's file.
+  """
+  @spec output_schema_path(String.t()) :: String.t()
+  def output_schema_path(session_id) do
+    "/tmp/camelot-output-schema-#{session_id}.json"
+  end
 
   @doc """
   Stable, deterministic per-session service/container

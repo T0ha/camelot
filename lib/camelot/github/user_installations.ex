@@ -18,8 +18,12 @@ defmodule Camelot.Github.UserInstallations do
   alias Camelot.Github.AppConfig
   alias Camelot.Github.Installation
   alias Camelot.Github.InstallationSync
+  alias Camelot.Telemetry.Capture
+  alias Camelot.Telemetry.Reason
 
   require Logger
+
+  @typep outcome :: {:ok, :linked | :already_linked} | {:error, term()}
 
   @url "https://api.github.com/user/installations"
 
@@ -46,22 +50,35 @@ defmodule Camelot.Github.UserInstallations do
   Upserts each installation payload and links it to `user`.
 
   Individual failures — most often an installation another
-  Camelot user already claimed — are logged and skipped so
+  Camelot user already claimed — are logged and skipped, so
   one bad row can't cost the user the rest of them.
+
+  A link this call actually makes reports `github_setup_succeeded`,
+  the same event the profile-driven setup callback captures; an
+  installation that is already the user's reports nothing, since
+  this runs on every GitHub login. `github_setup_failed` is
+  reported once for the whole sync, and only when it left the
+  user with nothing of their own.
   """
   @spec link([map()], User.t()) :: :ok
   def link(payloads, %User{} = user) do
-    Enum.each(payloads, &link_one(&1, user))
+    payloads
+    |> Enum.map(&link_one(&1, user))
+    |> report_disconnected(user)
   end
 
   @doc """
   `list/1` followed by `link/2`.
+
+  A listing that fails is a connect that got no further than asking
+  GitHub what the user has, so it reports `github_setup_failed` in its
+  own right — `link/2` never runs and would otherwise report nothing.
   """
   @spec sync(String.t() | nil, User.t()) :: :ok | {:error, term()}
   def sync(access_token, %User{} = user) do
     case list(access_token) do
       {:ok, payloads} -> link(payloads, user)
-      {:error, reason} -> {:error, reason}
+      {:error, reason} -> report_list_failure(reason, user)
     end
   end
 
@@ -91,23 +108,130 @@ defmodule Camelot.Github.UserInstallations do
     end
   end
 
+  @spec link_one(map(), User.t()) :: outcome()
   defp link_one(payload, user) do
-    with {:ok, %Installation{} = installation} <- InstallationSync.upsert(payload),
-         {:ok, _linked} <- link_user(installation, user) do
-      :ok
-    else
-      {:error, reason} ->
-        Logger.info(
-          "GitHub login: skipping installation " <>
-            "#{inspect(payload["id"])} for user #{user.id}: " <>
-            inspect(reason)
-        )
+    outcome = upsert_and_link(payload, user)
 
-        :ok
+    report_outcome(outcome, payload, user)
+
+    outcome
+  end
+
+  @spec report_outcome(outcome(), map(), User.t()) :: :ok
+  defp report_outcome({:ok, :linked}, payload, user), do: capture_succeeded(payload, user)
+  defp report_outcome({:ok, :already_linked}, _payload, _user), do: :ok
+  defp report_outcome({:error, reason}, payload, user), do: log_failure(payload, user, reason)
+
+  @spec upsert_and_link(map(), User.t()) :: outcome()
+  defp upsert_and_link(payload, user) do
+    with {:ok, %Installation{} = installation} <- upsert(payload) do
+      link_user(installation, user)
     end
   end
 
+  @spec upsert(map()) :: {:ok, Installation.t()} | {:error, term()}
+  defp upsert(payload) do
+    case InstallationSync.upsert(payload) do
+      {:ok, %Installation{} = installation} -> {:ok, installation}
+      {:error, reason} -> {:error, {:upsert_failed, reason}}
+    end
+  end
+
+  # Re-linking an installation that is already this user's writes
+  # nothing, but the Ash update still notifies — and this runs on
+  # every GitHub login, so `github_installation_linked` would count
+  # logins rather than links.
+  @spec link_user(Installation.t(), User.t()) :: outcome()
+  defp link_user(%Installation{user_id: user_id}, %User{id: user_id}) do
+    {:ok, :already_linked}
+  end
+
   defp link_user(installation, user) do
-    Ash.update(installation, %{user_id: user.id}, action: :link_user, actor: user)
+    case Ash.update(installation, %{user_id: user.id}, action: :link_user, actor: user) do
+      {:ok, %Installation{}} -> {:ok, :linked}
+      {:error, reason} -> {:error, {:link_failed, reason}}
+    end
+  end
+
+  # Folding the install into the login round-trip is the *intended*
+  # way to connect — a first-time GitHub sign-in lands on the board
+  # already connected, with no second step on /profile. Capturing the
+  # same event `CamelotWeb.GithubSetupController` does is what keeps
+  # the funnel's GitHub step reachable from both paths; without it
+  # everyone who took this one looked like a drop-off.
+  @spec capture_succeeded(map(), User.t()) :: :ok
+  defp capture_succeeded(payload, user) do
+    Capture.capture("github_setup_succeeded", user, %{
+      installation_id: payload["id"],
+      account_type: get_in(payload, ["account", "type"]),
+      repository_selection: payload["repository_selection"]
+    })
+  end
+
+  # Most often the installation belongs to another Camelot account,
+  # which is a connect the user cannot complete — a funnel stop, not
+  # an incident, hence `info`. Per installation, because which one
+  # was skipped is the whole value of the line. The reason is a
+  # bounded `Camelot.Telemetry.Reason` value rather than `inspect/1`
+  # output, so the log line stays filterable.
+  @spec log_failure(map(), User.t(), term()) :: :ok
+  defp log_failure(payload, user, reason) do
+    {classified, _http_status} = Reason.classify(reason)
+
+    Logger.info("GitHub login: skipping installation",
+      user_id: user.id,
+      installation_id: payload["id"],
+      reason: classified
+    )
+  end
+
+  # `github_setup_failed` answers one question — did this login leave
+  # the user connected? — so it is reported once per sync and only
+  # when nothing ended up theirs.
+  #
+  # Per payload it would instead count logins. An org installation
+  # another Camelot account already owns stays in this user's
+  # `/user/installations` response for good, so every later login
+  # would re-report a connect that is not being re-attempted, and a
+  # user who linked their own installation in the same sync would be
+  # reported as both connected and failed.
+  @spec report_disconnected([outcome()], User.t()) :: :ok
+  defp report_disconnected(outcomes, user) do
+    case {Enum.any?(outcomes, &connected?/1), Enum.find(outcomes, &failed?/1)} do
+      {false, {:error, reason}} -> capture_failed(user, reason)
+      _connected_or_clean -> :ok
+    end
+  end
+
+  @spec connected?(outcome()) :: boolean()
+  defp connected?({:ok, _linked_or_already}), do: true
+  defp connected?(_outcome), do: false
+
+  @spec failed?(outcome()) :: boolean()
+  defp failed?({:error, _reason}), do: true
+  defp failed?(_outcome), do: false
+
+  # Neither of these is a connect the user attempted — the deployment
+  # has no GitHub App at all, or the login carried no user token — so
+  # neither is a funnel drop-off. Same split `CamelotWeb.AuthController`
+  # already makes when it decides which sync failures are worth logging.
+  @spec report_list_failure(term(), User.t()) :: {:error, term()}
+  defp report_list_failure(:not_configured, _user), do: {:error, :not_configured}
+  defp report_list_failure(:no_access_token, _user), do: {:error, :no_access_token}
+
+  defp report_list_failure(reason, user) do
+    capture_failed(user, reason)
+
+    {:error, reason}
+  end
+
+  @spec capture_failed(User.t(), term()) :: :ok
+  defp capture_failed(user, reason) do
+    {classified, http_status} = Reason.classify(reason)
+
+    Capture.capture("github_setup_failed", user, %{
+      reason: classified,
+      http_status: http_status
+    })
   end
 end

@@ -14,6 +14,19 @@ set -euo pipefail
 
 log() { printf '[entrypoint] %s\n' "$*" >&2; }
 
+# Machine-readable counterpart to log(). The collector tails
+# `camelot-task-<uuid>` containers, so each stage prints one line that
+# joins the container's output back to a task.
+#
+# It deliberately does NOT use the `[entrypoint] ` prefix:
+# `Camelot.Runtime.Runner.Swarm.ProvisionMonitor.entrypoint_line/1`
+# takes the last such line and renders it to the user verbatim as the
+# task page's progress line, where a uuid and a stage token read as a
+# leak rather than as a status.
+log_stage() {
+  printf '[camelot] task_id=%s stage=%s\n' "${CAMELOT_TASK_ID:-unknown}" "$1" >&2
+}
+
 # Per-task containers boot once with this entrypoint, then sleep.
 # Per-session `docker exec` invocations bypass entrypoint.sh and
 # inherit only the container's create-time env — so they don't see
@@ -65,6 +78,25 @@ materialise_secrets() {
   done < <(compgen -e)
 }
 
+# Codex reads its credentials from $CODEX_HOME/auth.json, never from
+# OPENAI_API_KEY. With the key only in the environment every request
+# goes out unauthenticated and the CLI reports
+#
+#   401 Unauthorized: Missing bearer or basic authentication in header
+#
+# which reads as a bad key rather than an unused one. `codex login
+# --with-api-key` takes the key on stdin, so it never lands in argv or
+# `ps`. No-op in images without the CLI (base, elixir, python).
+codex_login() {
+  command -v codex >/dev/null 2>&1 || return 0
+
+  if printf '%s' "$1" | codex login --with-api-key >/dev/null 2>&1; then
+    log "codex login: authenticated from the mounted API key"
+  else
+    log "codex login failed; Codex runs will 401"
+  fi
+}
+
 materialise_one() {
   local kind="$1"
   local value="$2"
@@ -85,6 +117,7 @@ materialise_one() {
     openai_api_key|codex_api_key)
       export OPENAI_API_KEY="$value"
       persist_env OPENAI_API_KEY "$value"
+      codex_login "$value"
       ;;
     github_app_token)
       export GH_TOKEN="$value"
@@ -171,6 +204,7 @@ clone_workspace() {
 
   [ -n "$url" ] || { log "no REPO_URL set; skipping clone"; return 0; }
 
+  log_stage clone
   log "cloning $url into /workspace"
   cd /workspace
   if [ -n "$branch" ]; then
@@ -224,6 +258,8 @@ main() {
   # Truncate any stale env from a previous container lifecycle (only
   # relevant if /tmp is somehow persisted; defensive).
   : > "$CAMELOT_ENV_FILE"
+
+  log_stage boot
 
   materialise_secrets
   merge_mcp_config

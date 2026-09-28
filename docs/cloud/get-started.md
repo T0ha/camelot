@@ -67,14 +67,16 @@ Visit `/profile` to finish your personal setup:
   Camelot can poll PR/issue status for tasks you create. This is the
   recommended way to connect GitHub — most users don't need to touch
   the SSH key at all. **Disconnect** removes it any time.
-- **Credentials** — add any API keys your agents need: a Claude,
-  OpenAI, or Codex API key, or a generic secret. Pick a **Kind**, give
+- **Credentials** — add any API keys your agents need: a Claude or
+  OpenAI API key, or a generic secret. Pick a **Kind**, give
   it a **Name**, and paste the **Value**. These are encrypted at rest
   and shipped securely to runner containers. Pasted GitHub personal
   access tokens or OAuth tokens aren't supported — use the GitHub App
   above for git/GitHub access instead. Right now, **Claude Code is the
   only Agent CLI that's fully integrated and tested** — start with a
-  Claude API key unless you know you need another provider.
+  Claude API key unless you know you need another provider. See
+  [Setting up Claude Code](../agents/claude-code.md) or
+  [Setting up Codex](../agents/codex.md) for a full walkthrough.
 
 ## 3. Create a project
 

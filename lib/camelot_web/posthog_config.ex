@@ -8,13 +8,23 @@ defmodule CamelotWeb.PostHogConfig do
   (`Camelot.Telemetry.PostHogHandler`) already relies on, and the same
   `distinct_id` convention (`user.id`), so frontend and backend events
   merge onto the same person.
+
+  `environment` and `is_internal` come from
+  `Camelot.Telemetry.Context`, the same source the server captures
+  use, and are registered as browser super-properties — which is what
+  puts them on autocaptured events (`$pageview`, `$exception`) that no
+  server code ever sees.
   """
+
+  alias Camelot.Telemetry.Context
 
   @type t :: %{
           api_key: String.t(),
           api_host: String.t() | nil,
           distinct_id: String.t() | nil,
-          email: String.t() | nil
+          email: String.t() | nil,
+          environment: String.t(),
+          is_internal: String.t()
         }
 
   @doc """
@@ -37,11 +47,15 @@ defmodule CamelotWeb.PostHogConfig do
 
   @spec build(map()) :: t()
   defp build(assigns) do
+    user = assigns[:current_user]
+
     %{
       api_key: Application.get_env(:posthog, :api_key),
       api_host: Application.get_env(:posthog, :api_host),
-      distinct_id: distinct_id(assigns[:current_user]),
-      email: email(assigns[:current_user])
+      distinct_id: distinct_id(user),
+      email: email(user),
+      environment: Context.environment(),
+      is_internal: to_string(Context.internal?(user))
     }
   end
 

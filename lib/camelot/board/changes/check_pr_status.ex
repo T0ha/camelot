@@ -31,6 +31,14 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   last commit and unseen. Without those guards one undismissed review
   re-dispatched the agent every two minutes for eight hours.
 
+  Comments and reviews authored by Camelot's own GitHub App bots
+  (`bot_authored?/1`) are dropped before any of the above runs. The
+  runner posts its own status-update PR comments through the App
+  installation token; reading one back as "new feedback" on the next
+  poll re-dispatched the agent every couple of minutes for hours with
+  no reviewer ever involved (found 2026-09-26, task `8193f1e6`: 28
+  consecutive re-dispatches, ~$144, zero commits).
+
   Those automatic re-dispatches are capped at a configurable number of
   consecutive attempts (see `max_auto_fix_attempts/0`, default 2), so a
   task the agent cannot fix stops looping and is left for human review.
@@ -42,9 +50,12 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
 
   alias Camelot.Board.PrApproval
   alias Camelot.Board.Task
+  alias Camelot.Board.TaskLink
+  alias Camelot.Board.TaskMessage
   alias Camelot.Github.Client
   alias Camelot.Github.Resolver
 
+  require Ash.Query
   require Logger
 
   # Default cap on consecutive automatic PR fix re-dispatches (merge
@@ -86,6 +97,9 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
          {:ok, check_runs} <-
            fetch_check_runs(owner, repo, pr_data, opts) do
       review_comments = fetch_review_comments(owner, repo, pr, opts)
+      reviews = reject_bot_authored(reviews)
+      comments = reject_bot_authored(comments)
+      review_comments = reject_bot_authored(review_comments)
       feedback = merge_review_feedback(comments, review_comments, reviews)
       apply_pr_state(task, pr_data, reviews, feedback, commits, check_runs)
     else
@@ -155,6 +169,28 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
     end
   end
 
+  # Camelot's own GitHub App bots. The runner posts its PR comments
+  # through whichever App installation this deployment is configured
+  # with (`Camelot.Github.AppConfig`), so its own status updates must
+  # never be read back as reviewer feedback — see `bot_authored?/1`.
+  @bot_logins ~w(camelotai-test[bot] camelot-ai-board[bot])
+
+  @doc """
+  True if a comment or review was authored by one of Camelot's own
+  GitHub App bots (test or prod), never a human.
+
+  Matches on the exact `[bot]`-suffixed login GitHub assigns a App's
+  own account (e.g. `camelotai-test[bot]`), so it only ever excludes
+  Camelot's own automated activity — a human reviewer who happens to
+  share the PR author's account (the runner opens PRs under the same
+  installation) is a distinct, non-bot login and is never dropped.
+  """
+  @spec bot_authored?(map()) :: boolean()
+  def bot_authored?(%{"user" => %{"login" => login}}), do: login in @bot_logins
+  def bot_authored?(_entry), do: false
+
+  defp reject_bot_authored(entries), do: Enum.reject(entries, &bot_authored?/1)
+
   @doc """
   Merges the three reviewer-feedback surfaces into one comment list.
 
@@ -200,6 +236,164 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
 
       true ->
         :ok
+    end
+
+    propagate_to_dependents(task, pr)
+  end
+
+  @doc """
+  Notifies every same-repo `:blocks` dependent of `task` that the
+  blocker's branch moved, so it can rebase, or that the blocker merged,
+  so it can retarget its PR onto the default branch.
+
+  Reuses the existing `check_pr_status` poll (every 2 minutes, only for
+  `stage == :pr` tasks) rather than adding a new cron: this already
+  reads `pr["head"]["sha"]`, so there is no new GitHub call either.
+  Cross-repo dependents are skipped — cross-repo links still gate
+  dispatch and inject context (`PromptBuilder.related_context_block/1`),
+  but there is no git branch to share across repositories.
+
+  Per same-repo dependent:
+
+    * not yet `:executing`/`:pr` — no branch exists yet, so only the
+      synced sha is recorded (nothing to rebase).
+    * already synced to this sha — no-op.
+    * `:in_progress` — message only; a live agent must not be clobbered,
+      the message lands in conversation history for its next run.
+    * `:waiting_for_input`/`:error` — message, then `Ash.update(dep, %{},
+      action: :reset)` to re-queue (`:reset` already validates
+      `stage in @resumable_stages`, sets `state: :queued` and clears
+      `last_error` — exactly what's needed here).
+    * `:queued` — message only; the pending dispatch tick picks it up.
+
+  Always fires (bypassing the synced-sha no-op) when `task`'s PR just
+  merged, since retargeting is needed regardless of whether the
+  dependent already saw this sha.
+  """
+  @spec propagate_to_dependents(Task.t(), map()) :: :ok
+  def propagate_to_dependents(task, pr) do
+    task
+    |> dependent_links()
+    |> Enum.each(&sync_dependent(&1, task, pr))
+
+    :ok
+  end
+
+  defp dependent_links(task) do
+    TaskLink
+    |> Ash.Query.filter(link_type == :blocks and source_task_id == ^task.id)
+    |> Ash.Query.load(target_task: [:project])
+    |> Ash.read!(authorize?: false)
+  end
+
+  defp sync_dependent(link, blocker, pr) do
+    dependent = link.target_task
+
+    if Resolver.same_repo?(blocker.project, dependent.project) do
+      sync_same_repo_dependent(link, blocker, dependent, pr)
+    else
+      :ok
+    end
+  end
+
+  @dependent_gated_stages [:executing, :pr]
+
+  defp sync_same_repo_dependent(link, blocker, dependent, pr) do
+    head_sha = get_in(pr, ["head", "sha"])
+    merged? = pr["merged"] == true
+
+    cond do
+      not merged? and head_sha == link.base_synced_sha ->
+        :ok
+
+      dependent.stage not in @dependent_gated_stages ->
+        stamp_sync(link, head_sha)
+
+      true ->
+        notify_dependent(blocker, dependent, pr, merged?)
+        stamp_sync(link, head_sha)
+    end
+  end
+
+  # `:user` is the only inbound role `Camelot.Board.TaskMessage`
+  # has, and the notice has to reach the agent's conversation the same
+  # way a human reply does. So attribution is carried in the body
+  # instead: every notice opens with the same marker, which keeps the
+  # message greppable for filtering without a schema change and a
+  # migration of the existing `@roles`.
+  defp notify_dependent(blocker, dependent, pr, merged?) do
+    Ash.create!(TaskMessage, %{
+      role: :user,
+      content: rebase_message(blocker, pr, merged?),
+      task_id: dependent.id
+    })
+
+    maybe_requeue(dependent)
+  end
+
+  @notice_prefix "Automated dependency notice — "
+
+  defp rebase_message(blocker, pr, true) do
+    branch = merged_into_branch(pr)
+
+    @notice_prefix <>
+      "the task you depend on (`#{blocker.title}`) merged its pull " <>
+      "request. Run `git fetch origin && git rebase origin/#{branch}` " <>
+      "on your branch, retarget your pull request's base to " <>
+      "`#{branch}`, and `git push --force-with-lease`. Resolve any " <>
+      "conflicts in favour of the newer base."
+  end
+
+  defp rebase_message(blocker, _pr, false) do
+    @notice_prefix <>
+      "the task you depend on (`#{blocker.title}`) pushed new commits " <>
+      "to its branch `camelot/task-#{blocker.id}`. Run `git fetch " <>
+      "origin && git rebase origin/camelot/task-#{blocker.id}` on your " <>
+      "branch and `git push --force-with-lease`. Resolve any conflicts " <>
+      "in favour of the newer base."
+  end
+
+  # Where the dependent should land now that its base branch is gone.
+  # Normally that is whatever the blocker merged into — a release
+  # branch stays a release branch. The exception is a blocker that was
+  # itself stacked: its base is another task branch that GitHub will
+  # delete on merge, so the dependent is sent to the repository
+  # default branch instead.
+  defp merged_into_branch(pr) do
+    base_branch(get_in(pr, ["base", "ref"]), get_in(pr, ["base", "repo", "default_branch"]))
+  end
+
+  defp base_branch("camelot/task-" <> _id, nil), do: "the default branch"
+  defp base_branch("camelot/task-" <> _id, default_branch), do: default_branch
+  defp base_branch(nil, nil), do: "the default branch"
+  defp base_branch(nil, default_branch), do: default_branch
+  defp base_branch(base_ref, _default_branch), do: base_ref
+
+  defp maybe_requeue(%{state: state} = dependent) when state in [:waiting_for_input, :error] do
+    case Ash.update(dependent, %{}, action: :reset) do
+      {:ok, updated} ->
+        broadcast(updated)
+        Logger.info("Task #{dependent.id} → reset (dependency rebase)")
+
+      {:error, error} ->
+        Logger.warning(
+          "Failed to reset dependent task #{dependent.id} after a " <>
+            "dependency rebase notice: #{inspect(error)}"
+        )
+    end
+  end
+
+  defp maybe_requeue(_dependent), do: :ok
+
+  defp stamp_sync(link, head_sha) do
+    attrs = %{base_synced_sha: head_sha, base_synced_at: DateTime.utc_now()}
+
+    case Ash.update(link, attrs, action: :sync_base) do
+      {:ok, _link} ->
+        :ok
+
+      {:error, error} ->
+        Logger.warning("Failed to sync task link #{link.id}: #{inspect(error)}")
     end
   end
 
@@ -401,13 +595,12 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   @doc """
   True if any comment is newer than the last commit AND unseen.
 
-  Deliberately does NOT filter by author. Runners open PRs with the
-  user's own GitHub token, so the PR author and the human reviewer are
-  the same account — an author-based filter would silently drop the
-  reviewer's feedback (which is exactly the comment we must react to).
-  Nothing in the app posts PR comments, so there is no bot chatter to
-  exclude; re-trigger loops are prevented by `pr_comments_seen_at` and
-  the newer-than-last-commit guard.
+  Does not filter by author itself — a human reviewer can share the
+  PR's own account, so an author-based filter here would silently drop
+  real feedback. Callers are expected to have already dropped Camelot's
+  own bot comments with `bot_authored?/1` before reaching this point;
+  without that upstream filter, the runner's own status-update comments
+  read back as "new" feedback and re-trigger this on every poll forever.
   """
   @spec new_comments?([map()], String.t() | nil, DateTime.t() | nil) :: boolean()
   def new_comments?(comments, last_commit_date, seen_at) do

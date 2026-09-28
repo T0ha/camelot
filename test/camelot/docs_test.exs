@@ -13,6 +13,7 @@ defmodule Camelot.DocsTest do
       assert "self-hosting/cluster-runners" in slugs
       assert "self-hosting/github-app" in slugs
       assert "cloud/get-started" in slugs
+      assert "guides/camelot-folder" in slugs
 
       # Internal docs live flat under docs/ (not in a category folder), so
       # they are never globbed or published.
@@ -29,6 +30,15 @@ defmodule Camelot.DocsTest do
       assert body =~ "<h1>"
 
       assert :error = Docs.get_page("does/not-exist")
+    end
+
+    test "the .camelot guide documents how rule files reach the agent" do
+      assert {:ok, %Page{title: title, body: body}} =
+               Docs.get_page("guides/camelot-folder")
+
+      assert title == "The .camelot folder"
+      assert body =~ ".camelot/rules"
+      assert body =~ "@.camelot/rules/feature-workflow.md"
     end
 
     test "get_page!/1 raises Camelot.Docs.NotFound for unknown slug" do

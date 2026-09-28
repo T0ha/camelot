@@ -112,4 +112,163 @@ defmodule Camelot.Board.PromptBuilderTest do
       assert PromptBuilder.attachments_block(%{}) == ""
     end
   end
+
+  describe "branch_directive/1" do
+    @core_api %Project{github_owner: "acme", github_repo: "core-api", name: "core-api"}
+    @proto_defs %Project{github_owner: "acme", github_repo: "proto-defs", name: "proto-defs"}
+
+    test "no blockers yields the original single-branch instruction" do
+      task = %Task{id: @task.id, project: @core_api, blockers: []}
+
+      directive = PromptBuilder.branch_directive(task)
+
+      assert directive =~ "Work on a git branch named exactly `camelot/task-#{task.id}`"
+      assert directive =~ "open the pull request from that branch"
+    end
+
+    test "a same-repo blocker at :pr produces the stacked base-branch directive" do
+      blocker = %Task{id: "b1111111-0000-0000-0000-000000000001", stage: :pr, project: @core_api}
+      task = %Task{id: @task.id, project: @core_api, blockers: [blocker]}
+
+      directive = PromptBuilder.branch_directive(task)
+
+      assert directive =~ "from `camelot/task-#{blocker.id}`"
+      assert directive =~ "base branch"
+    end
+
+    test "two same-repo blockers at :pr produce the merge wording" do
+      blocker_1 = %Task{id: "b1111111-0000-0000-0000-000000000001", stage: :pr, project: @core_api}
+      blocker_2 = %Task{id: "b2222222-0000-0000-0000-000000000002", stage: :pr, project: @core_api}
+      task = %Task{id: @task.id, project: @core_api, blockers: [blocker_1, blocker_2]}
+
+      directive = PromptBuilder.branch_directive(task)
+
+      assert directive =~ "default branch"
+      assert directive =~ "git merge"
+      assert directive =~ "camelot/task-#{blocker_1.id}"
+      assert directive =~ "camelot/task-#{blocker_2.id}"
+    end
+
+    test "a cross-repo blocker at :pr produces no branch directive" do
+      blocker = %Task{id: "b1111111-0000-0000-0000-000000000001", stage: :pr, project: @proto_defs}
+      task = %Task{id: @task.id, project: @core_api, blockers: [blocker]}
+
+      directive = PromptBuilder.branch_directive(task)
+
+      assert directive =~ "open the pull request from that branch"
+      refute directive =~ blocker.id
+    end
+
+    test "a same-repo blocker not yet at :pr produces no branch directive" do
+      blocker = %Task{id: "b1111111-0000-0000-0000-000000000001", stage: :executing, project: @core_api}
+      task = %Task{id: @task.id, project: @core_api, blockers: [blocker]}
+
+      directive = PromptBuilder.branch_directive(task)
+
+      assert directive =~ "open the pull request from that branch"
+      refute directive =~ blocker.id
+    end
+  end
+
+  describe "related_context_block/1" do
+    @core_api %Project{github_owner: "acme", github_repo: "core-api", name: "core-api"}
+    @proto_defs %Project{github_owner: "acme", github_repo: "proto-defs", name: "proto-defs"}
+
+    @empty_links %{
+      blockers: [],
+      subtasks: [],
+      related_out_tasks: [],
+      related_in_tasks: [],
+      parent_link: nil
+    }
+
+    test "is empty when the task has no links" do
+      task = Map.merge(%Task{id: @task.id, project: @core_api}, @empty_links)
+      assert PromptBuilder.related_context_block(task) == ""
+    end
+
+    test "is empty when the link associations were never loaded" do
+      assert PromptBuilder.related_context_block(%Task{id: @task.id, project: @core_api}) == ""
+    end
+
+    test "a same-repo blocker carries title, project, stage, summary, PR and branch note" do
+      blocker = %Task{
+        id: "b1111111-0000-0000-0000-000000000001",
+        title: "Extract the billing client",
+        stage: :pr,
+        full_plan: "Split the billing client into its own module.",
+        pr_url: "https://github.com/acme/core-api/pull/412",
+        project: @core_api
+      }
+
+      task = Map.merge(%Task{id: @task.id, project: @core_api}, %{@empty_links | blockers: [blocker]})
+
+      block = PromptBuilder.related_context_block(task)
+
+      assert block =~ "--- Related Tasks ---"
+      assert block =~ "Depends on: \"Extract the billing client\" [core-api] — stage: pr"
+      assert block =~ "Summary: Split the billing client into its own module."
+      assert block =~ "PR: https://github.com/acme/core-api/pull/412"
+      assert block =~ "Branch: camelot/task-#{blocker.id} (same repo — your base branch)"
+    end
+
+    test "a cross-repo blocker's PR line notes the different repo and carries no branch line" do
+      blocker = %Task{
+        id: "b2222222-0000-0000-0000-000000000002",
+        title: "Bump the shared proto",
+        stage: :pr,
+        pr_url: "https://github.com/acme/proto-defs/pull/77",
+        project: @proto_defs
+      }
+
+      task = Map.merge(%Task{id: @task.id, project: @core_api}, %{@empty_links | blockers: [blocker]})
+
+      block = PromptBuilder.related_context_block(task)
+
+      assert block =~ "PR: https://github.com/acme/proto-defs/pull/77   (different repo — no branch sharing)"
+      refute block =~ "Branch:"
+    end
+
+    test "carries the parent task" do
+      parent = %Task{id: "aaaaaaaa-0000-0000-0000-000000000001", title: "Split billing out", project: @core_api}
+      link = %Camelot.Board.TaskLink{id: "link-1", source_task: parent}
+
+      task = Map.merge(%Task{id: @task.id, project: @core_api}, %{@empty_links | parent_link: link})
+
+      assert PromptBuilder.related_context_block(task) =~ "Parent task: \"Split billing out\" [core-api]"
+    end
+
+    test "carries subtasks with their stage" do
+      subtask = %Task{
+        id: "aaaaaaaa-0000-0000-0000-000000000002",
+        title: "Wire the client into checkout",
+        stage: :executing,
+        project: @proto_defs
+      }
+
+      task = Map.merge(%Task{id: @task.id, project: @core_api}, %{@empty_links | subtasks: [subtask]})
+
+      assert PromptBuilder.related_context_block(task) =~
+               "Subtask: \"Wire the client into checkout\" [proto-defs] — stage: executing"
+    end
+
+    test "carries related tasks in both directions, with a task URL" do
+      related_out = %Task{id: "aaaaaaaa-0000-0000-0000-000000000003", title: "Billing dashboard", project: @core_api}
+      related_in = %Task{id: "aaaaaaaa-0000-0000-0000-000000000004", title: "Metrics export", project: @core_api}
+
+      task =
+        Map.merge(%Task{id: @task.id, project: @core_api}, %{
+          @empty_links
+          | related_out_tasks: [related_out],
+            related_in_tasks: [related_in]
+        })
+
+      block = PromptBuilder.related_context_block(task)
+
+      assert block =~ "Related: \"Billing dashboard\" [core-api] — "
+      assert block =~ "Related: \"Metrics export\" [core-api] — "
+      assert block =~ "/tasks/#{related_out.id}"
+      assert block =~ "/tasks/#{related_in.id}"
+    end
+  end
 end

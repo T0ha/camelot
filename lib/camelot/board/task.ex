@@ -19,6 +19,8 @@ defmodule Camelot.Board.Task do
 
   alias Camelot.Agents.Agent
   alias Camelot.Board.Notifiers.NotifyTaskStateEmail
+  alias Camelot.Board.Task.Changes.RejectBlocked
+  alias Camelot.Board.TaskLink
 
   @stages [
     :draft,
@@ -35,6 +37,11 @@ defmodule Camelot.Board.Task do
   # Stages from which work can be (re)started: the dispatcher picks a
   # `:queued` task up again and resumes it from wherever it left off.
   @resumable_stages [:todo, :planning, :executing, :pr]
+
+  # A blocker stops gating as soon as it has a PR open — the dependent
+  # then has a real branch to build on and does not have to wait for
+  # human review to finish.
+  @blocking_stages @stages -- [:pr, :done, :cancelled]
 
   oban do
     scheduled_actions do
@@ -230,6 +237,84 @@ defmodule Camelot.Board.Task do
     end
 
     has_many(:attachments, Camelot.Board.TaskAttachment)
+
+    # Raw link rows, both directions.
+    has_many :outgoing_links, TaskLink do
+      destination_attribute(:source_task_id)
+    end
+
+    has_many :incoming_links, TaskLink do
+      destination_attribute(:target_task_id)
+    end
+
+    # Per-type filtered join relationships. `many_to_many` has no
+    # filter that reaches the join table, but Ash reuses a
+    # pre-declared `join_relationship` verbatim — filter included.
+    has_many :blocker_links, TaskLink do
+      destination_attribute(:target_task_id)
+      filter(expr(link_type == :blocks))
+    end
+
+    has_many :blocked_task_links, TaskLink do
+      destination_attribute(:source_task_id)
+      filter(expr(link_type == :blocks))
+    end
+
+    has_many :subtask_links, TaskLink do
+      destination_attribute(:source_task_id)
+      filter(expr(link_type == :parent_of))
+    end
+
+    has_many :related_out_links, TaskLink do
+      destination_attribute(:source_task_id)
+      filter(expr(link_type == :relates_to))
+    end
+
+    has_many :related_in_links, TaskLink do
+      destination_attribute(:target_task_id)
+      filter(expr(link_type == :relates_to))
+    end
+
+    has_one :parent_link, TaskLink do
+      destination_attribute(:target_task_id)
+      from_many?(true)
+      filter(expr(link_type == :parent_of))
+    end
+
+    many_to_many :blockers, __MODULE__ do
+      through(TaskLink)
+      join_relationship(:blocker_links)
+      source_attribute_on_join_resource(:target_task_id)
+      destination_attribute_on_join_resource(:source_task_id)
+    end
+
+    many_to_many :blocked_tasks, __MODULE__ do
+      through(TaskLink)
+      join_relationship(:blocked_task_links)
+      source_attribute_on_join_resource(:source_task_id)
+      destination_attribute_on_join_resource(:target_task_id)
+    end
+
+    many_to_many :subtasks, __MODULE__ do
+      through(TaskLink)
+      join_relationship(:subtask_links)
+      source_attribute_on_join_resource(:source_task_id)
+      destination_attribute_on_join_resource(:target_task_id)
+    end
+
+    many_to_many :related_out_tasks, __MODULE__ do
+      through(TaskLink)
+      join_relationship(:related_out_links)
+      source_attribute_on_join_resource(:source_task_id)
+      destination_attribute_on_join_resource(:target_task_id)
+    end
+
+    many_to_many :related_in_tasks, __MODULE__ do
+      through(TaskLink)
+      join_relationship(:related_in_links)
+      source_attribute_on_join_resource(:target_task_id)
+      destination_attribute_on_join_resource(:source_task_id)
+    end
   end
 
   aggregates do
@@ -243,6 +328,40 @@ defmodule Camelot.Board.Task do
           "`:in_progress` before its session asks for a slot, so an " <>
           "`:in_progress` task is not necessarily executing — it may be " <>
           "waiting for its creator to drop under `per_user_max`."
+      )
+    end
+
+    exists :blocked_by_blockers?, :incoming_links do
+      public?(true)
+      filter(expr(link_type == :blocks and source_task.stage in ^@blocking_stages))
+
+      description(
+        "True while a `:blocks` predecessor has not yet reached " <>
+          "`:pr`/`:done`/`:cancelled`."
+      )
+    end
+
+    exists :blocked_by_subtasks?, :outgoing_links do
+      public?(true)
+      filter(expr(link_type == :parent_of and target_task.stage in ^@blocking_stages))
+
+      description(
+        "True while any subtask (`:parent_of` target) has not yet " <>
+          "reached `:pr`/`:done`/`:cancelled`. A parent task is " <>
+          "treated as blocked while any subtask is still pre-PR — drop " <>
+          "this aggregate from `blocked?` if parents should run freely."
+      )
+    end
+  end
+
+  calculations do
+    calculate :blocked?, :boolean, expr(blocked_by_blockers? or blocked_by_subtasks?) do
+      public?(true)
+
+      description(
+        "Recomputed on every read from the two gating aggregates, so " <>
+          "a blocker reaching `:pr` frees its dependents on the very " <>
+          "next dispatch tick with no extra bookkeeping."
       )
     end
   end
@@ -324,6 +443,12 @@ defmodule Camelot.Board.Task do
           {:error, field: :stage, message: "must be todo, planning, executing, or pr"}
         end
       end)
+
+      # A plain `validate` can't see aggregates/calculations, so the
+      # blocked check runs as a `before_action` hook instead — guards a
+      # manual Retry/Reset from jumping the gate the same way the
+      # dispatcher's `not blocked?` query filter does.
+      change(RejectBlocked)
 
       change(fn changeset, _context ->
         stage = Ash.Changeset.get_attribute(changeset, :stage)
@@ -541,6 +666,14 @@ defmodule Camelot.Board.Task do
   def stages, do: @stages
 
   @doc """
+  Returns the stages a `:blocks`/`:parent_of` link still gates on —
+  everything before `:pr` (a blocker's PR is enough for its dependent
+  to build on) and short of the terminal `:done`/`:cancelled`.
+  """
+  @spec blocking_stages() :: [atom()]
+  def blocking_stages, do: @blocking_stages
+
+  @doc """
   Returns all valid task states.
   """
   @spec states() :: [atom()]
@@ -552,6 +685,61 @@ defmodule Camelot.Board.Task do
   @spec column_stages() :: [atom()]
   def column_stages do
     @stages -- [:cancelled, :draft]
+  end
+
+  @doc """
+  Returns all valid task link types (`:blocks`, `:parent_of`,
+  `:relates_to`). Delegates to `Camelot.Board.TaskLink.link_types/0` so
+  the two modules can't drift apart.
+  """
+  @spec link_types() :: [atom()]
+  def link_types, do: TaskLink.link_types()
+
+  @doc """
+  The umbrella task this task is a subtask of, or `nil`.
+
+  `:parent` cannot be a `many_to_many` — `Ash.Resource.Relationships.ManyToMany`
+  hardcodes `cardinality: :many` — so this reads `parent_link.source_task`
+  instead. Requires `parent_link: :source_task` to be loaded.
+  """
+  @spec parent(t()) :: t() | nil
+  def parent(%{parent_link: %TaskLink{source_task: task}}), do: task
+  def parent(_task), do: nil
+
+  @doc """
+  Every `:relates_to` counterpart, in either direction.
+
+  Requires `:related_out_tasks` and `:related_in_tasks` to be loaded;
+  an unloaded task has no known counterparts rather than raising, so
+  that `PromptBuilder.related_context_block/1` degrades to an empty
+  block the same way its blocker and subtask sections do.
+  """
+  @spec related_tasks(t()) :: [t()]
+  def related_tasks(%{related_out_tasks: %Ash.NotLoaded{}}), do: []
+  def related_tasks(%{related_in_tasks: %Ash.NotLoaded{}}), do: []
+
+  def related_tasks(%{related_out_tasks: out_tasks, related_in_tasks: in_tasks}) do
+    out_tasks ++ in_tasks
+  end
+
+  @doc """
+  Load spec for the task-link associations `PromptBuilder.build/1`
+  needs (blockers with their project, for the stacked-branch directive
+  and blocker context; parent, subtasks and related tasks for the rest
+  of the context block). Shared by
+  `Camelot.Board.Changes.DispatchTasks.dispatchable_tasks/0` and
+  `Camelot.Runtime.TaskRunner.start_adoption/2` so both loaders that
+  call `PromptBuilder.build/1` load the same associations.
+  """
+  @spec link_load() :: keyword()
+  def link_load do
+    [
+      blockers: [:project],
+      subtasks: [:project],
+      related_out_tasks: [:project],
+      related_in_tasks: [:project],
+      parent_link: [source_task: [:project]]
+    ]
   end
 
   # Rejects a `next_model` that isn't one of the agent's configured
