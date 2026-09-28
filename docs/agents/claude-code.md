@@ -79,8 +79,8 @@ touching.
 ## Troubleshooting
 
 - **401 / auth errors** — usually means the wrong credential kind was
-  used (double-check it's `claude_api_key`, not `openai_api_key` or
-  `codex_api_key`) or the key/token has expired.
+  used (double-check it's `claude_api_key`, not `openai_api_key`) or
+  the key/token has expired.
 
 ---
 
