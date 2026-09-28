@@ -74,6 +74,49 @@ defmodule Camelot.Github.ClientTest do
     end
   end
 
+  # `visibility` is the only thing this normalisation adds that the
+  # product reasons about rather than displays: it becomes
+  # `project_created.repo_visibility`, and a private repository the
+  # App cannot read is the documented way a first task dies on
+  # `Authentication failed`. A silently wrong value there would be
+  # read as fact.
+  describe "normalize_repository/1" do
+    test "keeps the repository's declared visibility" do
+      assert %{visibility: "private"} = Client.normalize_repository(payload(%{"visibility" => "private"}))
+      assert %{visibility: "public"} = Client.normalize_repository(payload(%{"visibility" => "public"}))
+      assert %{visibility: "internal"} = Client.normalize_repository(payload(%{"visibility" => "internal"}))
+    end
+
+    test "falls back to the private flag when visibility is absent" do
+      assert %{visibility: "private"} = Client.normalize_repository(payload(%{"private" => true}))
+      assert %{visibility: "public"} = Client.normalize_repository(payload(%{"private" => false}))
+    end
+
+    # The property is an enum in PostHog, so an unexpected value is
+    # dropped rather than passed through and widening it.
+    test "reports nothing rather than an unknown visibility" do
+      assert %{visibility: nil} = Client.normalize_repository(payload(%{}))
+      assert %{visibility: nil} = Client.normalize_repository(payload(%{"visibility" => "secret"}))
+    end
+
+    test "carries the fields the picker renders" do
+      assert %{owner: "alice", repo: "widgets", full_name: "alice/widgets"} =
+               Client.normalize_repository(payload(%{}))
+    end
+  end
+
+  defp payload(extra) do
+    Map.merge(
+      %{
+        "owner" => %{"login" => "alice"},
+        "name" => "widgets",
+        "full_name" => "alice/widgets",
+        "html_url" => "https://github.com/alice/widgets"
+      },
+      extra
+    )
+  end
+
   describe "merge_pull_request/4" do
     test "handles API errors gracefully" do
       assert {:error, _} =

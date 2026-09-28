@@ -51,4 +51,41 @@ defmodule Camelot.RunnerImagesTest do
                "hand-maintained @stacks list to match"
     end
   end
+
+  # `runner-images/base/entrypoint.sh` writes two kinds of line, and
+  # the difference matters outside the container: `[camelot] ` lines
+  # are for the log collector, `[entrypoint] ` lines are shown to the
+  # user. `ProvisionMonitor.entrypoint_line/1` picks the last
+  # `[entrypoint] ` line and `workspace_progress/1` renders it into
+  # the task page verbatim, so putting the task id and stage in one
+  # of those turns a status line into "task_id=<uuid> stage=clone
+  # cloning …". Pinned here because nothing else exercises the shell.
+  describe "entrypoint stage logging" do
+    setup do
+      path = Path.join([File.cwd!(), "runner-images", "base", "entrypoint.sh"])
+
+      %{script: File.read!(path)}
+    end
+
+    test "emits a machine-readable stage line per stage", %{script: script} do
+      assert script =~ "[camelot] task_id=%s stage=%s"
+
+      for stage <- ~w(boot clone) do
+        assert script =~ "log_stage #{stage}",
+               "entrypoint.sh no longer tags the #{stage} stage — " <>
+                 "the collector cannot join those container logs to a task"
+      end
+    end
+
+    test "keeps the task id out of the user-facing lines", %{script: script} do
+      user_facing =
+        script
+        |> String.split("\n")
+        |> Enum.filter(&String.match?(&1, ~r/^\s*log "/))
+
+      refute Enum.any?(user_facing, &String.contains?(&1, "task_id=")),
+             "a `log \"…\"` line reaches the task page as its progress " <>
+               "line — use log_stage for machine-readable metadata"
+    end
+  end
 end

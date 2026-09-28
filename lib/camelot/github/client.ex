@@ -21,6 +21,18 @@ defmodule Camelot.Github.Client do
   @max_pages 20
   @default_merge_method :squash
 
+  # GitHub's documented repository visibilities.
+  @visibilities ["public", "private", "internal"]
+
+  @typedoc "A repository as the picker and the project form see it."
+  @type repository :: %{
+          owner: String.t(),
+          repo: String.t(),
+          full_name: String.t(),
+          html_url: String.t(),
+          visibility: String.t() | nil
+        }
+
   @spec get_pull_request(String.t(), String.t(), integer(), keyword()) ::
           {:ok, map()} | {:error, term()}
   def get_pull_request(owner, repo, pr_number, opts \\ []) do
@@ -181,7 +193,7 @@ defmodule Camelot.Github.Client do
   so large orgs aren't silently truncated to the first page.
   """
   @spec list_installation_repositories(integer(), keyword()) ::
-          {:ok, [map()]} | {:error, term()}
+          {:ok, [repository()]} | {:error, term()}
   def list_installation_repositories(installation_id, opts \\ []) do
     opts = Keyword.put(opts, :installation_id, installation_id)
 
@@ -233,14 +245,40 @@ defmodule Camelot.Github.Client do
     end)
   end
 
-  defp normalize_repository(repo) do
+  @doc """
+  Normalises one GitHub repository payload into the shape the
+  repository picker and `Camelot.Github.RepositoryCatalog` pass
+  around.
+
+  Public because `visibility/1` is the only place the product learns
+  whether a repository is private, and a wrong answer there is worse
+  than none: `project_created.repo_visibility` is what separates a
+  funnel stalled on the form from one stalled on repositories the App
+  was never allowed to read.
+  """
+  @spec normalize_repository(map()) :: repository()
+  def normalize_repository(repo) do
     %{
       owner: get_in(repo, ["owner", "login"]),
       repo: repo["name"],
       full_name: repo["full_name"],
-      html_url: repo["html_url"]
+      html_url: repo["html_url"],
+      visibility: visibility(repo)
     }
   end
+
+  # GitHub sends `visibility` on repository payloads and `private` on
+  # all of them; the boolean is the fallback. Anything outside the
+  # documented set is dropped rather than passed through, so the
+  # property stays a bounded enum.
+  @spec visibility(map()) :: String.t() | nil
+  defp visibility(%{"visibility" => visibility}) when visibility in @visibilities do
+    visibility
+  end
+
+  defp visibility(%{"private" => true}), do: "private"
+  defp visibility(%{"private" => false}), do: "public"
+  defp visibility(_repo), do: nil
 
   defp request(method, path, opts) do
     case request_with_headers(method, path, opts) do

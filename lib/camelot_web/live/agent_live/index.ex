@@ -103,7 +103,7 @@ defmodule CamelotWeb.AgentLive.Index do
   end
 
   defp save_agent(socket, :new, attrs, form_p) do
-    case Ash.create(Agent, attrs, action: :create) do
+    case Ash.create(Agent, attrs, action: :create, actor: socket.assigns.current_user) do
       {:ok, _agent} ->
         {:noreply,
          socket
@@ -121,7 +121,7 @@ defmodule CamelotWeb.AgentLive.Index do
   defp save_agent(socket, :edit, attrs, form_p) do
     attrs = Map.delete(attrs, :slug)
 
-    case Ash.update(socket.assigns.agent, attrs, action: :update) do
+    case Ash.update(socket.assigns.agent, attrs, action: :update, actor: socket.assigns.current_user) do
       {:ok, _agent} ->
         {:noreply,
          socket

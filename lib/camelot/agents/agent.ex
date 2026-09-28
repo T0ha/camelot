@@ -17,7 +17,8 @@ defmodule Camelot.Agents.Agent do
   use Ash.Resource,
     domain: Camelot.Agents,
     data_layer: AshPostgres.DataLayer,
-    authorizers: []
+    authorizers: [],
+    simple_notifiers: [Camelot.Telemetry.Notifier]
 
   @parsers [:claude_code_json, :codex_jsonl, :raw_text]
 

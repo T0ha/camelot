@@ -18,7 +18,8 @@ defmodule Camelot.Accounts.Credential do
     domain: Camelot.Accounts,
     data_layer: AshPostgres.DataLayer,
     extensions: [AshCloak],
-    authorizers: []
+    authorizers: [],
+    simple_notifiers: [Camelot.Telemetry.Notifier]
 
   # `:codex_api_key` was retired in favour of `:openai_api_key`: both
   # mounted the same `OPENAI_API_KEY`, nothing ever branched on the

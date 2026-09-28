@@ -21,10 +21,21 @@ defmodule Camelot.Github.UserInstallationsTest do
     Map.merge(
       %{
         "id" => id,
-        "account" => %{"login" => "octocat", "type" => "User"}
+        "account" => %{"login" => "octocat", "type" => "User"},
+        "repository_selection" => "selected"
       },
       overrides
     )
+  end
+
+  defp captured(event) do
+    Enum.filter(PostHog.Test.all_captured(), &(&1.event == event))
+  end
+
+  # Several of these tests link installations for two different users
+  # in one test process, so "was this captured" has to name whose.
+  defp captured(event, %User{id: id}) do
+    Enum.filter(captured(event), &(&1.distinct_id == id))
   end
 
   defp installation!(installation_id) do
@@ -85,6 +96,108 @@ defmodule Camelot.Github.UserInstallationsTest do
       assert installation!(free).user_id == newcomer.id
     end
 
+    # The login round-trip is the intended way to connect: a
+    # first-time GitHub sign-in lands on the board already connected,
+    # with no second step on /profile. Without a capture here the
+    # funnel's GitHub step could only be reached through the profile
+    # link, so everyone who took the intended path looked like a
+    # drop-off.
+    test "reports a first link as the GitHub setup step of the funnel" do
+      user = seed_user!("funnel@example.com")
+      id = unique_id()
+
+      assert :ok = UserInstallations.link([payload(id)], user)
+
+      assert [%{distinct_id: distinct_id, properties: properties}] =
+               captured("github_setup_succeeded")
+
+      assert distinct_id == user.id
+      assert properties.installation_id == id
+      assert properties.account_type == "User"
+      assert properties.repository_selection == "selected"
+    end
+
+    # This runs on every GitHub login, so re-linking what is already
+    # the user's would make both events count logins, not links.
+    test "reports nothing for an installation that is already the user's" do
+      user = seed_user!("relink@example.com")
+      id = unique_id()
+
+      assert :ok = UserInstallations.link([payload(id)], user)
+      assert [_linked] = captured("github_installation_linked")
+      assert [_succeeded] = captured("github_setup_succeeded")
+
+      assert :ok = UserInstallations.link([payload(id)], user)
+
+      assert [_still_one_link] = captured("github_installation_linked")
+      assert [_still_one_setup] = captured("github_setup_succeeded")
+    end
+
+    test "reports a bounded reason when the installation is someone else's" do
+      owner = seed_user!("owner-event@example.com")
+      newcomer = seed_user!("newcomer-event@example.com")
+      taken = unique_id()
+
+      assert :ok = UserInstallations.link([payload(taken)], owner)
+      assert :ok = UserInstallations.link([payload(taken)], newcomer)
+
+      assert [%{distinct_id: distinct_id, properties: properties}] =
+               captured("github_setup_failed")
+
+      assert distinct_id == newcomer.id
+      assert properties.reason == :link_failed
+      assert properties.http_status == nil
+    end
+
+    # An org installation another Camelot account owns stays in this
+    # user's `/user/installations` response for good, so a per-payload
+    # capture would report the *same* login as both connected and
+    # failed, then repeat the failure at every login afterwards.
+    test "reports no failure when something did end up the user's" do
+      owner = seed_user!("owner-mixed@example.com")
+      newcomer = seed_user!("newcomer-mixed@example.com")
+      taken = unique_id()
+      own = unique_id()
+
+      assert :ok = UserInstallations.link([payload(taken)], owner)
+      assert :ok = UserInstallations.link([payload(taken), payload(own)], newcomer)
+
+      assert [_succeeded] = captured("github_setup_succeeded", newcomer)
+      assert [] = captured("github_setup_failed", newcomer)
+    end
+
+    # The funnel question is "did this login leave them connected?",
+    # which an already-linked installation answers with yes.
+    test "reports no failure on a later login by a connected user" do
+      owner = seed_user!("owner-repeat@example.com")
+      newcomer = seed_user!("newcomer-repeat@example.com")
+      taken = unique_id()
+      own = unique_id()
+      payloads = [payload(taken), payload(own)]
+
+      assert :ok = UserInstallations.link([payload(taken)], owner)
+      assert :ok = UserInstallations.link(payloads, newcomer)
+      assert :ok = UserInstallations.link(payloads, newcomer)
+      assert :ok = UserInstallations.link(payloads, newcomer)
+
+      assert [] = captured("github_setup_failed", newcomer)
+    end
+
+    # One sync, one verdict: two unclaimable installations are a
+    # single failed connect, not two.
+    test "reports one failure per sync, not one per installation" do
+      owner = seed_user!("owner-single@example.com")
+      newcomer = seed_user!("newcomer-single@example.com")
+      first = unique_id()
+      second = unique_id()
+
+      assert :ok = UserInstallations.link([payload(first), payload(second)], owner)
+      assert :ok = UserInstallations.link([payload(first), payload(second)], newcomer)
+
+      assert [%{properties: %{reason: :link_failed}}] =
+               captured("github_setup_failed", newcomer)
+    end
+
     test "handles an empty list" do
       user = seed_user!("empty@example.com")
       assert :ok = UserInstallations.link([], user)
@@ -109,5 +222,70 @@ defmodule Camelot.Github.UserInstallationsTest do
 
       assert UserInstallations.sync(nil, user) == {:error, :no_access_token}
     end
+
+    # Folding the install into the login round-trip is the intended
+    # way to connect, so a listing that fails leaves the user
+    # unconnected having linked nothing and attempted nothing. Without
+    # an event they are indistinguishable in PostHog from someone who
+    # never tried.
+    test "reports a failed listing as a connect failure" do
+      user = seed_user!("list-http-error@example.com")
+      configure_github_app()
+      Req.Test.stub(__MODULE__, &Plug.Conn.send_resp(&1, 503, "nope"))
+
+      assert {:error, {:http_error, 503, _body}} =
+               UserInstallations.sync("gho_token", user)
+
+      assert [%{properties: %{reason: :http_error, http_status: 503}}] =
+               captured("github_setup_failed", user)
+    end
+
+    test "classifies a rejected token rather than reporting it raw" do
+      user = seed_user!("list-unauthorized@example.com")
+      configure_github_app()
+      Req.Test.stub(__MODULE__, &Plug.Conn.send_resp(&1, 401, "bad credentials"))
+
+      assert {:error, _reason} = UserInstallations.sync("gho_token", user)
+
+      assert [%{properties: %{reason: :forbidden, http_status: 401}}] =
+               captured("github_setup_failed", user)
+    end
+
+    # Neither is a connect the user attempted: the deployment has no
+    # GitHub App at all, or the login carried no user token. Same
+    # split `CamelotWeb.AuthController` already makes when it decides
+    # what is worth logging.
+    test "reports nothing when the deployment has no GitHub App" do
+      user = seed_user!("list-unconfigured@example.com")
+      Application.put_env(:camelot, :github_app, [])
+
+      assert UserInstallations.sync("gho_token", user) == {:error, :not_configured}
+      assert captured("github_setup_failed", user) == []
+    end
+
+    test "reports nothing when the login carried no GitHub token" do
+      user = seed_user!("list-no-token@example.com")
+
+      assert UserInstallations.sync(nil, user) == {:error, :no_access_token}
+      assert captured("github_setup_failed", user) == []
+    end
+  end
+
+  # `list/1` calls `Req.get/1` directly, so the only seam is Req's own
+  # global default options. Safe here because the case is
+  # `async: false`: ExUnit runs no other module alongside it.
+  defp configure_github_app do
+    previous_req = Application.get_env(:req, :default_options, [])
+    Req.default_options(plug: {Req.Test, __MODULE__}, retry: false)
+    on_exit(fn -> Application.put_env(:req, :default_options, previous_req) end)
+
+    Application.put_env(:camelot, :github_app,
+      app_id: "123",
+      slug: "camelot-dev",
+      client_id: "Iv1.abc",
+      client_secret: "secret",
+      private_key: Base.encode64("pem"),
+      webhook_secret: "whsecret"
+    )
   end
 end

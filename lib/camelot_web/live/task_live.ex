@@ -23,6 +23,7 @@ defmodule CamelotWeb.TaskLive do
   alias CamelotWeb.TaskAttachments
 
   require Ash.Query
+  require Logger
 
   @task_load [
     :project,
@@ -67,6 +68,16 @@ defmodule CamelotWeb.TaskLive do
             link_task: nil
           )
           |> allow_upload(:attachment, accept: :any, max_entries: 5, max_file_size: 25_000_000)
+          # Frontend autocapture — $exception above all — carries no
+          # task context of its own, which is why 900-odd exceptions a
+          # quarter are unattributable. Registering these as browser
+          # super-properties fixes that without a new capture.
+          |> push_event("posthog:register", %{
+            task_id: task.id,
+            project_id: task.project_id
+          })
+
+        Logger.metadata(task_id: task.id, project_id: task.project_id)
 
         {:ok, socket}
 
