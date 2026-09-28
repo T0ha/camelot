@@ -354,6 +354,30 @@ defmodule Camelot.Board.Changes.CheckPrStatusTest do
     end
   end
 
+  describe "bot_authored?/1" do
+    test "the test-environment App bot is a bot" do
+      assert CheckPrStatus.bot_authored?(comment("2026-07-10T05:19:45Z", "camelotai-test[bot]"))
+    end
+
+    test "the prod App bot is a bot" do
+      assert CheckPrStatus.bot_authored?(comment("2026-07-10T05:19:45Z", "camelot-ai-board[bot]"))
+    end
+
+    test "a human reviewer sharing the PR author's account is not a bot" do
+      # Regression: the runner opens PRs under the same installation as
+      # the human reviewer, so login alone must not exclude a human.
+      refute CheckPrStatus.bot_authored?(comment("2026-07-10T05:19:45Z", "T0ha"))
+    end
+
+    test "a review authored by the bot is a bot" do
+      assert CheckPrStatus.bot_authored?(review("COMMENTED", "2026-07-10T05:19:45Z", "camelotai-test[bot]"))
+    end
+
+    test "an entry with no user is not a bot" do
+      refute CheckPrStatus.bot_authored?(%{"created_at" => "2026-07-10T05:19:45Z"})
+    end
+  end
+
   describe "auto_fix_available?/1" do
     test "allows fixes below the default cap of 2" do
       assert CheckPrStatus.auto_fix_available?(%Task{pr_auto_fix_attempts: 0})

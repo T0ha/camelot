@@ -31,6 +31,14 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   last commit and unseen. Without those guards one undismissed review
   re-dispatched the agent every two minutes for eight hours.
 
+  Comments and reviews authored by Camelot's own GitHub App bots
+  (`bot_authored?/1`) are dropped before any of the above runs. The
+  runner posts its own status-update PR comments through the App
+  installation token; reading one back as "new feedback" on the next
+  poll re-dispatched the agent every couple of minutes for hours with
+  no reviewer ever involved (found 2026-09-26, task `8193f1e6`: 28
+  consecutive re-dispatches, ~$144, zero commits).
+
   Those automatic re-dispatches are capped at a configurable number of
   consecutive attempts (see `max_auto_fix_attempts/0`, default 2), so a
   task the agent cannot fix stops looping and is left for human review.
@@ -89,6 +97,9 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
          {:ok, check_runs} <-
            fetch_check_runs(owner, repo, pr_data, opts) do
       review_comments = fetch_review_comments(owner, repo, pr, opts)
+      reviews = reject_bot_authored(reviews)
+      comments = reject_bot_authored(comments)
+      review_comments = reject_bot_authored(review_comments)
       feedback = merge_review_feedback(comments, review_comments, reviews)
       apply_pr_state(task, pr_data, reviews, feedback, commits, check_runs)
     else
@@ -157,6 +168,28 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
       {:error, _reason} -> []
     end
   end
+
+  # Camelot's own GitHub App bots. The runner posts its PR comments
+  # through whichever App installation this deployment is configured
+  # with (`Camelot.Github.AppConfig`), so its own status updates must
+  # never be read back as reviewer feedback — see `bot_authored?/1`.
+  @bot_logins ~w(camelotai-test[bot] camelot-ai-board[bot])
+
+  @doc """
+  True if a comment or review was authored by one of Camelot's own
+  GitHub App bots (test or prod), never a human.
+
+  Matches on the exact `[bot]`-suffixed login GitHub assigns a App's
+  own account (e.g. `camelotai-test[bot]`), so it only ever excludes
+  Camelot's own automated activity — a human reviewer who happens to
+  share the PR author's account (the runner opens PRs under the same
+  installation) is a distinct, non-bot login and is never dropped.
+  """
+  @spec bot_authored?(map()) :: boolean()
+  def bot_authored?(%{"user" => %{"login" => login}}), do: login in @bot_logins
+  def bot_authored?(_entry), do: false
+
+  defp reject_bot_authored(entries), do: Enum.reject(entries, &bot_authored?/1)
 
   @doc """
   Merges the three reviewer-feedback surfaces into one comment list.
@@ -562,13 +595,12 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   @doc """
   True if any comment is newer than the last commit AND unseen.
 
-  Deliberately does NOT filter by author. Runners open PRs with the
-  user's own GitHub token, so the PR author and the human reviewer are
-  the same account — an author-based filter would silently drop the
-  reviewer's feedback (which is exactly the comment we must react to).
-  Nothing in the app posts PR comments, so there is no bot chatter to
-  exclude; re-trigger loops are prevented by `pr_comments_seen_at` and
-  the newer-than-last-commit guard.
+  Does not filter by author itself — a human reviewer can share the
+  PR's own account, so an author-based filter here would silently drop
+  real feedback. Callers are expected to have already dropped Camelot's
+  own bot comments with `bot_authored?/1` before reaching this point;
+  without that upstream filter, the runner's own status-update comments
+  read back as "new" feedback and re-trigger this on every poll forever.
   """
   @spec new_comments?([map()], String.t() | nil, DateTime.t() | nil) :: boolean()
   def new_comments?(comments, last_commit_date, seen_at) do
