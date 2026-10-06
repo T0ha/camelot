@@ -58,6 +58,15 @@ choose which Agent CLI template runs it. Pick **Claude Code** — it's
 pre-seeded, so there's nothing to configure per-project beyond having
 the credential from step 2.
 
+That credential is a hard prerequisite, not a suggestion: until the
+`claude_api_key` from step 2 exists, **Claude Code — API key absent**
+is greyed out in the dropdown and the form refuses the pick, rather
+than dispatching a run that would fail with a bare 401 minutes later
+inside the runner.
+
+The board also needs somewhere to run the task: with no project at
+all, `/` sends you to `/projects` instead of opening the form.
+
 ## 4. Admin: reviewing the template
 
 Workspace admins can review or tune the Claude Code template at

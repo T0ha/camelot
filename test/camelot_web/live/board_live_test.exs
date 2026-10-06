@@ -3,6 +3,7 @@ defmodule CamelotWeb.BoardLiveTest do
 
   import Phoenix.LiveViewTest
 
+  alias Camelot.Accounts.Credential
   alias Camelot.Accounts.User
   alias Camelot.Agents.Session
   alias Camelot.Board.Task
@@ -11,6 +12,26 @@ defmodule CamelotWeb.BoardLiveTest do
   require Ash.Query
 
   setup :register_and_log_in_user
+
+  # Every test here is about a user who *can* run a task: without a
+  # project the board redirects to `/projects`, and without the
+  # `claude_api_key` the Claude Code option is disabled and the submit
+  # refused (see `CamelotWeb.BoardGatingTest`).
+  setup %{user: user} do
+    Ash.create!(
+      Credential,
+      %{kind: :claude_api_key, value: "sk-ant-board", user_id: user.id}
+    )
+
+    %{
+      home_project:
+        Ash.create!(
+          Project,
+          %{name: "home-#{System.unique_integer([:positive])}", path: "/tmp/home"},
+          actor: user
+        )
+    }
+  end
 
   test "renders board page", %{conn: conn} do
     {:ok, _view, html} = live(conn, ~p"/")

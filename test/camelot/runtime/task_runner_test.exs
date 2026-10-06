@@ -107,6 +107,29 @@ defmodule Camelot.Runtime.TaskRunnerTest do
       assert value in ["PRIV-manual", "PRIV-default"]
     end
 
+    # Driven off the *seeded* row rather than a hand-built config:
+    # `required_credential_kinds` was empty in every deployment, so
+    # this path mounted nothing and Claude Code 401'd minutes into the
+    # run — a config built by hand could never have caught it.
+    test "the seeded claude_code row mounts the creator's Anthropic key", ctx do
+      {:ok, _claude} =
+        Ash.create(Credential, %{
+          user_id: ctx.task.creator_id,
+          kind: :claude_api_key,
+          value: "sk-ant-seeded"
+        })
+
+      project = Ash.get!(Project, ctx.task.project_id)
+      config = AgentConfig.resolve(agent!("claude_code"), project)
+
+      assert config.required_credential_kinds == [:claude_api_key]
+
+      assert ctx.task
+             |> TaskRunner.build_secrets(config)
+             |> Enum.flat_map(&SecretEnv.to_env/1)
+             |> Enum.member?("ANTHROPIC_API_KEY=sk-ant-seeded")
+    end
+
     test "an openai_api_key satisfies the codex CLI", ctx do
       # The case that broke the first real Codex run on the test
       # cluster: the row required the since-retired :codex_api_key, the
