@@ -23,7 +23,7 @@ defmodule CamelotWeb.PostHogLiveNavigationTest do
     render_patch(view, ~p"/projects/new")
 
     view
-    |> form("#project-form", %{"name" => name, "path" => "/tmp/posthog-nav"})
+    |> form("#project-form", %{"project" => %{"name" => name, "path" => "/tmp/posthog-nav"}})
     |> render_submit()
 
     assert %{properties: properties} =

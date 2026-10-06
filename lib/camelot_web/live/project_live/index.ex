@@ -6,6 +6,7 @@ defmodule CamelotWeb.ProjectLive.Index do
 
   import CamelotWeb.OnboardingComponents
 
+  alias AshPhoenix.Form
   alias Camelot.Accounts.User
   alias Camelot.Github.RepositoryCatalog
   alias Camelot.Github.Resolver
@@ -46,11 +47,20 @@ defmodule CamelotWeb.ProjectLive.Index do
   end
 
   defp apply_action(socket, :new, _params) do
+    form =
+      Project
+      |> Form.for_create(:create,
+        as: "project",
+        actor: socket.assigns.current_user,
+        params: project_create_params()
+      )
+      |> to_form()
+
     assign(socket,
       page_title: "New Project",
       project: nil,
       advanced_open?: false,
-      form: to_form(project_create_params())
+      form: form
     )
   end
 
@@ -58,13 +68,22 @@ defmodule CamelotWeb.ProjectLive.Index do
     project = Ash.get!(Project, id)
     params = project_update_params(project)
 
+    form =
+      project
+      |> Form.for_update(:update,
+        as: "project",
+        actor: socket.assigns.current_user,
+        params: params
+      )
+      |> to_form()
+
     assign(socket,
       page_title: "Edit Project",
       project: project,
       # A project that already leans on the advanced fields
       # shouldn't hide them behind a click on every edit.
       advanced_open?: advanced_filled?(params),
-      form: to_form(params)
+      form: form
     )
   end
 
@@ -79,22 +98,19 @@ defmodule CamelotWeb.ProjectLive.Index do
      |> load_projects()}
   end
 
-  def handle_event("validate", params, socket) do
+  def handle_event("validate", %{"project" => raw_params} = params, socket) do
     target = params["_target"] |> List.wrap() |> List.last()
 
     project_params =
-      params
-      |> extract_project_params()
+      raw_params
       |> update_path_from_name(socket)
       |> detect_github_fields(target)
 
-    {:noreply, assign(socket, form: to_form(project_params))}
+    {:noreply, assign(socket, form: Form.validate(socket.assigns.form, project_params))}
   end
 
-  def handle_event("save", params, socket) do
-    project_params = extract_project_params(params)
-
-    case build_override_attrs(project_params) do
+  def handle_event("save", %{"project" => raw_params}, socket) do
+    case build_override_attrs(raw_params) do
       {:ok, attrs} ->
         save_project(socket, socket.assigns.live_action, attrs)
 
@@ -104,7 +120,7 @@ defmodule CamelotWeb.ProjectLive.Index do
         {:noreply,
          socket
          |> put_flash(:error, override_error_message(field, code))
-         |> assign(form: to_form(project_params))}
+         |> assign(form: Form.validate(socket.assigns.form, raw_params))}
     end
   end
 
@@ -123,7 +139,7 @@ defmodule CamelotWeb.ProjectLive.Index do
       |> Map.put("path", path)
       |> detect_github_from_git(path)
 
-    {:noreply, assign(socket, form: to_form(form_params))}
+    {:noreply, assign(socket, form: Form.validate(socket.assigns.form, form_params))}
   end
 
   def handle_info({:github_repo_selected, repo}, socket) do
@@ -133,19 +149,19 @@ defmodule CamelotWeb.ProjectLive.Index do
       |> Map.put("github_repo", repo.repo)
       |> Map.put("github_repo_url", repo.html_url)
 
-    {:noreply, assign(socket, form: to_form(form_params), picked_repo: repo)}
+    {:noreply, assign(socket, form: Form.validate(socket.assigns.form, form_params), picked_repo: repo)}
   end
 
   def handle_info({:runner_image_selected, image}, socket) do
     form_params = Map.put(socket.assigns.form.params, "runner_image_override", image)
 
-    {:noreply, assign(socket, form: to_form(form_params))}
+    {:noreply, assign(socket, form: Form.validate(socket.assigns.form, form_params))}
   end
 
   defp save_project(socket, :new, params) do
     set_repo_visibility(socket, params)
 
-    case Ash.create(Project, params, action: :create, actor: socket.assigns.current_user) do
+    case Form.submit(socket.assigns.form, params: params) do
       {:ok, project} ->
         report_repo_resolution(socket, project)
 
@@ -154,15 +170,18 @@ defmodule CamelotWeb.ProjectLive.Index do
          |> put_flash(:info, "Project created")
          |> push_navigate(to: ~p"/projects")}
 
-      {:error, changeset} ->
-        capture_create_failed(socket, Reason.changeset_summary(changeset))
+      {:error, form} ->
+        capture_create_failed(socket, Reason.changeset_summary(Form.raw_errors(form)))
 
-        {:noreply, assign(socket, form: to_form(changeset_params(changeset)))}
+        {:noreply,
+         socket
+         |> put_flash(:error, "Couldn't save project")
+         |> assign(form: form)}
     end
   end
 
   defp save_project(socket, :edit, params) do
-    case Ash.update(socket.assigns.project, params, action: :update) do
+    case Form.submit(socket.assigns.form, params: params) do
       {:ok, project} ->
         report_repo_resolution(socket, project)
 
@@ -171,8 +190,11 @@ defmodule CamelotWeb.ProjectLive.Index do
          |> put_flash(:info, "Project updated")
          |> push_navigate(to: ~p"/projects")}
 
-      {:error, changeset} ->
-        {:noreply, assign(socket, form: to_form(changeset_params(changeset)))}
+      {:error, form} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "Couldn't save project")
+         |> assign(form: form)}
     end
   end
 
@@ -225,20 +247,6 @@ defmodule CamelotWeb.ProjectLive.Index do
       "base_retry_delay_ms_override" => int_or_blank(project.base_retry_delay_ms_override),
       "status" => to_string(project.status)
     }
-  end
-
-  defp changeset_params(changeset) do
-    Map.get(changeset, :params, %{})
-  end
-
-  @project_fields ~w(name path description github_repo_url
-                     github_owner github_repo runner_image_override status
-                     command_prefix_override executable_override base_args_override
-                     env_vars_override permission_args_by_stage_override
-                     internal_tools_override base_retry_delay_ms_override)
-
-  defp extract_project_params(params) do
-    Map.take(params, @project_fields)
   end
 
   # The advanced fields whose presence means the user actually
@@ -666,10 +674,9 @@ defmodule CamelotWeb.ProjectLive.Index do
             </button>
 
             <%!--
-              Hidden rather than removed: this form is a bare
-              `to_form(params)`, so `save` reads whatever the DOM
-              serializes. A `display: none` input still submits; a
-              missing one would silently drop the field. Collapsed
+              Hidden rather than removed: `save` reads whatever the
+              DOM serializes. A `display: none` input still submits;
+              a missing one would silently drop the field. Collapsed
               state is server-side because `phx-change="validate"`
               re-renders on every keystroke and would strip a
               browser-set `open` attribute.

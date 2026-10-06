@@ -68,6 +68,67 @@ defmodule CamelotWeb.ProjectLiveTest do
     end
   end
 
+  describe "validation" do
+    test "submitting the new form with a blank name shows an inline error and creates nothing", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects/new")
+
+      html =
+        view
+        |> form("#project-form", %{"project" => %{"name" => ""}})
+        |> render_submit()
+
+      assert html =~ "is required"
+      assert html =~ "Couldn&#39;t save project"
+      refute Ash.read_one!(Ash.Query.filter(Project, name == ""))
+    end
+
+    test "typing into the name field after a failed submit live-validates it", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/projects/new")
+
+      view
+      |> form("#project-form", %{"project" => %{"name" => ""}})
+      |> render_submit()
+
+      html =
+        view
+        |> form("#project-form", %{"project" => %{"name" => ""}})
+        |> render_change()
+
+      assert html =~ "is required"
+    end
+
+    test "a valid submit still creates the project and navigates away", %{conn: conn} do
+      name = "valid-#{System.unique_integer([:positive])}"
+
+      {:ok, view, _html} = live(conn, ~p"/projects/new")
+
+      {:error, {:live_redirect, %{to: "/projects"}}} =
+        view
+        |> form("#project-form", %{"project" => %{"name" => name}})
+        |> render_submit()
+
+      assert Ash.read_one!(Ash.Query.filter(Project, name == ^name))
+    end
+
+    test "malformed override JSON still shows the custom flash, not an Ash error", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/projects/new")
+
+      html =
+        view
+        |> form("#project-form", %{
+          "project" => %{
+            "name" => "override-#{System.unique_integer([:positive])}",
+            "env_vars_override" => "not json"
+          }
+        })
+        |> render_submit()
+
+      assert html =~ "env_vars_override is not valid JSON"
+    end
+  end
+
   describe "advanced settings" do
     test "the new form shows only the four essential fields up front", %{conn: conn} do
       {:ok, view, html} = live(conn, ~p"/projects/new")
@@ -75,8 +136,8 @@ defmodule CamelotWeb.ProjectLiveTest do
       assert html =~ "Advanced settings"
       assert has_element?(view, "#project-advanced.hidden")
 
-      assert has_element?(view, "#project-form input[name=name]")
-      assert has_element?(view, "#project-form textarea[name=description]")
+      assert has_element?(view, "#project-form input[name='project[name]']")
+      assert has_element?(view, "#project-form textarea[name='project[description]']")
       assert has_element?(view, "#github-repo-picker-container")
       assert has_element?(view, "#runner-image-picker-container")
     end
@@ -96,13 +157,15 @@ defmodule CamelotWeb.ProjectLiveTest do
 
       # Typing the name derives the path into the collapsed
       # folder picker, exactly as it does in the browser.
-      view |> form("#project-form", %{"name" => name}) |> render_change()
+      view |> form("#project-form", %{"project" => %{"name" => name}}) |> render_change()
 
       view
       |> form("#project-form", %{
-        "github_owner" => "acme",
-        "github_repo" => "widgets",
-        "executable_override" => "claude-next"
+        "project" => %{
+          "github_owner" => "acme",
+          "github_repo" => "widgets",
+          "executable_override" => "claude-next"
+        }
       })
       |> render_submit()
 
@@ -191,8 +254,10 @@ defmodule CamelotWeb.ProjectLiveTest do
 
       view
       |> form("#project-form", %{
-        "name" => project.name,
-        "runner_image_override" => "ghcr.io/t0ha/camelot-runner-elixir:1.19"
+        "project" => %{
+          "name" => project.name,
+          "runner_image_override" => "ghcr.io/t0ha/camelot-runner-elixir:1.19"
+        }
       })
       |> render_submit()
 
