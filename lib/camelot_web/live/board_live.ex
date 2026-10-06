@@ -9,6 +9,7 @@ defmodule CamelotWeb.BoardLive do
   import CamelotWeb.BoardComponents
 
   alias AshPhoenix.Form
+  alias Camelot.Accounts.UserCredentials
   alias Camelot.Agents.Agent
   alias Camelot.Agents.ModelLabel
   alias Camelot.Board.Task
@@ -39,18 +40,47 @@ defmodule CamelotWeb.BoardLive do
         # Task modal already open.
         new_task_open?: params["onboarding"] == "task",
         parent_task: nil,
-        blocked_by_task: nil
+        blocked_by_task: nil,
+        form_blocked_reported?: false
       )
       |> load_board()
       |> allow_upload(:attachment, accept: :any, max_entries: 5, max_file_size: 25_000_000)
 
-    # The setup guide's last step lands here with the modal already
-    # open, which is precisely the case where it may have nothing to
-    # pick from.
-    connected?(socket) && socket.assigns.new_task_open? && capture_form_blocked(socket)
-
-    {:ok, socket}
+    {:ok, gate(socket)}
   end
+
+  # A board with no project is empty by construction and its New Task
+  # form can never be submitted — PostHog's dead clicks cluster on
+  # exactly that modal's empty selects. Send the user where the work
+  # starts rather than render a form they cannot use.
+  #
+  # Reads the board's own project list rather than
+  # `CamelotWeb.Onboarding.Status`, so an account that finished (or
+  # predates) the guide is held to the same prerequisite.
+  @spec gate(Socket.t()) :: Socket.t()
+  defp gate(%Socket{assigns: %{projects: []}} = socket) do
+    socket
+    |> capture_form_blocked()
+    |> put_flash(
+      :info,
+      "Create a project first — a task runs an agent against a project."
+    )
+    |> push_navigate(to: ~p"/projects")
+  end
+
+  # The setup guide's last step lands here with the modal already
+  # open, which is precisely the case where it may have nothing
+  # pickable in it. Only on the connected mount: the dead render would
+  # double-count, and the project gate above redirects before it.
+  defp gate(%Socket{assigns: %{new_task_open?: true}} = socket) do
+    if connected?(socket) do
+      capture_form_blocked(socket)
+    else
+      socket
+    end
+  end
+
+  defp gate(socket), do: socket
 
   # Picker-backed link fields held outside the AshPhoenix create form.
   @picker_fields [:parent_task, :blocked_by_task]
@@ -77,9 +107,7 @@ defmodule CamelotWeb.BoardLive do
 
   @impl true
   def handle_event("open_new_task", _params, socket) do
-    capture_form_blocked(socket)
-
-    {:noreply, assign(socket, new_task_open?: true)}
+    {:noreply, socket |> capture_form_blocked() |> open_new_task()}
   end
 
   def handle_event("close_new_task", _params, socket) do
@@ -91,6 +119,65 @@ defmodule CamelotWeb.BoardLive do
   end
 
   def handle_event("create_task", %{"task" => params}, socket) do
+    agent = Enum.find(socket.assigns.agents, &(&1.id == params["agent_id"]))
+    missing = UserCredentials.missing_kinds(socket.assigns.credential_kinds, agent)
+
+    submit_task(socket, params, agent, missing)
+  end
+
+  def handle_event("cancel_task", %{"id" => id}, socket) do
+    task = Ash.get!(Task, id)
+
+    case Ash.update(task, %{}, action: :cancel) do
+      {:ok, task} ->
+        broadcast_task_event(:task_updated, task)
+        {:noreply, load_board(socket)}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Cannot cancel task")}
+    end
+  end
+
+  def handle_event("toggle_scope", _params, socket) do
+    {:noreply, socket |> assign(see_all: !socket.assigns.see_all) |> load_board()}
+  end
+
+  def handle_event("restart_task", %{"id" => id}, socket) do
+    task = Ash.get!(Task, id)
+
+    case Ash.update(task, %{}, action: :reset) do
+      {:ok, task} ->
+        broadcast_task_event(:task_updated, task)
+        {:noreply, socket |> put_flash(:info, "Task restarted") |> load_board()}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Cannot restart task")}
+    end
+  end
+
+  # A board left open while its last project is deleted elsewhere (or
+  # the user's membership revoked) must not reopen a form a fresh
+  # mount would have redirected away from, however stale the DOM that
+  # pushed the event.
+  @spec open_new_task(Socket.t()) :: Socket.t()
+  defp open_new_task(%Socket{assigns: %{projects: []}} = socket), do: socket
+  defp open_new_task(socket), do: assign(socket, new_task_open?: true)
+
+  # Guards the wire, not just the render: `disabled` on an `<option>`
+  # is a hint to the browser, and a run dispatched against a CLI whose
+  # key is absent only fails minutes later, inside the runner, with a
+  # bare 401. Re-validating keeps the typed values and the modal, so
+  # the user can switch agent instead of retyping the task.
+  @spec submit_task(Socket.t(), map(), Agent.t() | nil, [atom()]) ::
+          {:noreply, Socket.t()}
+  defp submit_task(socket, params, agent, [_ | _] = missing) do
+    {:noreply,
+     socket
+     |> assign(task_form: Form.validate(socket.assigns.task_form, params))
+     |> put_flash(:error, missing_credential_message(agent, missing))}
+  end
+
+  defp submit_task(socket, params, _agent, []) do
     case Form.submit(socket.assigns.task_form, params: params) do
       {:ok, task} ->
         consume_uploaded_entries(socket, :attachment, fn %{path: tmp_path}, entry ->
@@ -127,36 +214,6 @@ defmodule CamelotWeb.BoardLive do
     end
   end
 
-  def handle_event("cancel_task", %{"id" => id}, socket) do
-    task = Ash.get!(Task, id)
-
-    case Ash.update(task, %{}, action: :cancel) do
-      {:ok, task} ->
-        broadcast_task_event(:task_updated, task)
-        {:noreply, load_board(socket)}
-
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, "Cannot cancel task")}
-    end
-  end
-
-  def handle_event("toggle_scope", _params, socket) do
-    {:noreply, socket |> assign(see_all: !socket.assigns.see_all) |> load_board()}
-  end
-
-  def handle_event("restart_task", %{"id" => id}, socket) do
-    task = Ash.get!(Task, id)
-
-    case Ash.update(task, %{}, action: :reset) do
-      {:ok, task} ->
-        broadcast_task_event(:task_updated, task)
-        {:noreply, socket |> put_flash(:info, "Task restarted") |> load_board()}
-
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, "Cannot restart task")}
-    end
-  end
-
   defp load_board(socket) do
     user = socket.assigns.current_user
     see_all = socket.assigns.see_all
@@ -186,25 +243,53 @@ defmodule CamelotWeb.BoardLive do
       page_title: "Board",
       columns: columns,
       projects: projects,
-      agents: agents
+      agents: agents,
+      credential_kinds: UserCredentials.held_kinds(user)
     )
     |> assign_new(:task_form, fn -> new_task_form(user) end)
   end
 
-  # The new-task modal is reachable before a project or an agent
-  # exists, and PostHog's dead clicks cluster on exactly those two
-  # empty selects. Gating the button is a separate question; this only
-  # makes the dead end countable.
-  @spec capture_form_blocked(Socket.t()) :: :ok
-  defp capture_form_blocked(%Socket{assigns: %{projects: [], current_user: user}}) do
-    Capture.capture("task_form_blocked", user, %{reason: :no_project})
+  # The new-task form is only submittable by a user who has a project
+  # and holds the API key the chosen agent CLI needs, and PostHog's
+  # dead clicks cluster on exactly the selects that say so. Each
+  # refusal names its own reason, so the fix is measurable per cause.
+  @spec capture_form_blocked(Socket.t()) :: Socket.t()
+  defp capture_form_blocked(%Socket{assigns: %{projects: []}} = socket) do
+    report_form_blocked(socket, :no_project)
   end
 
-  defp capture_form_blocked(%Socket{assigns: %{agents: [], current_user: user}}) do
-    Capture.capture("task_form_blocked", user, %{reason: :no_agent})
+  # Agents are a global config table seeded by migration, so this is
+  # only reachable if an admin deleted every row.
+  defp capture_form_blocked(%Socket{assigns: %{agents: []}} = socket) do
+    report_form_blocked(socket, :no_agent)
   end
 
-  defp capture_form_blocked(_socket), do: :ok
+  defp capture_form_blocked(%Socket{} = socket) do
+    if any_agent_covered?(socket.assigns.agents, socket.assigns.credential_kinds) do
+      socket
+    else
+      report_form_blocked(socket, :no_credential)
+    end
+  end
+
+  # Once per mount: re-opening the modal is the same dead end, and
+  # counting it again would make the funnel's denominator the number
+  # of clicks rather than the number of users who hit it.
+  @spec report_form_blocked(Socket.t(), atom()) :: Socket.t()
+  defp report_form_blocked(%Socket{assigns: %{form_blocked_reported?: true}} = socket, _reason) do
+    socket
+  end
+
+  defp report_form_blocked(socket, reason) do
+    Capture.capture("task_form_blocked", socket.assigns.current_user, %{reason: reason})
+
+    assign(socket, form_blocked_reported?: true)
+  end
+
+  @spec any_agent_covered?([Agent.t()], MapSet.t(atom())) :: boolean()
+  defp any_agent_covered?(agents, held) do
+    Enum.any?(agents, &UserCredentials.covered?(held, &1))
+  end
 
   @spec new_task_form(Camelot.Accounts.User.t()) :: Phoenix.HTML.Form.t()
   defp new_task_form(user) do
@@ -322,6 +407,58 @@ defmodule CamelotWeb.BoardLive do
     end
   end
 
+  # An agent the user holds no key for stays in the dropdown rather
+  # than being filtered out of it: the row is the only place that can
+  # explain why Claude Code isn't an option today, and the user can
+  # pick another CLI instead.
+  @spec agent_options([Agent.t()], MapSet.t(atom())) :: [{String.t(), String.t()} | keyword()]
+  defp agent_options(agents, held) do
+    Enum.map(agents, &agent_option(&1, UserCredentials.missing_kinds(held, &1)))
+  end
+
+  defp agent_option(agent, []), do: {agent.name, agent.id}
+
+  # `Phoenix.HTML.Form.options_for_select/2` passes every extra key of
+  # a keyword entry straight through as an `<option>` attribute, so
+  # the row is labelled and unselectable without a second branch in
+  # the template.
+  defp agent_option(agent, _missing) do
+    [key: "#{agent.name} — API key absent", value: agent.id, disabled: true]
+  end
+
+  # At most one line, under the select: which kind the picked agent
+  # still needs, or — while nothing is picked and nothing is pickable
+  # — that the dropdown has no working option at all. The modal still
+  # opens, because a form that says why is not a dead end.
+  @spec credential_hints([Agent.t()], MapSet.t(atom()), Phoenix.HTML.Form.t()) :: [String.t()]
+  defp credential_hints(agents, held, form) do
+    case selected_agent(agents, form) do
+      nil -> uncovered_hint(agents, held)
+      agent -> selected_agent_hint(agent, UserCredentials.missing_kinds(held, agent))
+    end
+  end
+
+  defp selected_agent_hint(_agent, []), do: []
+
+  defp selected_agent_hint(agent, missing) do
+    [missing_credential_message(agent, missing)]
+  end
+
+  defp uncovered_hint(agents, held) do
+    if any_agent_covered?(agents, held) do
+      []
+    else
+      ["No agent CLI has an API key yet — add one on your profile."]
+    end
+  end
+
+  @spec missing_credential_message(Agent.t(), [atom()]) :: String.t()
+  defp missing_credential_message(agent, missing) do
+    kinds = Enum.map_join(missing, ", ", &to_string/1)
+
+    "#{agent.name} needs a #{kinds} credential — add it on your profile."
+  end
+
   defp broadcast_task_event(event, task) do
     Phoenix.PubSub.broadcast(
       Camelot.PubSub,
@@ -403,9 +540,15 @@ defmodule CamelotWeb.BoardLive do
             type="select"
             label="CLI Agent"
             prompt="Select agent CLI"
-            options={Enum.map(@agents, &{&1.name, &1.id})}
+            options={agent_options(@agents, @credential_kinds)}
             required
           />
+          <p
+            :for={hint <- credential_hints(@agents, @credential_kinds, @task_form)}
+            class="text-xs text-error"
+          >
+            {hint}
+          </p>
           <.input
             field={@task_form[:next_model]}
             type="select"

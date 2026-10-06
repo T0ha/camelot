@@ -282,7 +282,7 @@ every signup is skipped — it is not something the user did.
 | `project_create_failed` | `error_fields`, `error_codes` |
 | `agent_created` / `agent_updated` | `slug` |
 | `task_created`, `task_started`, `task_plan_submitted`, `task_plan_approved`, `task_pr_created`, `task_completed`, `task_cancelled` | `data_id` |
-| `task_form_blocked` | `reason` (`no_project \| no_agent`) |
+| `task_form_blocked` | `reason` (`no_project \| no_agent \| no_credential`) |
 | `task_errored` / `task_runner_lost` | `stage`, `reason` |
 
 `project_created.has_github_installation` asks only whether the
@@ -325,6 +325,21 @@ test suite pins that case.
 structs (`required`, `invalid_attribute`, …) or, for the advanced
 override fields, `not_json_object \| invalid_json \|
 invalid_integer` — never the message, which would embed user input.
+
+`task_form_blocked.reason` names which prerequisite of a task the user
+is missing, and how the board refuses it. `no_project` is captured as
+`/` redirects to `/projects` — a project-less board is empty by
+construction and its form cannot be submitted. `no_credential` is
+captured when the user holds none of the `required_credential_kinds`
+of *any* agent, so every row of the **CLI Agent** select renders
+disabled. `no_agent` means the global agents table is empty, which
+only an admin deleting every row can do.
+
+It is reported at most once per mount (`form_blocked_reported?`), so
+re-opening the modal does not count twice: the denominator is the
+users who hit the dead end, not the clicks they spent on it. The
+project gate returns before the credential check, so a mount reports
+exactly one reason — the first one the user has to fix.
 
 `task_errored.stage` ∈ `clone | boot | plan | execute | pr` and
 `reason` ∈ `git_auth_failed | image_pull_failed | provision_failed |

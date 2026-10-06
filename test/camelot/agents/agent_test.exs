@@ -2,6 +2,7 @@ defmodule Camelot.Agents.AgentTest do
   use Camelot.DataCase, async: true
 
   alias Camelot.Agents.Agent
+  alias Camelot.Agents.ClaudeCodeDefaults
   alias Camelot.Agents.CodexDefaults
   alias Ecto.Adapters.SQL
 
@@ -22,6 +23,19 @@ defmodule Camelot.Agents.AgentTest do
       assert agent.model_flag == "--model"
       assert "claude-sonnet-5" in agent.available_models
       assert agent.default_model == "claude-sonnet-5"
+    end
+
+    test "claude_code declares the credential kind carrying its API key" do
+      agent = agent!("claude_code")
+
+      # Empty for the column's whole life: nothing backfilled it and
+      # the seed never set it, so `TaskRunner.build_secrets/2`
+      # iterated an empty list and mounted no ANTHROPIC_API_KEY at
+      # all — the CLI 401'd minutes into the run.
+      assert agent.required_credential_kinds ==
+               ClaudeCodeDefaults.required_credential_kinds()
+
+      assert agent.required_credential_kinds == [:claude_api_key]
     end
 
     test "codex agent exists with raw_text parser" do
