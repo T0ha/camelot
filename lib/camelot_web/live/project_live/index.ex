@@ -11,6 +11,7 @@ defmodule CamelotWeb.ProjectLive.Index do
   alias Camelot.Github.RepositoryCatalog
   alias Camelot.Github.Resolver
   alias Camelot.Projects.Project
+  alias Camelot.Runtime.Runner
   alias Camelot.Telemetry.Capture
   alias Camelot.Telemetry.Reason
   alias CamelotWeb.Components.FolderPicker
@@ -28,7 +29,11 @@ defmodule CamelotWeb.ProjectLive.Index do
   def mount(params, _session, socket) do
     socket =
       socket
-      |> assign(see_all: params["scope"] == "all", advanced_open?: false)
+      |> assign(
+        see_all: params["scope"] == "all",
+        advanced_open?: false,
+        cloud?: Runner.cloud?()
+      )
       |> load_projects()
 
     {:ok, socket}
@@ -103,7 +108,7 @@ defmodule CamelotWeb.ProjectLive.Index do
 
     project_params =
       raw_params
-      |> update_path_from_name(socket)
+      |> maybe_update_path_from_name(socket)
       |> detect_github_fields(target)
 
     {:noreply, assign(socket, form: Form.validate(socket.assigns.form, project_params))}
@@ -471,6 +476,9 @@ defmodule CamelotWeb.ProjectLive.Index do
   defp int_or_blank(nil), do: ""
   defp int_or_blank(n) when is_integer(n), do: to_string(n)
 
+  defp maybe_update_path_from_name(params, %{assigns: %{cloud?: true}}), do: params
+  defp maybe_update_path_from_name(params, socket), do: update_path_from_name(params, socket)
+
   defp update_path_from_name(params, socket) do
     name = Map.get(params, "name", "")
     current_path = Map.get(params, "path", "")
@@ -572,6 +580,17 @@ defmodule CamelotWeb.ProjectLive.Index do
     end
   end
 
+  defp github_repo_label(true), do: "GitHub Repository (required)"
+  defp github_repo_label(false), do: "GitHub Repository"
+
+  defp github_repo_errors(field) do
+    if Phoenix.Component.used_input?(field) do
+      Enum.map(field.errors, &translate_error/1)
+    else
+      []
+    end
+  end
+
   defp default_project_path(""), do: ""
 
   defp default_project_path(name) do
@@ -648,9 +667,16 @@ defmodule CamelotWeb.ProjectLive.Index do
               id="github-repo-picker"
               name={@form[:github_repo_url].name}
               value={@form[:github_repo_url].value}
-              label="GitHub Repository"
+              label={github_repo_label(@cloud?)}
               current_user={@current_user}
             />
+            <p
+              :for={msg <- github_repo_errors(@form[:github_repo_url])}
+              class="mt-1.5 flex gap-2 items-center text-sm text-error"
+            >
+              <.icon name="hero-exclamation-circle" class="size-5" />
+              {msg}
+            </p>
             <.live_component
               module={RunnerImagePicker}
               id="runner-image-picker"
@@ -682,7 +708,7 @@ defmodule CamelotWeb.ProjectLive.Index do
               browser-set `open` attribute.
             --%>
             <div id="project-advanced" class={["space-y-4", !@advanced_open? && "hidden"]}>
-              <%= if @live_action == :new do %>
+              <%= if @live_action == :new and not @cloud? do %>
                 <.live_component
                   module={FolderPicker}
                   id="path-picker"
@@ -788,7 +814,7 @@ defmodule CamelotWeb.ProjectLive.Index do
           <:col :let={project} label="Name">
             {project.name}
           </:col>
-          <:col :let={project} label="Path">
+          <:col :let={project} :if={!@cloud?} label="Path">
             <code class="text-xs">{project.path}</code>
           </:col>
           <:col :let={project} label="Status">

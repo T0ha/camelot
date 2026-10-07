@@ -64,6 +64,15 @@ defmodule Camelot.Runtime.Runner do
   end
 
   @doc """
+  True when the configured backend runs tasks in an ephemeral
+  container (`DockerEngine`, `Swarm`) instead of on the host via
+  `LocalPort`. Container backends always clone `github_repo_url`
+  into the container's workspace and never read a project's `path`.
+  """
+  @spec cloud?() :: boolean()
+  def cloud?, do: backend() != Camelot.Runtime.Runner.LocalPort
+
+  @doc """
   Start a runner using the configured backend.
   """
   @spec start(Spec.t()) :: {:ok, handle()} | {:error, reason()}
