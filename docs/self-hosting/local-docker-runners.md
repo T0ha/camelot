@@ -152,12 +152,14 @@ Visit `/projects/new`. The DockerEngine backend reproduces the Swarm
 flow exactly: it always clones `github_repo_url` into an ephemeral
 `/workspace` tmpfs. So:
 
-- Set `github_repo_url` to a clonable URL. Public repos work without
-  extra credentials; private repos need either a linked GitHub App
+- Set `github_repo_url` to a clonable URL — it's now required on
+  create whenever the configured backend is a container backend
+  (DockerEngine or Swarm). Public repos work without extra
+  credentials; private repos need either a linked GitHub App
   installation on the project or the user's SSH key (see
   `docs/self-hosting/github-app.md`).
-- For the smoke test, leave it empty — the entrypoint will skip the
-  clone and `/workspace` will be an empty tmpfs.
+- For the smoke test, point it at a small public placeholder repo,
+  e.g. `https://github.com/octocat/Hello-World`.
 
 If you want to point at code already on your disk (no clone, no
 container), switch the backend to LocalPort:

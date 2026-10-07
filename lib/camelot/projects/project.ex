@@ -11,6 +11,7 @@ defmodule Camelot.Projects.Project do
     simple_notifiers: [Camelot.Telemetry.Notifier]
 
   alias Camelot.Projects.Membership
+  alias Camelot.Projects.Project.Validations.RepoRequiredForCloudRunner
 
   oban do
     scheduled_actions do
@@ -42,9 +43,9 @@ defmodule Camelot.Projects.Project do
 
       description(
         "Filesystem path to the git repository on the Camelot " <>
-          "host. Used by LocalPort and DockerEngine (bind-mounted " <>
-          "into /workspace). Optional in hosted/Swarm mode — there " <>
-          "the runner clones from `github_repo_url` instead."
+          "host. Used only by the LocalPort runner backend, which " <>
+          "`cd`s into it. Container backends (DockerEngine, Swarm) " <>
+          "ignore it and clone `github_repo_url` instead."
       )
     end
 
@@ -58,8 +59,10 @@ defmodule Camelot.Projects.Project do
       public?(true)
 
       description(
-        "Canonical git remote URL — also used as the clone source " <>
-          "for hosted runners when no local `path` is set."
+        "Canonical git remote URL. Required on create when the " <>
+          "configured runner backend is a container backend " <>
+          "(DockerEngine, Swarm) — they always clone it into the " <>
+          "task's ephemeral workspace, regardless of `path`."
       )
     end
 
@@ -194,6 +197,8 @@ defmodule Camelot.Projects.Project do
         :internal_tools_override,
         :base_retry_delay_ms_override
       ])
+
+      validate(RepoRequiredForCloudRunner)
 
       change(Camelot.Projects.Project.Changes.AddActorAsMember)
     end
