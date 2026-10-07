@@ -14,7 +14,9 @@ defmodule CamelotWeb.OnboardingLiveTest do
   @open_modal "#onboarding-welcome-modal[open]"
 
   describe "welcome modal" do
-    test "greets a brand new user on the board", %{conn: conn} do
+    test "greets a brand new user on the board", %{conn: conn, user: user} do
+      seed_project(user)
+
       {:ok, view, html} = live(conn, ~p"/")
 
       assert html =~ "Welcome to Camelot"
@@ -28,6 +30,8 @@ defmodule CamelotWeb.OnboardingLiveTest do
     end
 
     test "dismissing it persists and survives a remount", %{conn: conn, user: user} do
+      seed_project(user)
+
       {:ok, view, _html} = live(conn, ~p"/")
 
       render_click(view, "onboarding_dismiss")
@@ -41,7 +45,9 @@ defmodule CamelotWeb.OnboardingLiveTest do
       assert html =~ "onboarding-setup-bar"
     end
 
-    test "can be re-opened from the setup bar", %{conn: conn} do
+    test "can be re-opened from the setup bar", %{conn: conn, user: user} do
+      seed_project(user)
+
       {:ok, view, _html} = live(conn, ~p"/")
 
       render_click(view, "onboarding_dismiss")
@@ -51,6 +57,8 @@ defmodule CamelotWeb.OnboardingLiveTest do
     end
 
     test "onboarding_go dismisses and navigates to the step", %{conn: conn, user: user} do
+      seed_project(user)
+
       {:ok, view, _html} = live(conn, ~p"/")
 
       assert {:error, {:live_redirect, %{to: "/projects/new"}}} =
@@ -60,6 +68,8 @@ defmodule CamelotWeb.OnboardingLiveTest do
     end
 
     test "onboarding_go ignores a step it never rendered", %{conn: conn, user: user} do
+      seed_project(user)
+
       {:ok, view, _html} = live(conn, ~p"/")
 
       assert render_click(view, "onboarding_go", %{"step" => "../../admin"})
@@ -70,7 +80,9 @@ defmodule CamelotWeb.OnboardingLiveTest do
   end
 
   describe "setup bar" do
-    test "renders the pending steps while setup is incomplete", %{conn: conn} do
+    test "renders the pending steps while setup is incomplete", %{conn: conn, user: user} do
+      seed_project(user)
+
       {:ok, _view, html} = live(conn, ~p"/")
 
       assert html =~ "onboarding-setup-bar"
@@ -100,6 +112,7 @@ defmodule CamelotWeb.OnboardingLiveTest do
     end
 
     test "a user who already completed onboarding sees neither", %{conn: conn, user: user} do
+      seed_project(user)
       Ash.update!(user, %{}, action: :complete_onboarding, actor: user)
 
       {:ok, _view, html} = live(conn, ~p"/")
@@ -122,7 +135,9 @@ defmodule CamelotWeb.OnboardingLiveTest do
   end
 
   describe "task step hand-off" do
-    test "?onboarding=task opens the New Task modal", %{conn: conn} do
+    test "?onboarding=task opens the New Task modal", %{conn: conn, user: user} do
+      seed_project(user)
+
       {:ok, _view, html} = live(conn, ~p"/?onboarding=task")
 
       assert html =~ "new-task-modal"

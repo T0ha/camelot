@@ -17,7 +17,7 @@ defmodule CamelotWeb.ProjectTelemetryTest do
   test "a rejected form reports which fields failed and how", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/projects/new")
 
-    view |> form("#project-form", %{"name" => ""}) |> render_submit()
+    view |> form("#project-form", %{"project" => %{"name" => ""}}) |> render_submit()
 
     assert %{properties: properties} = captured_create_failure()
     assert "name" in properties.error_fields
@@ -29,8 +29,10 @@ defmodule CamelotWeb.ProjectTelemetryTest do
 
     view
     |> form("#project-form", %{
-      "name" => "telemetry-#{System.unique_integer([:positive])}",
-      "env_vars_override" => "{not json"
+      "project" => %{
+        "name" => "telemetry-#{System.unique_integer([:positive])}",
+        "env_vars_override" => "{not json"
+      }
     })
     |> render_submit()
 
@@ -122,7 +124,7 @@ defmodule CamelotWeb.ProjectTelemetryTest do
       {:ok, view, _html} = live(conn, ~p"/projects/new")
 
       pick(view, "alice", "widgets", "private")
-      view |> form("#project-form", %{"name" => ""}) |> render_submit()
+      view |> form("#project-form", %{"project" => %{"name" => ""}}) |> render_submit()
 
       submit(view, %{"github_owner" => "bigcorp", "github_repo" => "gadgets"})
 
@@ -152,7 +154,7 @@ defmodule CamelotWeb.ProjectTelemetryTest do
   defp submit(view, attrs) do
     params = Map.put(attrs, "name", "telemetry-#{System.unique_integer([:positive])}")
 
-    view |> form("#project-form", params) |> render_submit()
+    view |> form("#project-form", %{"project" => params}) |> render_submit()
   end
 
   defp create_project(conn, user, attrs) do
@@ -160,7 +162,7 @@ defmodule CamelotWeb.ProjectTelemetryTest do
 
     params = Map.put(attrs, "name", "telemetry-#{System.unique_integer([:positive])}")
 
-    view |> form("#project-form", params) |> render_submit()
+    view |> form("#project-form", %{"project" => params}) |> render_submit()
 
     assert captured(user, "project_created"),
            "the project was not created, so nothing could be resolved"

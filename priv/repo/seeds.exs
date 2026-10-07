@@ -63,6 +63,7 @@ claude_code_attrs = %{
   parser: :claude_code_json,
   pr_url_pattern: pr_url_pattern,
   question_phrases: question_phrases,
+  required_credential_kinds: ClaudeCodeDefaults.required_credential_kinds(),
   base_retry_delay_ms: 5_000,
   max_retries: 3
 }

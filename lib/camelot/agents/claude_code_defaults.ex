@@ -33,6 +33,22 @@ defmodule Camelot.Agents.ClaudeCodeDefaults do
   @spec planning_system_prompt_slug() :: String.t()
   def planning_system_prompt_slug, do: "claude_planning_system_prompt"
 
+  @doc """
+  Credential kinds that satisfy this CLI's auth.
+
+  `:claude_api_key`, which `Camelot.Runtime.Runner.SecretEnv` mounts
+  as `ANTHROPIC_API_KEY` — or as `CLAUDE_CODE_OAUTH_TOKEN` when the
+  stored value is an `sk-ant-oat` token.
+
+  The column arrived with `default: []` and nothing ever filled it in
+  for this row, so `Camelot.Runtime.TaskRunner.build_secrets/2`
+  iterated an empty list: the user's key was never mounted and the
+  CLI failed minutes later with a bare 401. It did not even reach the
+  "missing credential" warning, because nothing was asked for.
+  """
+  @spec required_credential_kinds() :: [atom()]
+  def required_credential_kinds, do: [:claude_api_key]
+
   @execution_system_prompt "You are running fully autonomously in a " <>
                              "headless, single-turn session: there is no " <>
                              "interactive user to answer you and no follow-up " <>

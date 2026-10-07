@@ -131,7 +131,7 @@ defmodule CamelotWeb.ProjectLive.Show do
             {@project.status}
           </span>
         </:item>
-        <:item title="Path">
+        <:item :if={@project.path} title="Path">
           <code>{@project.path}</code>
         </:item>
         <:item :if={@project.description} title="Description">

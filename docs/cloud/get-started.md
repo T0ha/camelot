@@ -80,25 +80,23 @@ Visit `/profile` to finish your personal setup:
 
 ## 3. Create a project
 
-Go to `/projects/new`. The form asks for four things, and only **Name**
-is required:
+Go to `/projects/new`. The form asks for four things, and **Name** and
+**GitHub Repository** are required:
 
 - **Name** — Camelot derives a local path under `~/projects/<slug>` from
   it.
 - **Description** — free text, shown on the project page.
 - **GitHub Repository** — pick the repo from the list of repositories
   your GitHub App installation can see, so Camelot knows which repo to
-  open PRs against and poll CI status for. Camelot authenticates those
-  calls with whichever installation you connected in [Set up your
-  profile](#2-set-up-your-profile) — no GitHub App connected just means
-  unauthenticated API calls instead.
+  open PRs against and poll CI status for, and which repo to clone into
+  each task's runner. Camelot authenticates those calls with whichever
+  installation you connected in [Set up your profile](#2-set-up-your-profile)
+  — no GitHub App connected just means unauthenticated API calls instead.
 - **Runner Image** — leave blank unless this project needs a
   non-default runner image.
 
 Everything else lives under **Advanced settings**, collapsed by default:
 
-- **Path** — override the derived `~/projects/<slug>` location with the
-  folder picker.
 - **GitHub Owner** / **GitHub Repo** — filled in for you from the
   repository you picked, or auto-detected from a local repo's GitHub
   remote. Edit them only if you need to point somewhere else.
