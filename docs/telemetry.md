@@ -284,6 +284,7 @@ every signup is skipped — it is not something the user did.
 | `task_created`, `task_started`, `task_plan_submitted`, `task_plan_approved`, `task_pr_created`, `task_completed`, `task_cancelled` | `data_id` |
 | `task_form_blocked` | `reason` (`no_project \| no_agent \| no_credential`) |
 | `task_errored` / `task_runner_lost` | `stage`, `reason` |
+| `task_paused` / `task_resumed` | `data_id` |
 
 `project_created.has_github_installation` asks only whether the
 creator had *any* live installation — not whether it covers this

@@ -96,7 +96,8 @@ config :camelot, :runner,
   per_user_max: 2,
   networks: ["auto"],
   max_interrupt_requeues: 3,
-  redeploy_wait_ms: 60_000
+  redeploy_wait_ms: 60_000,
+  usage_limit_fallback_minutes: 60
 
 # Global properties on every PostHog capture. `environment` keeps the
 # test cluster and production apart (they share one PostHog project);

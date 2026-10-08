@@ -15,6 +15,7 @@ defmodule CamelotWeb.TaskLive do
   alias Camelot.Board.TaskAttachment
   alias Camelot.Board.TaskLink
   alias Camelot.Board.TaskMessage
+  alias Camelot.Board.UsageLimitPause
   alias Camelot.Github.Resolver
   alias Camelot.Runtime.TaskRegistry
   alias Camelot.Runtime.TaskRunnerSupervisor
@@ -302,6 +303,18 @@ defmodule CamelotWeb.TaskLive do
 
   def handle_event("reset_task", _params, socket) do
     reset_task_and_runner(socket, socket.assigns.task)
+  end
+
+  def handle_event("resume_now", _params, socket) do
+    task = socket.assigns.task
+    UsageLimitPause.resume_now(task)
+
+    updated = Ash.load!(Ash.get!(Task, task.id), @task_load)
+
+    {:noreply,
+     socket
+     |> assign(task: updated)
+     |> put_flash(:info, "Task resumed")}
   end
 
   def handle_event("cancel", _params, socket) do
@@ -611,6 +624,13 @@ defmodule CamelotWeb.TaskLive do
             Retry
           </button>
           <button
+            :if={@task.state == :paused}
+            phx-click="resume_now"
+            class="btn btn-sm btn-warning"
+          >
+            Resume now
+          </button>
+          <button
             :if={@task.stage not in [:done, :cancelled]}
             phx-click="cancel"
             data-confirm="Cancel this task?"
@@ -630,6 +650,18 @@ defmodule CamelotWeb.TaskLive do
         <div>
           <p class="font-semibold">This task stopped with an error</p>
           <p class="whitespace-pre-line">{@task.last_error}</p>
+        </div>
+      </div>
+
+      <div
+        :if={@task.state == :paused}
+        class="alert alert-warning text-sm items-start"
+        role="alert"
+      >
+        <.icon name="hero-clock" class="size-5 shrink-0" />
+        <div>
+          <p class="font-semibold">This task is paused</p>
+          <p class="whitespace-pre-line">{@task.pause_reason}</p>
         </div>
       </div>
 
