@@ -98,7 +98,6 @@ defmodule Camelot.Runtime.UsageLimit do
   end
 
   defp to_int(""), do: 0
-  defp to_int(nil), do: 0
   defp to_int(digits), do: String.to_integer(digits)
 
   # The last `rate_limit_event` line in the buffer, rather than the
