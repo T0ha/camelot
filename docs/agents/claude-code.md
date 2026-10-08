@@ -90,6 +90,10 @@ touching.
 - **401 / auth errors** — usually means the wrong credential kind was
   used (double-check it's `claude_api_key`, not `openai_api_key`) or
   the key/token has expired.
+- **Task pauses instead of erroring** — Camelot recognizes a provider
+  usage-limit rejection and pauses the task (and any other queued task
+  on the same credential) instead of retrying or erroring. It resumes
+  automatically once the limit resets, or via "Resume now" on the task.
 
 ---
 
