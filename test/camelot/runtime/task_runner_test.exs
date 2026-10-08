@@ -829,4 +829,69 @@ defmodule Camelot.Runtime.TaskRunnerTest do
       assert Ash.get!(Task, task.id).interrupt_requeues == 0
     end
   end
+
+  describe "handle_info({:runner_exit, ...}) with a usage-limit rejection" do
+    defp usage_limit_state(task, session, config) do
+      %TaskRunner{
+        task_id: task.id,
+        current_session_id: session.id,
+        runner: self(),
+        user_id: task.creator_id,
+        config: config,
+        max_retries: 3,
+        retry_count: 0,
+        output_buffer: ~s({"type":"result","is_error":true,"result":"claude error: You've hit your 5h limit"})
+      }
+    end
+
+    test "pauses the task without retrying, instead of erroring it", %{task: task, user: user} do
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+
+      {:ok, session} =
+        Ash.create(Session, %{agent_id: task.agent_id, task_id: task.id, user_id: user.id})
+
+      config = build_config(parser: :claude_code_json, required_credential_kinds: [:claude_api_key])
+      runner = self()
+      state = usage_limit_state(task, session, config)
+
+      assert {:noreply, reset} =
+               TaskRunner.handle_info({:runner_exit, runner, 1}, state)
+
+      assert reset.runner == nil
+      assert reset.current_session_id == nil
+      assert reset.retry_count == 0
+
+      reloaded = Ash.get!(Task, task.id)
+      assert reloaded.state == :paused
+      assert reloaded.paused_until
+      assert reloaded.pause_reason =~ "usage limit"
+      assert reloaded.last_error == nil
+    end
+
+    test "pauses every other queued sibling on the same credential", %{task: task, user: user} do
+      {:ok, _credential} =
+        Ash.create(Credential, %{user_id: user.id, kind: :claude_api_key, value: "sk-ant-test"})
+
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+
+      {:ok, sibling} =
+        Ash.create(Task, %{
+          title: "Sibling task",
+          project_id: task.project_id,
+          creator_id: user.id,
+          agent_id: task.agent_id
+        })
+
+      {:ok, session} =
+        Ash.create(Session, %{agent_id: task.agent_id, task_id: task.id, user_id: user.id})
+
+      config = build_config(parser: :claude_code_json, required_credential_kinds: [:claude_api_key])
+      runner = self()
+      state = usage_limit_state(task, session, config)
+
+      assert {:noreply, _reset} = TaskRunner.handle_info({:runner_exit, runner, 1}, state)
+
+      assert Ash.get!(Task, sibling.id).state == :paused
+    end
+  end
 end

@@ -32,7 +32,7 @@ defmodule Camelot.Board.Task do
     :cancelled
   ]
 
-  @states [:queued, :waiting_for_input, :in_progress, :error]
+  @states [:queued, :waiting_for_input, :in_progress, :error, :paused]
 
   # Stages from which work can be (re)started: the dispatcher picks a
   # `:queued` task up again and resumes it from wherever it left off.
@@ -197,6 +197,28 @@ defmodule Camelot.Board.Task do
           "e.g. the runner container's log tail when a git clone fails. " <>
           "Surfaced on the board card so the user can fix the cause. " <>
           "Cleared when work resumes (begin_work/retry/reset)."
+      )
+    end
+
+    attribute :paused_until, :utc_datetime_usec do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Set while state is :paused — when the provider's usage " <>
+          "limit is expected to reset. Cleared when work resumes " <>
+          "(resume_paused/reset)."
+      )
+    end
+
+    attribute :pause_reason, :string do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Human-readable reason the task is :paused, e.g. which " <>
+          "provider's usage limit was hit and when it resets. " <>
+          "Cleared when work resumes (resume_paused/reset)."
       )
     end
 
@@ -578,6 +600,65 @@ defmodule Camelot.Board.Task do
       end)
     end
 
+    # Recovery from a provider usage-limit rejection rather than
+    # anything the agent did — see `Camelot.Board.UsageLimitPause`,
+    # which also pauses every other queued task on the same
+    # credential. Deliberately notifier-free, like
+    # `requeue_interrupted`: the pause email is sent once per
+    # credential by `UsageLimitPause`, not once per card.
+    update :pause_for_usage_limit do
+      accept([])
+      require_atomic?(false)
+
+      argument :paused_until, :utc_datetime_usec do
+        allow_nil?(false)
+      end
+
+      argument :pause_reason, :string do
+        allow_nil?(false)
+      end
+
+      validate(fn changeset, _context ->
+        state = Ash.Changeset.get_attribute(changeset, :state)
+        stage = Ash.Changeset.get_attribute(changeset, :stage)
+
+        cond do
+          state not in [:queued, :in_progress] ->
+            {:error, field: :state, message: "must be queued or in_progress"}
+
+          stage not in @resumable_stages ->
+            {:error, field: :stage, message: "cannot pause stage #{inspect(stage)}"}
+
+          true ->
+            :ok
+        end
+      end)
+
+      change(set_attribute(:state, :paused))
+      change(set_attribute(:last_error, nil))
+
+      change(fn changeset, _context ->
+        changeset
+        |> Ash.Changeset.force_change_attribute(
+          :paused_until,
+          Ash.Changeset.get_argument(changeset, :paused_until)
+        )
+        |> Ash.Changeset.force_change_attribute(
+          :pause_reason,
+          Ash.Changeset.get_argument(changeset, :pause_reason)
+        )
+      end)
+    end
+
+    update :resume_paused do
+      accept([])
+
+      validate(attribute_equals(:state, :paused))
+      change(set_attribute(:state, :queued))
+      change(set_attribute(:paused_until, nil))
+      change(set_attribute(:pause_reason, nil))
+    end
+
     update :mark_in_progress do
       accept([])
 
@@ -608,6 +689,8 @@ defmodule Camelot.Board.Task do
 
       change(set_attribute(:state, :queued))
       change(set_attribute(:last_error, nil))
+      change(set_attribute(:paused_until, nil))
+      change(set_attribute(:pause_reason, nil))
     end
 
     update :pr_created do

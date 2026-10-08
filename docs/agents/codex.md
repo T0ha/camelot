@@ -75,6 +75,10 @@ purpose: with no `--model` flag the CLI picks its own default.
 - **Model rejected with a 400** — the task's model isn't accepted by
   your account; see [step 4](#4-admin-reviewing-the-model-list) and
   adjust `available_models` at `/agents`.
+- **Task pauses instead of erroring** — Camelot recognizes a provider
+  usage-limit rejection and pauses the task (and any other queued task
+  on the same credential) instead of retrying or erroring. It resumes
+  automatically once the limit resets, or via "Resume now" on the task.
 
 ---
 

@@ -122,7 +122,9 @@ defmodule CamelotWeb.UserProfileLive do
       Map.take(params, [
         "notify_on_waiting_for_input",
         "notify_on_error",
-        "notify_on_done"
+        "notify_on_done",
+        "notify_on_usage_limit_paused",
+        "notify_on_usage_limit_resumed"
       ])
 
     case Ash.update(socket.assigns.current_user, attrs,
@@ -262,7 +264,9 @@ defmodule CamelotWeb.UserProfileLive do
       %{
         "notify_on_waiting_for_input" => user.notify_on_waiting_for_input,
         "notify_on_error" => user.notify_on_error,
-        "notify_on_done" => user.notify_on_done
+        "notify_on_done" => user.notify_on_done,
+        "notify_on_usage_limit_paused" => user.notify_on_usage_limit_paused,
+        "notify_on_usage_limit_resumed" => user.notify_on_usage_limit_resumed
       },
       as: "prefs"
     )
@@ -559,6 +563,16 @@ defmodule CamelotWeb.UserProfileLive do
             field={@notification_prefs_form[:notify_on_done]}
             type="checkbox"
             label="Email me when a task is done"
+          />
+          <.input
+            field={@notification_prefs_form[:notify_on_usage_limit_paused]}
+            type="checkbox"
+            label="Email me when a provider usage limit pauses my tasks"
+          />
+          <.input
+            field={@notification_prefs_form[:notify_on_usage_limit_resumed]}
+            type="checkbox"
+            label="Email me when my paused tasks resume"
           />
           <:actions>
             <.button>Save preferences</.button>

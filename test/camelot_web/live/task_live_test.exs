@@ -129,6 +129,39 @@ defmodule CamelotWeb.TaskLiveTest do
     end
   end
 
+  describe "usage-limit pause" do
+    test "shows a paused banner and resumes on click", %{conn: conn, task: task} do
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+
+      {:ok, _task} =
+        Ash.update(
+          task,
+          %{
+            paused_until: DateTime.add(DateTime.utc_now(), 3600, :second),
+            pause_reason: "Paused: provider usage limit reached. Resumes around later."
+          },
+          action: :pause_for_usage_limit
+        )
+
+      {:ok, view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert html =~ "This task is paused"
+      assert html =~ "Resumes around"
+
+      assert view
+             |> element("button", "Resume now")
+             |> render_click()
+
+      assert Ash.get!(Task, task.id).state == :queued
+    end
+
+    test "shows nothing for a healthy task", %{conn: conn, task: task} do
+      {:ok, _view, html} = live(conn, ~p"/tasks/#{task.id}")
+
+      refute html =~ "This task is paused"
+    end
+  end
+
   describe "model selection" do
     test "shows the picker with humanized labels and no selection by default", %{
       conn: conn,
