@@ -118,12 +118,28 @@ defmodule Camelot.Board.UsageLimitPause do
   defp resume_due_tasks(now) do
     Task
     |> Ash.Query.filter(state == :paused and not is_nil(paused_until) and paused_until <= ^now)
+    |> Ash.Query.load(:agent)
     |> Ash.read!(authorize?: false)
+    |> Enum.reject(&credential_still_limited?/1)
     |> Enum.group_by(& &1.creator_id)
     |> Enum.each(fn {creator_id, tasks} ->
       Enum.each(tasks, &resume_task/1)
       enqueue_email(creator_id, nil, :resumed)
     end)
+  end
+
+  # A task's own `paused_until` can lag behind its credential: if the
+  # credential gets re-limited (a later `pause/3` call extends
+  # `usage_limited_until`) while this task is already `:paused`, its
+  # `paused_until` is never refreshed. Resuming it here regardless
+  # would dispatch it straight back into the same rejection. Since
+  # `clear_due_credentials/1` already ran, any credential still
+  # carrying a limit here is genuinely not due yet.
+  defp credential_still_limited?(%Task{creator_id: creator_id, agent: agent}) do
+    case required_kind(agent) do
+      nil -> false
+      kind -> match?(%{usage_limited_until: %DateTime{}}, Credential.for_user_and_kind(creator_id, kind))
+    end
   end
 
   defp pause_task(%Task{} = task, reset_at, reason) do

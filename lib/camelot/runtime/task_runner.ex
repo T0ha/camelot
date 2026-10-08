@@ -369,13 +369,20 @@ defmodule Camelot.Runtime.TaskRunner do
 
     failed? = exit_code != 0 or match?({:error, _}, parsed)
 
-    case failed? && UsageLimit.detect(parser_for(state), parsed, state.output_buffer, DateTime.utc_now()) do
+    detection =
+      if failed? do
+        UsageLimit.detect(parser_for(state), parsed, state.output_buffer, DateTime.utc_now())
+      else
+        :none
+      end
+
+    case detection do
       {:limited, info} ->
         release_pool_slot(state)
         UsageLimitPause.pause(state.task_id, credential_kind(state), info)
         {:noreply, reset_runner(state)}
 
-      _ ->
+      :none ->
         retry_or_finalize(state, exit_code, parsed, denials, failed?, empty?)
     end
   end
@@ -401,7 +408,14 @@ defmodule Camelot.Runtime.TaskRunner do
     kind
   end
 
-  defp credential_kind(_state), do: :generic
+  defp credential_kind(%__MODULE__{task_id: task_id}) do
+    Logger.warning(
+      "Task #{task_id}: agent has no required_credential_kinds configured; " <>
+        "usage-limit pause will not cover sibling tasks on the same token"
+    )
+
+    :generic
+  end
 
   # Terminal handling once retries are exhausted (or none configured). An
   # empty run bypasses the stage handlers and errors the task with a clear

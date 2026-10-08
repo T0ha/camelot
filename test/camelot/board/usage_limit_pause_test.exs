@@ -129,6 +129,29 @@ defmodule Camelot.Board.UsageLimitPauseTest do
       assert Ash.get!(Task, still_paused.id).state == :paused
     end
 
+    test "a task whose paused_until is due stays paused while its credential is still limited", ctx do
+      credential = credential!(ctx.user, :claude_api_key)
+      task = create_task(ctx)
+
+      past = DateTime.add(DateTime.utc_now(), -60, :second)
+      still_future = DateTime.add(DateTime.utc_now(), 3600, :second)
+
+      {:ok, _} =
+        Ash.update(
+          credential,
+          %{usage_limited_until: still_future, usage_limit_window: "5h"},
+          action: :mark_usage_limited
+        )
+
+      {:ok, _} =
+        Ash.update(task, %{paused_until: past, pause_reason: "usage limit"}, action: :pause_for_usage_limit)
+
+      assert :ok = UsageLimitPause.resume_due(DateTime.utc_now())
+
+      assert Ash.get!(Task, task.id).state == :paused
+      assert Ash.get!(Credential, credential.id).usage_limited_until
+    end
+
     test "enqueues one resume email per owner", ctx do
       task = create_task(ctx)
       past = DateTime.add(DateTime.utc_now(), -60, :second)

@@ -1011,6 +1011,25 @@ defmodule Camelot.Board.TaskTest do
       assert paused.last_error == nil
     end
 
+    test "pauses an in_progress task, the primary production path", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+      assert task.state == :in_progress
+
+      reset_at = DateTime.add(DateTime.utc_now(), 3600, :second)
+
+      assert {:ok, paused} =
+               Ash.update(
+                 task,
+                 %{paused_until: reset_at, pause_reason: "usage limit hit"},
+                 action: :pause_for_usage_limit
+               )
+
+      assert paused.state == :paused
+      assert DateTime.truncate(paused.paused_until, :second) == DateTime.truncate(reset_at, :second)
+      assert paused.pause_reason == "usage limit hit"
+    end
+
     test "refuses to pause a terminal stage", ctx do
       {:ok, task} = create_task(ctx.project, ctx.user)
       {:ok, task} = Ash.update(task, %{}, action: :cancel)
