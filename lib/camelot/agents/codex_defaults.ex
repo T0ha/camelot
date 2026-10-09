@@ -66,9 +66,13 @@ defmodule Camelot.Agents.CodexDefaults do
 
   That caveat is the point: **the accepted set is scoped to the
   account the probe ran under.** Another ChatGPT plan, or API-key auth,
-  may accept a different list, so treat this as a sensible default
-  rather than a fact about the CLI, and edit it at `/agents` when it
-  doesn't match. Discovering it per install is tracked separately.
+  may accept a different list — which is why this is now the **offline
+  fallback** rather than the answer: `Camelot.Agents.ModelDiscovery`
+  asks OpenAI what the task creator's own key may use (see
+  `models_probe/0`) and supersedes this list whenever it gets an
+  answer. These ids are what an install is offered with no key stored,
+  no network, or a probe that failed, and they stay editable at
+  `/agents`.
 
   `default_model` is deliberately left nil: with no `--model` the CLI
   picks its own default (`gpt-5.6-terra` at the time of writing),
@@ -77,6 +81,34 @@ defmodule Camelot.Agents.CodexDefaults do
   """
   @spec available_models() :: [String.t()]
   def available_models, do: @available_models
+
+  @models_probe %{
+    "strategy" => "http_models_endpoint",
+    "url" => "https://api.openai.com/v1/models",
+    "auth" => "bearer",
+    "credential_kind" => "openai_api_key",
+    "list_key" => "data",
+    "id_key" => "id",
+    "include" => "^(gpt-|o\\d|codex-)"
+  }
+
+  @doc """
+  Probe config for live, per-user model discovery — see
+  `Camelot.Agents.ModelDiscovery`.
+
+  OpenAI's `GET /v1/models` returns the **whole** account catalog —
+  embeddings, tts, whisper, image models — so unlike Anthropic's the
+  `include` filter is load-bearing rather than cosmetic: without it
+  the Model dropdown would offer `whisper-1`.
+
+  A later strategy can do better than filtering a catalog: Codex's
+  `app-server` exposes a `model/list` JSON-RPC method returning the
+  account-scoped set *as the CLI itself sees it*. That needs a run
+  inside the runner image, so it is a follow-up — the map is already
+  shaped to carry a different `"strategy"`.
+  """
+  @spec models_probe() :: map()
+  def models_probe, do: @models_probe
 
   @doc """
   Credential kinds that satisfy this CLI's auth.

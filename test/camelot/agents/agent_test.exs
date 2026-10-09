@@ -23,6 +23,7 @@ defmodule Camelot.Agents.AgentTest do
       assert agent.model_flag == "--model"
       assert "claude-sonnet-5" in agent.available_models
       assert agent.default_model == "claude-sonnet-5"
+      assert agent.models_probe == ClaudeCodeDefaults.models_probe()
     end
 
     test "claude_code declares the credential kind carrying its API key" do
@@ -48,6 +49,7 @@ defmodule Camelot.Agents.AgentTest do
       assert agent.model_flag == "--model"
       assert agent.available_models == CodexDefaults.available_models()
       assert agent.default_model == nil
+      assert agent.models_probe == CodexDefaults.models_probe()
     end
 
     test "codex agent offers models for the task form's dropdown" do
@@ -130,6 +132,28 @@ defmodule Camelot.Agents.AgentTest do
       assert agent.model_flag == "--model"
       assert agent.available_models == ["gpt-5.1", "claude-sonnet-5"]
       assert agent.default_model == "gpt-5.1"
+      assert agent.models_probe == nil
+    end
+
+    test "creates a custom agent with live model discovery configured" do
+      probe = %{
+        "strategy" => "http_models_endpoint",
+        "url" => "https://api.openai.com/v1/models",
+        "auth" => "bearer",
+        "credential_kind" => "openai_api_key",
+        "include" => "^gpt-"
+      }
+
+      assert {:ok, agent} =
+               Ash.create(Agent, %{
+                 slug: "aider-discovery",
+                 name: "Aider",
+                 executable: "aider",
+                 model_flag: "--model",
+                 models_probe: probe
+               })
+
+      assert agent.models_probe == probe
     end
 
     test "creates a custom agent with an explicit max_retries" do
@@ -197,6 +221,16 @@ defmodule Camelot.Agents.AgentTest do
       assert updated.model_flag == "--model"
       assert updated.available_models == ["o4-mini"]
       assert updated.default_model == "o4-mini"
+    end
+
+    test "edits the model discovery probe, and clears it back to nil" do
+      probe = %{"strategy" => "http_models_endpoint", "url" => "https://example.test/models"}
+
+      assert {:ok, updated} = Ash.update(agent!("codex"), %{models_probe: probe})
+      assert updated.models_probe == probe
+
+      assert {:ok, cleared} = Ash.update(updated, %{models_probe: nil})
+      assert cleared.models_probe == nil
     end
   end
 

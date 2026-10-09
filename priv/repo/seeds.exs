@@ -55,6 +55,7 @@ claude_code_attrs = %{
   tools_flag: "--allowedTools",
   model_flag: "--model",
   available_models: claude_code_available_models,
+  models_probe: ClaudeCodeDefaults.models_probe(),
   default_model: "claude-sonnet-5",
   tools_separator: ",",
   permission_args_by_stage: ClaudeCodeDefaults.permission_args_by_stage(),
@@ -88,9 +89,12 @@ codex_attrs = %{
   base_args: CodexDefaults.base_args(),
   model_flag: "--model",
   # Verified by invocation, not documented by the CLI — and scoped to
-  # the account the probe ran under. `default_model` stays nil so the
-  # CLI picks its own. See `CodexDefaults.available_models/0`.
+  # the account the probe ran under, which is why it is the offline
+  # fallback: `models_probe` asks OpenAI what the task creator's own
+  # key may use and supersedes this list. `default_model` stays nil so
+  # the CLI picks its own. See `CodexDefaults.available_models/0`.
   available_models: CodexDefaults.available_models(),
+  models_probe: CodexDefaults.models_probe(),
   tools_separator: ",",
   permission_args_by_stage: CodexDefaults.permission_args_by_stage(),
   system_prompt_by_stage: CodexDefaults.system_prompt_by_stage(),
