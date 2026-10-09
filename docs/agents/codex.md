@@ -39,19 +39,52 @@ choose which Agent CLI template runs it. Pick **Codex** — it's
 pre-seeded, so there's nothing to configure per-project beyond having
 the credential from step 2.
 
-## 4. Admin: reviewing the model list
+## 4. Model discovery
+
+The **Model** dropdown is resolved live, per user: Camelot calls
+`GET https://api.openai.com/v1/models` with the credential that will
+actually run the task and offers what comes back. No tokens are
+billed, and the listing is the account catalog — so it is filtered down
+to the model families the CLI's `--model` flag accepts (`gpt-*`,
+`o*`, `codex-*`), which is why `whisper-1` never appears in the
+dropdown.
+
+Whose key is used depends on where you are:
+
+- the **New Task** modal uses yours — you become the task's creator;
+- an existing **task page** uses the *creator's*, even when somebody
+  else is looking at it, because the runner mounts the creator's key.
+
+Each answer is cached for an hour (a minute, if the call failed), keyed
+to the user and to the key itself, so rotating or deleting the
+credential takes effect immediately.
+
+When discovery can't answer — no key stored, the probe disabled, OpenAI
+unreachable or refusing the key — the dropdown falls back to the
+template's pinned `available_models`. Nothing about the page changes;
+you just see the offline list.
+
+## 5. Admin: reviewing the model list
 
 Workspace admins can review or tune the Codex template at `/agents`
-(admin-only). The seeded `available_models` (`gpt-5.6-terra`,
-`gpt-5.6-luna`, `gpt-5.5`) were established by invoking each candidate
-against the Codex CLI and keeping the ones that completed — that set is
-scoped to the account it was verified under, so another ChatGPT plan or
-API key may accept a different list. Treat it as a sensible default
-rather than a fact about the CLI, and edit it at `/agents` if a task
-hits a model your account can't use. `default_model` is left blank on
-purpose: with no `--model` flag the CLI picks its own default.
+(admin-only). Two fields drive the dropdown:
 
-## 5. Self-hosted: runner image
+- **Model discovery probe** — the JSON above (URL, auth style,
+  credential kind, `include` filter). Clearing it to `{}` turns
+  discovery off for this template. An edit takes effect on the next
+  render.
+- **Available models** — the offline fallback described above. The
+  seeded `gpt-5.6-terra` / `gpt-5.6-luna` / `gpt-5.5` were established
+  by invoking each candidate against the Codex CLI and keeping the ones
+  that completed, which scopes them to the account they were verified
+  under. Nothing ever rewrites this column automatically: the per-row
+  **Check models** action shows what your own key is entitled to, and
+  **Pin these** copies it here only when you ask.
+
+`default_model` is left blank on purpose: with no `--model` flag the
+CLI picks its own default.
+
+## 6. Self-hosted: runner image
 
 - **Docker / Swarm backends** run Codex inside the project's runner
   container. The prebuilt

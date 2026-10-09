@@ -96,6 +96,22 @@ defmodule Camelot.Agents.Agent do
       description("Model ids/aliases valid for this CLI's model_flag")
     end
 
+    attribute :models_probe, :map do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "How to ask the provider which models this user's " <>
+          "credential may use, e.g. " <>
+          ~s(%{"strategy" => "http_models_endpoint", ) <>
+          ~s("url" => "https://api.anthropic.com/v1/models", ) <>
+          ~s("auth" => "anthropic", "credential_kind" => ) <>
+          ~s("claude_api_key", "include" => "^claude-"}. ) <>
+          "Nil disables discovery and pins the dropdown to " <>
+          "available_models. See `Camelot.Agents.ModelDiscovery`."
+      )
+    end
+
     attribute :default_model, :string do
       allow_nil?(true)
       public?(true)
@@ -277,6 +293,7 @@ defmodule Camelot.Agents.Agent do
         :required_credential_kinds,
         :model_flag,
         :available_models,
+        :models_probe,
         :default_model
       ])
     end
@@ -307,6 +324,7 @@ defmodule Camelot.Agents.Agent do
         :required_credential_kinds,
         :model_flag,
         :available_models,
+        :models_probe,
         :default_model
       ])
     end

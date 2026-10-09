@@ -12,6 +12,19 @@ config :ash,
   default_page_type: :keyset,
   policies: [no_filter_static_forbidden_reads?: false]
 
+# Shared application cache (`Camelot.Cache`), node-local ETS.
+#
+# `gc_interval` is the generational rotation period: an entry can be
+# evicted up to one generation early, which is only ever a cache miss
+# and never a stale read. The size/memory ceilings bound the store on
+# a small node; `gc_memory_check_interval` is how often they are
+# checked, and only matters because one of them is set.
+config :camelot, Camelot.Cache,
+  gc_interval: to_timeout(hour: 1),
+  gc_memory_check_interval: to_timeout(second: 30),
+  max_size: 10_000,
+  allocated_memory: 32_000_000
+
 # Configure the mailer
 #
 # By default it uses the "Local" adapter which stores the emails
@@ -73,6 +86,16 @@ config :camelot, :default_projects_dir, "~/projects"
 config :camelot, :mail,
   from_name: "🏰 Camelot AI",
   from_address: "noreply@camelot.local"
+
+# Live per-user model discovery (`Camelot.Agents.ModelDiscovery`).
+#
+# `ttl` memoises a provider's answer for a user+credential; `error_ttl`
+# is deliberately short so a dead provider can't cost a request
+# timeout on every board render, while a user who fixes their key
+# recovers in a minute rather than an hour.
+config :camelot, :model_discovery,
+  ttl: to_timeout(hour: 1),
+  error_ttl: to_timeout(minute: 1)
 
 # Consecutive automatic PR fix re-dispatches (merge conflict / CI
 # failure) before a task is left for human review. Set to `:infinity`

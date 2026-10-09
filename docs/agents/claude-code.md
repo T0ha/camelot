@@ -67,15 +67,44 @@ inside the runner.
 The board also needs somewhere to run the task: with no project at
 all, `/` sends you to `/projects` instead of opening the form.
 
-## 4. Admin: reviewing the template
+## 4. Model discovery
+
+The **Model** dropdown is resolved live, per user: Camelot calls
+`GET https://api.anthropic.com/v1/models` with the credential that
+will actually run the task and offers the `claude-*` ids that come
+back. No tokens are billed, and either key format works — an
+`sk-ant-api…` key goes on `x-api-key`, an `sk-ant-oat…` OAuth token on
+`Authorization: Bearer`, the same split the runner uses.
+
+Whose key is used depends on where you are:
+
+- the **New Task** modal uses yours — you become the task's creator;
+- an existing **task page** uses the *creator's*, even when somebody
+  else is looking at it, because the runner mounts the creator's key.
+
+Each answer is cached for an hour (a minute, if the call failed), keyed
+to the user and to the key itself, so rotating or deleting the
+credential takes effect immediately.
+
+When discovery can't answer — no key stored, the probe disabled,
+Anthropic unreachable or refusing the key — the dropdown falls back to
+the template's pinned `available_models`. Nothing about the page
+changes; you just see the offline list.
+
+## 5. Admin: reviewing the template
 
 Workspace admins can review or tune the Claude Code template at
 `/agents` (admin-only). The seeded defaults — executable `claude`,
 models `claude-opus-5` / `claude-sonnet-5` /
 `claude-haiku-4-5-20251001`, default `claude-sonnet-5` — rarely need
-touching.
+touching; those models are now the offline fallback for the dropdown
+rather than the whole story. **Model discovery probe** holds the JSON
+that drives discovery (clear it to `{}` to turn discovery off), and the
+per-row **Check models** action shows what your own key is entitled to,
+with **Pin these** to copy that into the fallback list. Nothing
+rewrites `available_models` automatically.
 
-## 5. Self-hosted: runner image
+## 6. Self-hosted: runner image
 
 - **Docker / Swarm backends** run Claude Code inside the project's
   runner container. The prebuilt

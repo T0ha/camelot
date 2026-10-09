@@ -23,6 +23,7 @@ defmodule Camelot.Telemetry.Reason do
           | :not_configured
           | :no_installation
           | :no_repositories
+          | :no_credential
           | :repo_not_in_installation
           | :not_found
           | :forbidden
@@ -47,6 +48,7 @@ defmodule Camelot.Telemetry.Reason do
     :not_configured,
     :no_installation,
     :no_repositories,
+    :no_credential,
     :repo_not_in_installation,
     :not_found,
     :forbidden,

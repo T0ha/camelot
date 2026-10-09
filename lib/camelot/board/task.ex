@@ -18,6 +18,7 @@ defmodule Camelot.Board.Task do
     simple_notifiers: [Camelot.Telemetry.Notifier]
 
   alias Camelot.Agents.Agent
+  alias Camelot.Agents.ModelDiscovery
   alias Camelot.Board.Notifiers.NotifyTaskStateEmail
   alias Camelot.Board.Task.Changes.RejectBlocked
   alias Camelot.Board.TaskLink
@@ -412,7 +413,11 @@ defmodule Camelot.Board.Task do
       change(manage_relationship(:agent_id, :agent, type: :append))
 
       validate(fn changeset, _context ->
-        validate_next_model(changeset, Ash.Changeset.get_argument(changeset, :agent_id))
+        validate_next_model(
+          changeset,
+          Ash.Changeset.get_argument(changeset, :agent_id),
+          Ash.Changeset.get_argument(changeset, :creator_id)
+        )
       end)
     end
 
@@ -446,7 +451,7 @@ defmodule Camelot.Board.Task do
       require_atomic?(false)
 
       validate(fn changeset, _context ->
-        validate_next_model(changeset, changeset.data.agent_id)
+        validate_next_model(changeset, changeset.data.agent_id, changeset.data.creator_id)
       end)
     end
 
@@ -825,14 +830,21 @@ defmodule Camelot.Board.Task do
     ]
   end
 
-  # Rejects a `next_model` that isn't one of the agent's configured
-  # `available_models`, so a typo never reaches the CLI. An agent with no
-  # `available_models` configured (or none loadable) imposes no
-  # restriction — the flag-less/unconfigured CLI case.
-  defp validate_next_model(changeset, agent_id) do
+  # Rejects a `next_model` the agent cannot run for this task's
+  # creator, so a typo never reaches the CLI.
+  #
+  # The allowed set is `ModelDiscovery.models_for/2` — the same
+  # function the task form's dropdown is built from, and for the same
+  # user (the creator, whose credential the runner mounts). Validating
+  # against the raw `available_models` column instead would reject
+  # every live-discovered id the form just offered. An agent with no
+  # effective models (none pinned, nothing discovered, or no agent
+  # loadable) imposes no restriction — the flag-less/unconfigured CLI
+  # case.
+  defp validate_next_model(changeset, agent_id, creator_id) do
     case Ash.Changeset.get_attribute(changeset, :next_model) do
       nil -> :ok
-      model -> agent_id |> load_agent() |> validate_model_allowed(model)
+      model -> agent_id |> load_agent() |> validate_model_allowed(model, creator_id)
     end
   end
 
@@ -845,10 +857,17 @@ defmodule Camelot.Board.Task do
     end
   end
 
-  defp validate_model_allowed(nil, _model), do: :ok
-  defp validate_model_allowed(%Agent{available_models: []}, _model), do: :ok
+  defp validate_model_allowed(nil, _model, _creator_id), do: :ok
 
-  defp validate_model_allowed(%Agent{available_models: models}, model) do
+  defp validate_model_allowed(agent, model, creator_id) do
+    agent
+    |> ModelDiscovery.models_for(creator_id)
+    |> model_allowed(model)
+  end
+
+  defp model_allowed([], _model), do: :ok
+
+  defp model_allowed(models, model) do
     if model in models do
       :ok
     else

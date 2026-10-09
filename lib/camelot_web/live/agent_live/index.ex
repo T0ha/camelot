@@ -6,10 +6,16 @@ defmodule CamelotWeb.AgentLive.Index do
   are edited as one-entry-per-line textareas. Map fields
   (permission_args_by_stage, system_prompt_by_stage, env_vars)
   are edited as JSON textareas and validated on save.
+
+  Also hosts the per-row "Check models" action, which runs an
+  agent's `models_probe` with the current admin's credential
+  (`Camelot.Agents.ModelDiscovery`) and offers to pin what comes
+  back into `available_models`.
   """
   use CamelotWeb, :live_view
 
   alias Camelot.Agents.Agent
+  alias Camelot.Agents.ModelDiscovery
   alias CamelotWeb.Components.RunnerImagePicker
 
   @parser_options [
@@ -24,14 +30,15 @@ defmodule CamelotWeb.AgentLive.Index do
   @array_fields ~w(base_args internal_tools question_phrases
                    required_credential_kinds available_models)
   @map_fields ~w(permission_args_by_stage system_prompt_by_stage
-                 output_schema_by_stage env_vars runner_resources)
+                 output_schema_by_stage env_vars runner_resources
+                 models_probe)
   @integer_fields ~w(base_retry_delay_ms max_retries)
 
   @credential_kinds ~w(claude_api_key openai_api_key ssh_private_key generic)
 
   @impl true
   def mount(_params, _session, socket) do
-    {:ok, load_agents(socket)}
+    {:ok, socket |> assign(model_check: nil) |> load_agents()}
   end
 
   @impl true
@@ -74,6 +81,38 @@ defmodule CamelotWeb.AgentLive.Index do
      socket
      |> put_flash(:info, "Agent CLI deleted")
      |> load_agents()}
+  end
+
+  # Runs the agent's `models_probe` with *this admin's* own credential
+  # and shows what came back, read-only. The result is never written
+  # anywhere by itself — "Pin these" is a separate, explicit click, so
+  # a check can't clobber an admin's hand-maintained fallback list.
+  def handle_event("check_models", %{"id" => id}, socket) do
+    agent = Ash.get!(Agent, id)
+    result = ModelDiscovery.for_user(agent, socket.assigns.current_user.id)
+
+    {:noreply, assign(socket, model_check: model_check(agent, result))}
+  end
+
+  def handle_event("pin_models", %{"id" => id}, socket) do
+    agent = Ash.get!(Agent, id)
+    models = socket.assigns.model_check.models
+
+    case Ash.update(agent, %{available_models: models}, action: :update, actor: socket.assigns.current_user) do
+      {:ok, _agent} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Available models pinned")
+         |> assign(model_check: nil)
+         |> load_agents()}
+
+      {:error, error} ->
+        {:noreply, put_flash(socket, :error, "Failed to pin models: #{format_error(error)}")}
+    end
+  end
+
+  def handle_event("dismiss_models", _params, socket) do
+    {:noreply, assign(socket, model_check: nil)}
   end
 
   def handle_event("validate", params, socket) do
@@ -147,6 +186,29 @@ defmodule CamelotWeb.AgentLive.Index do
   defp format_one_error(%{message: msg}) when is_binary(msg), do: msg
   defp format_one_error(other), do: inspect(other)
 
+  # Every failure says what to do next: discovery is off for this row,
+  # the admin themselves holds no key of the kind it names, or the
+  # provider refused the call.
+  @spec model_check(Agent.t(), {:ok, [String.t()]} | {:error, ModelDiscovery.error()}) :: map()
+  defp model_check(agent, {:ok, models}) do
+    %{agent_id: agent.id, agent_name: agent.name, models: models, error: nil}
+  end
+
+  defp model_check(agent, {:error, reason}) do
+    %{agent_id: agent.id, agent_name: agent.name, models: [], error: check_error(reason)}
+  end
+
+  @spec check_error(ModelDiscovery.error()) :: String.t()
+  defp check_error(:no_probe) do
+    "No usable model discovery probe — fill in the probe JSON (url, auth, credential_kind)."
+  end
+
+  defp check_error(:no_credential) do
+    "You hold no credential of the kind the probe names — add it on your profile."
+  end
+
+  defp check_error(reason), do: "The provider call failed: #{reason}."
+
   defp load_agents(socket) do
     agents = Ash.read!(Agent)
     assign(socket, agents: Enum.sort_by(agents, & &1.slug))
@@ -163,6 +225,7 @@ defmodule CamelotWeb.AgentLive.Index do
       "tools_flag" => "",
       "model_flag" => "",
       "available_models" => "",
+      "models_probe" => "{}",
       "default_model" => "",
       "tools_separator" => ",",
       "permission_args_by_stage" => "{}",
@@ -192,6 +255,7 @@ defmodule CamelotWeb.AgentLive.Index do
       "tools_flag" => agent.tools_flag || "",
       "model_flag" => agent.model_flag || "",
       "available_models" => lines(agent.available_models),
+      "models_probe" => Jason.encode!(agent.models_probe || %{}, pretty: true),
       "default_model" => agent.default_model || "",
       "tools_separator" => agent.tools_separator,
       "permission_args_by_stage" => Jason.encode!(agent.permission_args_by_stage, pretty: true),
@@ -220,6 +284,7 @@ defmodule CamelotWeb.AgentLive.Index do
          {:ok, system_prompts} <- parse_json_map(form_p, "system_prompt_by_stage"),
          {:ok, output_schemas} <- parse_json_map(form_p, "output_schema_by_stage"),
          {:ok, env} <- parse_json_map(form_p, "env_vars"),
+         {:ok, probe} <- parse_json_map(form_p, "models_probe"),
          {:ok, resources} <- parse_json_map(form_p, "runner_resources"),
          {:ok, retry_ms} <- parse_int(form_p, "base_retry_delay_ms"),
          {:ok, max_retries} <- parse_int(form_p, "max_retries"),
@@ -235,6 +300,7 @@ defmodule CamelotWeb.AgentLive.Index do
          tools_flag: nilify(form_p["tools_flag"]),
          model_flag: nilify(form_p["model_flag"]),
          available_models: split_lines(form_p["available_models"]),
+         models_probe: nilify_map(probe),
          default_model: nilify(form_p["default_model"]),
          tools_separator: form_p["tools_separator"] || ",",
          permission_args_by_stage: perm,
@@ -292,6 +358,13 @@ defmodule CamelotWeb.AgentLive.Index do
   defp nilify(""), do: nil
   defp nilify(nil), do: nil
   defp nilify(s), do: s
+
+  # An empty JSON object means "no discovery" rather than "an empty
+  # probe config": `ModelDiscovery` reads nil as off, and that is what
+  # clearing the textarea has to produce.
+  @spec nilify_map(map()) :: map() | nil
+  defp nilify_map(map) when map_size(map) == 0, do: nil
+  defp nilify_map(map), do: map
 
   defp split_lines(nil), do: []
 
@@ -392,6 +465,17 @@ defmodule CamelotWeb.AgentLive.Index do
               label="Available models (one per line)"
               rows="3"
             />
+            <.input
+              field={@form[:models_probe]}
+              type="textarea"
+              label="Model discovery probe (JSON)"
+              rows="5"
+            />
+            <p class="text-xs text-base-content/50 -mt-2">
+              Asks the provider which models the task creator's own key may use, and supersedes the
+              list above when it answers. Empty <code>{"{}"}</code>
+              disables discovery. Example: <code>{~s({"strategy": "http_models_endpoint", "url": "https://api.anthropic.com/v1/models", "auth": "anthropic", "credential_kind": "claude_api_key", "include": "^claude-"})}</code>.
+            </p>
             <.input
               field={@form[:default_model]}
               type="text"
@@ -519,6 +603,36 @@ defmodule CamelotWeb.AgentLive.Index do
         </.modal>
       <% end %>
 
+      <div :if={@model_check} class="card bg-base-200 p-4 space-y-2">
+        <p class="text-sm font-semibold">
+          Models discovered for {@model_check.agent_name}
+        </p>
+        <p :if={@model_check.error} class="text-xs text-error">
+          {@model_check.error}
+        </p>
+        <ul :if={@model_check.models != []} class="text-xs space-y-1">
+          <li :for={model <- @model_check.models}>
+            <code>{model}</code>
+          </li>
+        </ul>
+        <div class="flex items-center gap-2">
+          <button
+            :if={@model_check.models != []}
+            phx-click={JS.push("pin_models", value: %{id: @model_check.agent_id})}
+            class="btn btn-sm btn-primary"
+          >
+            Pin these
+          </button>
+          <button phx-click="dismiss_models" class="btn btn-sm btn-ghost">
+            Dismiss
+          </button>
+        </div>
+        <p :if={@model_check.models != []} class="text-xs text-base-content/50">
+          Pinning writes these ids to Available models, the offline fallback. Nothing writes that
+          column automatically.
+        </p>
+      </div>
+
       <div class="overflow-x-auto">
         <.table id="agents" rows={@agents}>
           <:col :let={agent} label="Slug">
@@ -541,6 +655,11 @@ defmodule CamelotWeb.AgentLive.Index do
           <:action :let={agent}>
             <.link navigate={~p"/agents/#{agent.id}/edit"}>
               Edit
+            </.link>
+          </:action>
+          <:action :let={agent}>
+            <.link phx-click={JS.push("check_models", value: %{id: agent.id})}>
+              Check models
             </.link>
           </:action>
           <:action :let={agent}>

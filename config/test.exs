@@ -38,6 +38,11 @@ config :camelot, CamelotWeb.Endpoint,
 # Disable Oban job execution in tests
 config :camelot, Oban, testing: :manual
 
+# No test may reach a model provider over the network. Uninstalled,
+# the stub answers an empty listing, which leaves model dropdowns on
+# the agent's seeded `available_models`.
+config :camelot, :model_api, Camelot.Support.StubModelApi
+
 # Reconciler queries the DB; disable its auto-tick in tests so the
 # sandbox doesn't see an unowned querier.
 config :camelot, :reconciler, autostart: false
