@@ -17,6 +17,7 @@ defmodule Camelot.Application do
       CamelotWeb.Telemetry,
       Camelot.Repo,
       Camelot.Vault,
+      Camelot.Cache,
       {DNSCluster, query: Application.get_env(:camelot, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Camelot.PubSub},
       {Oban,

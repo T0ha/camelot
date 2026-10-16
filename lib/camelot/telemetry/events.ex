@@ -38,6 +38,8 @@ defmodule Camelot.Telemetry.Events do
     {Task, :cancel} => "task_cancelled",
     {Task, :mark_error} => "task_errored",
     {Task, :mark_runner_lost} => "task_runner_lost",
+    {Task, :pause_for_usage_limit} => "task_paused",
+    {Task, :resume_paused} => "task_resumed",
     {Project, :create} => "project_created",
     {User, :create_user} => "user_signed_up",
     {User, :register_with_github} => "user_signed_up",

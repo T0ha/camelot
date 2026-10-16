@@ -35,6 +35,7 @@ defmodule Camelot.Runtime.TaskRunner do
   alias Camelot.Board.PromptBuilder
   alias Camelot.Board.Task
   alias Camelot.Board.TaskMessage
+  alias Camelot.Board.UsageLimitPause
   alias Camelot.Github.AppConfig
   alias Camelot.Github.Client
   alias Camelot.Github.InstallationTokenCache
@@ -53,6 +54,7 @@ defmodule Camelot.Runtime.TaskRunner do
   alias Camelot.Runtime.SecretSync
   alias Camelot.Runtime.SessionRegistry
   alias Camelot.Runtime.TaskRegistry
+  alias Camelot.Runtime.UsageLimit
   alias Camelot.Telemetry.Context
 
   require Ash.Query
@@ -367,15 +369,52 @@ defmodule Camelot.Runtime.TaskRunner do
 
     failed? = exit_code != 0 or match?({:error, _}, parsed)
 
-    # A clean-but-empty run (agent produced nothing actionable) is retried
-    # on the same footing as a failure — bounded by the agent's
-    # `max_retries` — instead of silently parking the task.
+    detection =
+      if failed? do
+        UsageLimit.detect(parser_for(state), parsed, state.output_buffer, DateTime.utc_now())
+      else
+        :none
+      end
+
+    case detection do
+      {:limited, info} ->
+        release_pool_slot(state)
+        UsageLimitPause.pause(state.task_id, credential_kind(state), info)
+        {:noreply, reset_runner(state)}
+
+      :none ->
+        retry_or_finalize(state, exit_code, parsed, denials, failed?, empty?)
+    end
+  end
+
+  # A clean-but-empty run (agent produced nothing actionable) is
+  # retried on the same footing as a failure — bounded by the agent's
+  # `max_retries` — instead of silently parking the task.
+  defp retry_or_finalize(state, exit_code, parsed, denials, failed?, empty?) do
     if (failed? or empty?) and state.retry_count < state.max_retries do
       release_pool_slot(state)
       schedule_retry(state)
     else
       finalize_terminal(state, exit_code, parsed, denials, failed?, empty?)
     end
+  end
+
+  # The credential kind whose provider rejected this run. Read off
+  # the resolved `AgentConfig` (set at dispatch) rather than the
+  # parser name, since a parser (`:claude_code_json`) and a
+  # credential kind (`:claude_api_key`) are independent choices on the
+  # `Agent` template.
+  defp credential_kind(%__MODULE__{config: %AgentConfig{required_credential_kinds: [kind | _]}}) do
+    kind
+  end
+
+  defp credential_kind(%__MODULE__{task_id: task_id}) do
+    Logger.warning(
+      "Task #{task_id}: agent has no required_credential_kinds configured; " <>
+        "usage-limit pause will not cover sibling tasks on the same token"
+    )
+
+    :generic
   end
 
   # Terminal handling once retries are exhausted (or none configured). An
@@ -928,15 +967,7 @@ defmodule Camelot.Runtime.TaskRunner do
   defp fetch_credential(user_id, kind_atom, name \\ nil)
 
   defp fetch_credential(user_id, kind_atom, nil) do
-    Credential
-    |> Ash.Query.filter(user_id == ^user_id and kind == ^kind_atom)
-    |> Ash.Query.limit(1)
-    |> Ash.Query.load(:value)
-    |> Ash.read()
-    |> case do
-      {:ok, [cred | _]} -> cred
-      _ -> nil
-    end
+    Credential.for_user_and_kind(user_id, kind_atom, load_value?: true)
   end
 
   defp fetch_credential(user_id, kind_atom, name) do

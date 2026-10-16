@@ -10,8 +10,10 @@ defmodule Camelot.Board.Changes.DispatchTasks do
   """
   use Ash.Resource.Actions.Implementation
 
+  alias Camelot.Accounts.Credential
   alias Camelot.Board.PromptBuilder
   alias Camelot.Board.Task
+  alias Camelot.Board.UsageLimitPause
   alias Camelot.Runtime.TaskRegistry
   alias Camelot.Runtime.TaskRunner
   alias Camelot.Runtime.TaskRunnerSupervisor
@@ -28,6 +30,7 @@ defmodule Camelot.Board.Changes.DispatchTasks do
           Ash.Resource.Actions.Implementation.Context.t()
         ) :: :ok
   def run(_input, _opts, _context) do
+    UsageLimitPause.resume_due(DateTime.utc_now())
     Enum.each(dispatchable_tasks(), &dispatch_task/1)
     :ok
   end
@@ -37,6 +40,9 @@ defmodule Camelot.Board.Changes.DispatchTasks do
   # waiting on an incomplete dependency out of it — both gates belong
   # in the query, not a post-fetch `Enum.filter`, so a board with many
   # queued tasks isn't paying to load and inspect rows it will discard.
+  # The usage-limit gate can't join the same way (the limit lives on a
+  # `Credential` keyed by creator+kind, not a column on `Task`), so it
+  # runs as a post-fetch reject instead.
   defp dispatchable_tasks do
     Task
     |> Ash.Query.filter(
@@ -46,10 +52,25 @@ defmodule Camelot.Board.Changes.DispatchTasks do
     |> Ash.Query.sort(priority: :desc)
     |> Ash.read!(
       load:
-        [:blocked?, :messages, :attachments, :project] ++
+        [:blocked?, :messages, :attachments, :project, :agent] ++
           Task.link_load() ++ [creator: [:github_installations]],
       authorize?: false
     )
+    |> Enum.reject(&usage_limited?/1)
+  end
+
+  defp usage_limited?(%Task{creator_id: creator_id, agent: %{required_credential_kinds: kinds}}) do
+    now = DateTime.utc_now()
+    Enum.any?(kinds, &credential_limited?(creator_id, &1, now))
+  end
+
+  defp usage_limited?(_task), do: false
+
+  defp credential_limited?(creator_id, kind, now) do
+    case Credential.for_user_and_kind(creator_id, kind) do
+      %Credential{usage_limited_until: %DateTime{} = until} -> DateTime.after?(until, now)
+      _ -> false
+    end
   end
 
   defp dispatch_task(task) do

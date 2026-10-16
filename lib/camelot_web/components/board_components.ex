@@ -85,6 +85,15 @@ defmodule CamelotWeb.BoardComponents do
           >
             <.icon name="hero-arrow-path" class="size-3" />
           </button>
+          <button
+            :if={@task.state == :paused}
+            phx-click="resume_now"
+            phx-value-id={@task.id}
+            class="btn btn-xs btn-warning ml-auto"
+            title="Resume now"
+          >
+            <.icon name="hero-play" class="size-3" />
+          </button>
         </div>
         <p
           :if={@task.state == :error && @task.last_error}
@@ -92,6 +101,13 @@ defmodule CamelotWeb.BoardComponents do
           title={@task.last_error}
         >
           {@task.last_error}
+        </p>
+        <p
+          :if={@task.state == :paused && @task.pause_reason}
+          class="mt-1 text-xs text-warning whitespace-pre-line line-clamp-3"
+          title={@task.pause_reason}
+        >
+          {@task.pause_reason}
         </p>
       </div>
     </div>
@@ -153,6 +169,7 @@ defmodule CamelotWeb.BoardComponents do
   defp state_badge_class(:in_progress), do: "badge-primary"
   defp state_badge_class(:waiting_for_input), do: "badge-warning"
   defp state_badge_class(:error), do: "badge-error"
+  defp state_badge_class(:paused), do: "badge-warning"
   defp state_badge_class(_state), do: "badge-ghost"
 
   defp state_emoji(:queued), do: "⏳"
@@ -161,5 +178,6 @@ defmodule CamelotWeb.BoardComponents do
   defp state_emoji(:in_progress), do: "🔃"
   defp state_emoji(:waiting_for_input), do: "💬"
   defp state_emoji(:error), do: "⚠️"
+  defp state_emoji(:paused), do: "⏸️"
   defp state_emoji(_state), do: "❓"
 end

@@ -21,6 +21,8 @@ defmodule Camelot.Accounts.Credential do
     authorizers: [],
     simple_notifiers: [Camelot.Telemetry.Notifier]
 
+  require Ash.Query
+
   # `:codex_api_key` was retired in favour of `:openai_api_key`: both
   # mounted the same `OPENAI_API_KEY`, nothing ever branched on the
   # difference, and offering both made a user's choice load-bearing
@@ -83,6 +85,27 @@ defmodule Camelot.Accounts.Credential do
       description("Non-secret context (e.g. OAuth expiry, key fingerprint)")
     end
 
+    attribute :usage_limited_until, :utc_datetime_usec do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Set while the provider is rejecting requests against this " <>
+          "credential as over its usage limit. Cleared once the " <>
+          "window resets or the value is rotated."
+      )
+    end
+
+    attribute :usage_limit_window, :string do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Human-readable rate-limit window reported by the provider " <>
+          "the last time it rejected a request, e.g. \"5h\"."
+      )
+    end
+
     timestamps()
   end
 
@@ -114,6 +137,9 @@ defmodule Camelot.Accounts.Credential do
       primary?(true)
       accept([:name, :value, :metadata])
       require_atomic?(false)
+
+      change(set_attribute(:usage_limited_until, nil))
+      change(set_attribute(:usage_limit_window, nil))
     end
 
     update :rotate do
@@ -126,6 +152,9 @@ defmodule Camelot.Accounts.Credential do
       # being patched in a second action.
       argument(:metadata, :map, allow_nil?: true)
 
+      change(set_attribute(:usage_limited_until, nil))
+      change(set_attribute(:usage_limit_window, nil))
+
       change(fn changeset, _ ->
         existing = Ash.Changeset.get_attribute(changeset, :metadata) || %{}
         override = Ash.Changeset.get_argument(changeset, :metadata) || %{}
@@ -137,6 +166,69 @@ defmodule Camelot.Accounts.Credential do
 
         Ash.Changeset.change_attribute(changeset, :metadata, merged)
       end)
+    end
+
+    # Recovery once a usage-limited credential's reset time passes —
+    # see `Camelot.Board.UsageLimitPause.resume_due/1`.
+    update :clear_usage_limit do
+      accept([])
+
+      change(set_attribute(:usage_limited_until, nil))
+      change(set_attribute(:usage_limit_window, nil))
+    end
+
+    # The provider rejected a request against this credential as
+    # over-limit — see `Camelot.Board.UsageLimitPause.pause/3`.
+    update :mark_usage_limited do
+      accept([])
+      require_atomic?(false)
+
+      argument :usage_limited_until, :utc_datetime_usec do
+        allow_nil?(false)
+      end
+
+      argument :usage_limit_window, :string do
+        allow_nil?(true)
+      end
+
+      change(fn changeset, _context ->
+        changeset
+        |> Ash.Changeset.force_change_attribute(
+          :usage_limited_until,
+          Ash.Changeset.get_argument(changeset, :usage_limited_until)
+        )
+        |> Ash.Changeset.force_change_attribute(
+          :usage_limit_window,
+          Ash.Changeset.get_argument(changeset, :usage_limit_window)
+        )
+      end)
+    end
+  end
+
+  @doc """
+  Looks up a user's credential of `kind`, or `nil`. Shared by
+  `Camelot.Runtime.TaskRunner.build_secrets/2` (which needs the
+  decrypted `value`, hence `load_value?: true`) and
+  `Camelot.Board.UsageLimitPause` (which only inspects/updates the
+  row itself).
+  """
+  @spec for_user_and_kind(String.t(), atom(), keyword()) :: t() | nil
+  def for_user_and_kind(user_id, kind, opts \\ []) do
+    query =
+      __MODULE__
+      |> Ash.Query.filter(user_id == ^user_id and kind == ^kind)
+      |> Ash.Query.limit(1)
+
+    query =
+      if Keyword.get(opts, :load_value?, false) do
+        Ash.Query.load(query, :value)
+      else
+        query
+      end
+
+    case Ash.read(query) do
+      {:ok, [credential | _]} -> credential
+      _ -> nil
     end
   end
 end

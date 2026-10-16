@@ -94,6 +94,15 @@ defmodule Camelot.Runtime.OutputParser do
 
   defp from_result(_data, _objects), do: {:error, "unexpected JSON structure"}
 
+  @doc """
+  Every decodable JSON object in `buffer`, in stream order. Exposed so
+  `Camelot.Runtime.UsageLimit` can rescan a `:claude_code_json` run's
+  raw JSONL for a `rate_limit_event` line after `parse/2` has already
+  reduced the buffer to a single `{:error, _}` result.
+  """
+  @spec jsonl_events(String.t()) :: [map()]
+  def jsonl_events(buffer), do: decode_lines(buffer)
+
   # `--json-schema` runs force a `StructuredOutput` tool call; the result
   # event then carries the validated object under `structured_output`
   # (the `result` field holds the same payload as a JSON string).

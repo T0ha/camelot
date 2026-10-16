@@ -49,6 +49,28 @@ defmodule Camelot.Agents.ClaudeCodeDefaults do
   @spec required_credential_kinds() :: [atom()]
   def required_credential_kinds, do: [:claude_api_key]
 
+  @models_probe %{
+    "strategy" => "http_models_endpoint",
+    "url" => "https://api.anthropic.com/v1/models",
+    "auth" => "anthropic",
+    "credential_kind" => "claude_api_key",
+    "list_key" => "data",
+    "id_key" => "id",
+    "include" => "^claude-"
+  }
+
+  @doc """
+  Probe config for live, per-user model discovery — see
+  `Camelot.Agents.ModelDiscovery`.
+
+  Anthropic's `GET /v1/models` lists exactly what the presented
+  credential may use, costs no tokens, and needs the version header
+  the `"anthropic"` auth strategy adds. The `include` filter keeps the
+  listing to the chat models the CLI's `--model` flag accepts.
+  """
+  @spec models_probe() :: map()
+  def models_probe, do: @models_probe
+
   @execution_system_prompt "You are running fully autonomously in a " <>
                              "headless, single-turn session: there is no " <>
                              "interactive user to answer you and no follow-up " <>

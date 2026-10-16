@@ -138,6 +138,20 @@ defmodule Camelot.Accounts.User do
       description("Email this user when one of their task cards is done.")
     end
 
+    attribute :notify_on_usage_limit_paused, :boolean do
+      allow_nil?(false)
+      public?(true)
+      default(true)
+      description("Email this user when a provider usage limit pauses their tasks.")
+    end
+
+    attribute :notify_on_usage_limit_resumed, :boolean do
+      allow_nil?(false)
+      public?(true)
+      default(true)
+      description("Email this user when their usage-limit-paused tasks resume.")
+    end
+
     attribute :onboarding_dismissed_at, :utc_datetime_usec do
       allow_nil?(true)
 
@@ -210,7 +224,9 @@ defmodule Camelot.Accounts.User do
       accept([
         :notify_on_waiting_for_input,
         :notify_on_error,
-        :notify_on_done
+        :notify_on_done,
+        :notify_on_usage_limit_paused,
+        :notify_on_usage_limit_resumed
       ])
     end
 

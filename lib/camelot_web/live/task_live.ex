@@ -8,6 +8,7 @@ defmodule CamelotWeb.TaskLive do
   import CamelotWeb.BoardComponents, only: [state_badge: 1]
 
   alias Camelot.Accounts.User
+  alias Camelot.Agents.ModelDiscovery
   alias Camelot.Agents.ModelLabel
   alias Camelot.Agents.Session
   alias Camelot.Board.PrApproval
@@ -15,6 +16,7 @@ defmodule CamelotWeb.TaskLive do
   alias Camelot.Board.TaskAttachment
   alias Camelot.Board.TaskLink
   alias Camelot.Board.TaskMessage
+  alias Camelot.Board.UsageLimitPause
   alias Camelot.Github.Resolver
   alias Camelot.Runtime.TaskRegistry
   alias Camelot.Runtime.TaskRunnerSupervisor
@@ -59,6 +61,7 @@ defmodule CamelotWeb.TaskLive do
           |> assign(
             page_title: task.title,
             task: task,
+            model_options: model_options(task, connected?(socket)),
             message_input: "",
             live_output: "",
             progress: nil,
@@ -304,6 +307,18 @@ defmodule CamelotWeb.TaskLive do
     reset_task_and_runner(socket, socket.assigns.task)
   end
 
+  def handle_event("resume_now", _params, socket) do
+    task = socket.assigns.task
+    UsageLimitPause.resume_now(task)
+
+    updated = Ash.load!(Ash.get!(Task, task.id), @task_load)
+
+    {:noreply,
+     socket
+     |> assign(task: updated)
+     |> put_flash(:info, "Task resumed")}
+  end
+
   def handle_event("cancel", _params, socket) do
     task = socket.assigns.task
 
@@ -504,11 +519,20 @@ defmodule CamelotWeb.TaskLive do
     end
   end
 
-  defp next_model_options(%Task{agent: %{available_models: models}}) when is_list(models) do
-    models
+  # Which models this task can still be run on is resolved live, with
+  # the **creator's** credential rather than the viewer's: the runner
+  # mounts the creator's key (`TaskRunner.build_secrets/2`), so it is
+  # their entitlements that decide whether a run succeeds. Resolving
+  # it is I/O, hence in `mount/3` and not `render/1`, and only on the
+  # connected mount — the dead render shows the pinned column and is
+  # replaced a moment later.
+  @spec model_options(Task.t(), boolean()) :: [String.t()]
+  defp model_options(task, true) do
+    ModelDiscovery.models_for(task.agent, task.creator_id)
   end
 
-  defp next_model_options(_task), do: []
+  defp model_options(%Task{agent: %{available_models: models}}, false), do: models
+  defp model_options(_task, false), do: []
 
   # Read-only summary of the effective model, shown once a task reaches a
   # terminal stage (the picker itself is hidden — no further runs will
@@ -572,7 +596,7 @@ defmodule CamelotWeb.TaskLive do
                 Use agent default
               </option>
               <option
-                :for={model <- next_model_options(@task)}
+                :for={model <- @model_options}
                 value={model}
                 selected={@task.next_model == model}
               >
@@ -611,6 +635,13 @@ defmodule CamelotWeb.TaskLive do
             Retry
           </button>
           <button
+            :if={@task.state == :paused}
+            phx-click="resume_now"
+            class="btn btn-sm btn-warning"
+          >
+            Resume now
+          </button>
+          <button
             :if={@task.stage not in [:done, :cancelled]}
             phx-click="cancel"
             data-confirm="Cancel this task?"
@@ -630,6 +661,18 @@ defmodule CamelotWeb.TaskLive do
         <div>
           <p class="font-semibold">This task stopped with an error</p>
           <p class="whitespace-pre-line">{@task.last_error}</p>
+        </div>
+      </div>
+
+      <div
+        :if={@task.state == :paused}
+        class="alert alert-warning text-sm items-start"
+        role="alert"
+      >
+        <.icon name="hero-clock" class="size-5 shrink-0" />
+        <div>
+          <p class="font-semibold">This task is paused</p>
+          <p class="whitespace-pre-line">{@task.pause_reason}</p>
         </div>
       </div>
 

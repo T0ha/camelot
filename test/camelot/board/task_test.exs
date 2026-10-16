@@ -974,4 +974,139 @@ defmodule Camelot.Board.TaskTest do
       assert updated.state == :in_progress
     end
   end
+
+  describe "pause and resume" do
+    test "pauses a queued task with a reset time and reason", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+      reset_at = DateTime.add(DateTime.utc_now(), 3600, :second)
+
+      assert {:ok, paused} =
+               Ash.update(
+                 task,
+                 %{paused_until: reset_at, pause_reason: "usage limit hit"},
+                 action: :pause_for_usage_limit
+               )
+
+      assert paused.state == :paused
+      assert paused.stage == :todo
+      assert DateTime.truncate(paused.paused_until, :second) == DateTime.truncate(reset_at, :second)
+      assert paused.pause_reason == "usage limit hit"
+    end
+
+    test "pausing clears a stale last_error", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+      {:ok, task} = Ash.update(task, %{last_error: "boom"}, action: :mark_error)
+      {:ok, task} = Ash.update(task, %{}, action: :retry)
+
+      reset_at = DateTime.add(DateTime.utc_now(), 60, :second)
+
+      assert {:ok, paused} =
+               Ash.update(
+                 task,
+                 %{paused_until: reset_at, pause_reason: "usage limit hit"},
+                 action: :pause_for_usage_limit
+               )
+
+      assert paused.last_error == nil
+    end
+
+    test "pauses an in_progress task, the primary production path", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+      assert task.state == :in_progress
+
+      reset_at = DateTime.add(DateTime.utc_now(), 3600, :second)
+
+      assert {:ok, paused} =
+               Ash.update(
+                 task,
+                 %{paused_until: reset_at, pause_reason: "usage limit hit"},
+                 action: :pause_for_usage_limit
+               )
+
+      assert paused.state == :paused
+      assert DateTime.truncate(paused.paused_until, :second) == DateTime.truncate(reset_at, :second)
+      assert paused.pause_reason == "usage limit hit"
+    end
+
+    test "refuses to pause a terminal stage", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+      {:ok, task} = Ash.update(task, %{}, action: :cancel)
+
+      assert {:error, _} =
+               Ash.update(
+                 task,
+                 %{paused_until: DateTime.utc_now(), pause_reason: "usage limit hit"},
+                 action: :pause_for_usage_limit
+               )
+    end
+
+    test "refuses to pause a task waiting for input", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+      {:ok, task} = Ash.update(task, %{plan: "plan"}, action: :submit_plan)
+
+      assert {:error, _} =
+               Ash.update(
+                 task,
+                 %{paused_until: DateTime.utc_now(), pause_reason: "usage limit hit"},
+                 action: :pause_for_usage_limit
+               )
+    end
+
+    test "resume_paused re-queues and clears pause fields", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+      reset_at = DateTime.add(DateTime.utc_now(), 3600, :second)
+
+      {:ok, paused} =
+        Ash.update(
+          task,
+          %{paused_until: reset_at, pause_reason: "usage limit hit"},
+          action: :pause_for_usage_limit
+        )
+
+      assert {:ok, resumed} = Ash.update(paused, %{}, action: :resume_paused)
+
+      assert resumed.state == :queued
+      assert resumed.paused_until == nil
+      assert resumed.pause_reason == nil
+    end
+
+    test "resume_paused refuses a task that isn't paused", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      assert {:error, _} = Ash.update(task, %{}, action: :resume_paused)
+    end
+
+    test "reset clears pause fields", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+      reset_at = DateTime.add(DateTime.utc_now(), 3600, :second)
+
+      {:ok, paused} =
+        Ash.update(
+          task,
+          %{paused_until: reset_at, pause_reason: "usage limit hit"},
+          action: :pause_for_usage_limit
+        )
+
+      assert {:ok, reset} = Ash.update(paused, %{}, action: :reset)
+      assert reset.state == :queued
+      assert reset.paused_until == nil
+      assert reset.pause_reason == nil
+    end
+
+    test "pausing does not enqueue a task-state email", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      {:ok, _} =
+        Ash.update(
+          task,
+          %{paused_until: DateTime.utc_now(), pause_reason: "usage limit hit"},
+          action: :pause_for_usage_limit
+        )
+
+      refute_enqueued(worker: SendTaskStateEmail)
+    end
+  end
 end
