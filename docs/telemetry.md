@@ -281,10 +281,23 @@ every signup is skipped — it is not something the user did.
 | `project_created` | `has_github_repo`, `has_github_installation`, `repo_visibility` |
 | `project_create_failed` | `error_fields`, `error_codes` |
 | `agent_created` / `agent_updated` | `slug` |
+| `agent_models_probe_failed` | `reason`, `http_status` |
 | `task_created`, `task_started`, `task_plan_submitted`, `task_plan_approved`, `task_pr_created`, `task_completed`, `task_cancelled` | `data_id` |
 | `task_form_blocked` | `reason` (`no_project \| no_agent \| no_credential`) |
 | `task_errored` / `task_runner_lost` | `stage`, `reason` |
 | `task_paused` / `task_resumed` | `data_id` |
+
+`agent_models_probe_failed` is `Camelot.Agents.ModelDiscovery` failing
+to ask a provider which models the user's own credential may use. It
+covers only real faults — a refused call (`forbidden`), a rate limit,
+an unreachable host (`transport_error`) — because the two ordinary
+degraded states are on the path of every board render and would drown
+the event: an agent with no probe configured, and a user who has not
+stored that provider's key yet (logged at `info`, like
+`project_repo_resolve_failed`'s `no_installation`). The failure is
+never user-visible — the dropdown falls back to the agent's pinned
+`available_models` — so this event is the only signal that a
+deployment's discovery is broken.
 
 `project_created.has_github_installation` asks only whether the
 creator had *any* live installation — not whether it covers this

@@ -11,6 +11,7 @@ defmodule CamelotWeb.BoardLive do
   alias AshPhoenix.Form
   alias Camelot.Accounts.UserCredentials
   alias Camelot.Agents.Agent
+  alias Camelot.Agents.ModelDiscovery
   alias Camelot.Agents.ModelLabel
   alias Camelot.Board.Task
   alias Camelot.Board.TaskLink
@@ -115,7 +116,9 @@ defmodule CamelotWeb.BoardLive do
   end
 
   def handle_event("validate_task", %{"task" => params}, socket) do
-    {:noreply, assign(socket, task_form: Form.validate(socket.assigns.task_form, params))}
+    socket = assign(socket, task_form: Form.validate(socket.assigns.task_form, params))
+
+    {:noreply, assign_model_options(socket)}
   end
 
   def handle_event("create_task", %{"task" => params}, socket) do
@@ -161,7 +164,43 @@ defmodule CamelotWeb.BoardLive do
   # pushed the event.
   @spec open_new_task(Socket.t()) :: Socket.t()
   defp open_new_task(%Socket{assigns: %{projects: []}} = socket), do: socket
-  defp open_new_task(socket), do: assign(socket, new_task_open?: true)
+
+  defp open_new_task(socket) do
+    socket
+    |> assign(new_task_open?: true)
+    |> assign_model_options()
+  end
+
+  # Which models the picked agent CLI will actually accept is resolved
+  # live, per user (`Camelot.Agents.ModelDiscovery`), so it is I/O —
+  # hence here rather than in `render/1`, and only when the selected
+  # agent changed: every other keystroke in the modal is then a
+  # comparison, not even a cache read. The creator of the task is the
+  # current user, so it is their credential that decides.
+  @spec assign_model_options(Socket.t()) :: Socket.t()
+  defp assign_model_options(socket) do
+    socket.assigns.agents
+    |> selected_agent(socket.assigns.task_form)
+    |> refresh_model_options(socket)
+  end
+
+  @spec refresh_model_options(Agent.t() | nil, Socket.t()) :: Socket.t()
+  defp refresh_model_options(%Agent{id: id}, %Socket{assigns: %{model_options_agent_id: id}} = socket) do
+    socket
+  end
+
+  defp refresh_model_options(nil, socket) do
+    assign(socket, model_options: [], model_options_agent_id: nil)
+  end
+
+  defp refresh_model_options(agent, socket) do
+    options =
+      agent
+      |> ModelDiscovery.models_for(socket.assigns.current_user.id)
+      |> Enum.map(&{ModelLabel.humanize(&1), &1})
+
+    assign(socket, model_options: options, model_options_agent_id: agent.id)
+  end
 
   # Guards the wire, not just the render: `disabled` on an `<option>`
   # is a hint to the browser, and a run dispatched against a CLI whose
@@ -247,6 +286,8 @@ defmodule CamelotWeb.BoardLive do
       credential_kinds: UserCredentials.held_kinds(user)
     )
     |> assign_new(:task_form, fn -> new_task_form(user) end)
+    |> assign_new(:model_options, fn -> [] end)
+    |> assign_new(:model_options_agent_id, fn -> nil end)
   end
 
   # The new-task form is only submittable by a user who has a project
@@ -400,13 +441,6 @@ defmodule CamelotWeb.BoardLive do
     end
   end
 
-  defp next_model_options(agents, form) do
-    case selected_agent(agents, form) do
-      nil -> []
-      agent -> Enum.map(agent.available_models, &{ModelLabel.humanize(&1), &1})
-    end
-  end
-
   # An agent the user holds no key for stays in the dropdown rather
   # than being filtered out of it: the row is the only place that can
   # explain why Claude Code isn't an option today, and the user can
@@ -554,7 +588,7 @@ defmodule CamelotWeb.BoardLive do
             type="select"
             label="Model"
             prompt={next_model_prompt(@agents, @task_form)}
-            options={next_model_options(@agents, @task_form)}
+            options={@model_options}
             disabled={is_nil(selected_agent(@agents, @task_form))}
           />
           <fieldset class="fieldset">

@@ -8,6 +8,7 @@ defmodule CamelotWeb.TaskLive do
   import CamelotWeb.BoardComponents, only: [state_badge: 1]
 
   alias Camelot.Accounts.User
+  alias Camelot.Agents.ModelDiscovery
   alias Camelot.Agents.ModelLabel
   alias Camelot.Agents.Session
   alias Camelot.Board.PrApproval
@@ -60,6 +61,7 @@ defmodule CamelotWeb.TaskLive do
           |> assign(
             page_title: task.title,
             task: task,
+            model_options: model_options(task, connected?(socket)),
             message_input: "",
             live_output: "",
             progress: nil,
@@ -517,11 +519,20 @@ defmodule CamelotWeb.TaskLive do
     end
   end
 
-  defp next_model_options(%Task{agent: %{available_models: models}}) when is_list(models) do
-    models
+  # Which models this task can still be run on is resolved live, with
+  # the **creator's** credential rather than the viewer's: the runner
+  # mounts the creator's key (`TaskRunner.build_secrets/2`), so it is
+  # their entitlements that decide whether a run succeeds. Resolving
+  # it is I/O, hence in `mount/3` and not `render/1`, and only on the
+  # connected mount — the dead render shows the pinned column and is
+  # replaced a moment later.
+  @spec model_options(Task.t(), boolean()) :: [String.t()]
+  defp model_options(task, true) do
+    ModelDiscovery.models_for(task.agent, task.creator_id)
   end
 
-  defp next_model_options(_task), do: []
+  defp model_options(%Task{agent: %{available_models: models}}, false), do: models
+  defp model_options(_task, false), do: []
 
   # Read-only summary of the effective model, shown once a task reaches a
   # terminal stage (the picker itself is hidden — no further runs will
@@ -585,7 +596,7 @@ defmodule CamelotWeb.TaskLive do
                 Use agent default
               </option>
               <option
-                :for={model <- next_model_options(@task)}
+                :for={model <- @model_options}
                 value={model}
                 selected={@task.next_model == model}
               >
