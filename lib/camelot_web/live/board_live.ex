@@ -591,6 +591,11 @@ defmodule CamelotWeb.BoardLive do
             options={@model_options}
             disabled={is_nil(selected_agent(@agents, @task_form))}
           />
+          <.input
+            field={@task_form[:skip_planning]}
+            type="checkbox"
+            label="Skip planning — use the description as the plan"
+          />
           <fieldset class="fieldset">
             <label class="label" for={@uploads.attachment.ref}>
               Attachments

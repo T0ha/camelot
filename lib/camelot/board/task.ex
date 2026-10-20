@@ -20,6 +20,7 @@ defmodule Camelot.Board.Task do
   alias Camelot.Agents.Agent
   alias Camelot.Agents.ModelDiscovery
   alias Camelot.Board.Notifiers.NotifyTaskStateEmail
+  alias Camelot.Board.Task.Changes.ApplySkipPlanning
   alias Camelot.Board.Task.Changes.RejectBlocked
   alias Camelot.Board.TaskLink
 
@@ -235,6 +236,50 @@ defmodule Camelot.Board.Task do
       )
     end
 
+    attribute :issue_number, :integer do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Number of the GitHub issue this task was imported from (in " <>
+          "the project's repository). Nil for tasks created in Camelot. " <>
+          "Together with `project_id` it is the issue-sync de-dup key."
+      )
+    end
+
+    attribute :plan_comment_id, :integer do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Id of the issue comment carrying the plan currently awaiting " <>
+          "review. Cleared on every `:submit_plan`, so a 👍 left on an " <>
+          "older plan comment can never approve a newer plan."
+      )
+    end
+
+    attribute :issue_comments_seen_at, :utc_datetime_usec do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "When `Camelot.Board.Changes.CheckIssuePlan` last finished a " <>
+          "poll of the issue — comments and reactions older than this " <>
+          "have already been acted on."
+      )
+    end
+
+    attribute :merge_summary_posted_at, :utc_datetime_usec do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "When the merge (or closed-without-merge) summary was posted " <>
+          "on the issue. Makes `Camelot.Board.Changes.PostMergeSummary` " <>
+          "idempotent across polls."
+      )
+    end
+
     timestamps()
   end
 
@@ -394,7 +439,14 @@ defmodule Camelot.Board.Task do
 
     create :create do
       primary?(true)
-      accept([:title, :description, :priority, :next_model])
+      accept([:title, :description, :priority, :next_model, :issue_number])
+
+      # Not persisted: picks the initial stage/state. The description
+      # is taken as the plan, so the task goes straight to execution.
+      argument :skip_planning, :boolean do
+        allow_nil?(false)
+        default(false)
+      end
 
       argument :project_id, :uuid do
         allow_nil?(false)
@@ -411,6 +463,9 @@ defmodule Camelot.Board.Task do
       change(manage_relationship(:project_id, :project, type: :append))
       change(manage_relationship(:creator_id, :creator, type: :append))
       change(manage_relationship(:agent_id, :agent, type: :append))
+      change(ApplySkipPlanning)
+
+      validate(present(:description), where: [argument_equals(:skip_planning, true)])
 
       validate(fn changeset, _context ->
         validate_next_model(

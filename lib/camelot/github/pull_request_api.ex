@@ -1,6 +1,6 @@
 defmodule Camelot.Github.PullRequestApi do
   @moduledoc """
-  Behaviour for the GitHub pull request write calls.
+  Behaviour for the GitHub pull request and issue write calls.
 
   Implemented by `Camelot.Github.Client`; selected through config so
   tests can swap in a stub, mirroring `Camelot.Board.AttachmentStore`
@@ -15,6 +15,10 @@ defmodule Camelot.Github.PullRequestApi do
   (so PR polling can be driven entirely from fixtures) is a worthwhile
   follow-up, but it would touch every `Client` reader and is kept out
   of this change.
+
+  The issue writes used by the GitHub-issue workflow (plan comments,
+  labels, closing — see `docs/github-issues-workflow.md`) sit here for
+  the same reason; the issue reads stay plain `Client` functions.
   """
 
   @typedoc "Options forwarded to the client (`installation_id:`, …)."
@@ -31,6 +35,45 @@ defmodule Camelot.Github.PullRequestApi do
               owner :: String.t(),
               repo :: String.t(),
               pr_number :: integer(),
+              opts()
+            ) :: {:ok, map()} | {:error, term()}
+
+  @callback create_issue_comment(
+              owner :: String.t(),
+              repo :: String.t(),
+              issue_number :: integer(),
+              body :: String.t(),
+              opts()
+            ) :: {:ok, map()} | {:error, term()}
+
+  @callback update_issue_comment(
+              owner :: String.t(),
+              repo :: String.t(),
+              comment_id :: integer(),
+              body :: String.t(),
+              opts()
+            ) :: {:ok, map()} | {:error, term()}
+
+  @callback add_issue_labels(
+              owner :: String.t(),
+              repo :: String.t(),
+              issue_number :: integer(),
+              labels :: [String.t()],
+              opts()
+            ) :: {:ok, [map()]} | {:error, term()}
+
+  @callback remove_issue_label(
+              owner :: String.t(),
+              repo :: String.t(),
+              issue_number :: integer(),
+              label :: String.t(),
+              opts()
+            ) :: {:ok, [map()]} | {:error, term()}
+
+  @callback close_issue(
+              owner :: String.t(),
+              repo :: String.t(),
+              issue_number :: integer(),
               opts()
             ) :: {:ok, map()} | {:error, term()}
 
