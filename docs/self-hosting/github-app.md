@@ -51,6 +51,16 @@ as *verified*.
 > `/auth/user/github/callback` carrying a `state` the app never issued, and
 > the sign-in fails with a CSRF error.
 
+**Issues (read/write) is what drives the GitHub issue workflow** —
+importing issues labelled `camelot`, posting the plan as an issue
+comment and reading `/approve` / 👍 / change-request replies, adding
+and removing the `camelot:*` labels, and posting the merge summary and
+closing the issue when the PR lands (see
+`docs/github-issues-workflow.md`). With only read access, issues are
+still imported but every write comes back `403`: no plan comment, so
+plans can only be reviewed in Camelot, and no invalid-config
+explanation or merge summary on the issue.
+
 **Contents (read/write) and Pull requests (read/write) are what make
 "Approve PR" work** — 🏰 Camelot AI submits an approving review and then
 merges the PR (`PUT /repos/{owner}/{repo}/pulls/{n}/merge`). Without
