@@ -1,4 +1,10 @@
 import posthog from "posthog-js"
+import {
+  buildPostHogOptions,
+  createOutageThrottle,
+  liveViewErrorProperties,
+  wrapHooks,
+} from "./posthog_options.mjs"
 
 // Keys registered for one page only (a task id, say). `posthog.register`
 // writes into PostHog's own persistence, which outlives both the page and
@@ -39,11 +45,10 @@ export function initPostHog({autoPageview}) {
     return
   }
 
-  posthog.init(posthogConfig.apiKey, {
-    api_host: posthogConfig.apiHost,
-    person_profiles: "identified_only",
-    capture_pageview: autoPageview,
-  })
+  posthog.init(
+    posthogConfig.apiKey,
+    buildPostHogOptions(posthogConfig, {autoPageview}),
+  )
 
   window.posthog = posthog
 
@@ -52,15 +57,19 @@ export function initPostHog({autoPageview}) {
   clearPageProperties()
 
   // Super-properties, so autocaptured events — $pageview and the
-  // $exception volume nothing else tags — carry the same environment
-  // and internal-traffic flags the server puts on its own captures.
-  // Without these, prod and the test cluster are indistinguishable in
-  // a shared PostHog project.
+  // $exception events `buildPostHogOptions` turns on — carry the same
+  // environment and internal-traffic flags the server puts on its own
+  // captures. Without these, prod and the test cluster are
+  // indistinguishable in a shared PostHog project.
   posthog.register({
     environment: posthogConfig.environment,
     is_internal: posthogConfig.isInternal === "true",
   })
 
+  // Identified before anything can be captured: exception autocapture
+  // loads its script asynchronously after init, so the first
+  // $exception already belongs to this person — the same distinct id
+  // the server uses, so browser and server errors merge onto one.
   if (posthogConfig.distinctId) {
     posthog.identify(posthogConfig.distinctId, {
       email: posthogConfig.email,
@@ -68,6 +77,8 @@ export function initPostHog({autoPageview}) {
       is_internal: posthogConfig.isInternal === "true",
     })
   }
+
+  trackLiveViewErrors()
 
   // A LiveView pushes this to attach its own context — a task id, say —
   // to everything captured while that page is open, autocaptured
@@ -121,5 +132,42 @@ export function initPostHog({autoPageview}) {
     } else {
       window.posthog?.capture("$pageview")
     }
+  })
+}
+
+// A main LiveView that crashes or cannot (re)join announces itself
+// with phx:page-loading-start{kind: "error"} — the same signal that
+// puts the "attempting to reconnect" flash up. It is a plain event
+// rather than an $exception: a server crash is already reported by
+// the server, and a lost connection is not a bug in this page. A
+// reconnect loop repeats the signal every attempt, so one outage is
+// reported once, until the next completed page load.
+const LIVEVIEW_ERROR_INTERVAL_MS = 60_000
+
+function trackLiveViewErrors() {
+  const outage = createOutageThrottle({intervalMs: LIVEVIEW_ERROR_INTERVAL_MS})
+
+  window.addEventListener("phx:page-loading-start", event => {
+    if (event.detail?.kind === "error" && outage.shouldReport()) {
+      window.posthog?.capture(
+        "liveview_error",
+        liveViewErrorProperties(event.detail, window.location.pathname),
+      )
+    }
+  })
+
+  window.addEventListener("phx:page-loading-stop", _event => outage.recover())
+}
+
+// LiveView hooks with every lifecycle callback reporting what it throws
+// as an $exception tagged with the hook and callback. Safe to call
+// before `initPostHog`: `window.posthog` is looked up when a hook
+// throws, so pages without a PostHog key stay silent. The error is
+// still logged — as a warning, since console.error is itself
+// autocaptured and would report it twice.
+export function reportingHookErrors(hooks) {
+  return wrapHooks(hooks, (error, properties) => {
+    window.posthog?.captureException(error, properties)
+    console.warn(`LiveView hook ${properties.liveview_hook} failed`, error)
   })
 }
