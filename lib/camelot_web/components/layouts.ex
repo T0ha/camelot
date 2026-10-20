@@ -57,6 +57,14 @@ defmodule CamelotWeb.Layouts do
   end
 
   @doc """
+  First letter of the user's email, uppercased, for the avatar menu.
+  """
+  @spec user_initial(map()) :: String.t()
+  def user_initial(%{email: email}) do
+    email |> to_string() |> String.first() |> String.upcase()
+  end
+
+  @doc """
   Builds the docs site URL for the current endpoint.
   """
   @spec docs_url() :: String.t()

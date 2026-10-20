@@ -52,24 +52,26 @@ ticked, and the strip disappears for good once all of them are.
 
 ## 2. Set up your profile
 
-Visit `/profile` to finish your personal setup:
+Open the avatar menu in the top right of the navbar to finish your
+personal setup. Each item is its own screen:
 
-- **SSH key** — Camelot already generated an Ed25519 keypair for you
+- **SSH key** (`/profile/ssh-key`) — Camelot already generated an Ed25519 keypair for you
   on first sign-in and mounts it into every runner automatically —
   there's nothing you need to do with it. It's only relevant if you
   want a runner to reach a repo that isn't covered by the GitHub App
   below (e.g. a private repo on another git host); in that case, copy
   the public key shown here and add it to that host.
-- **GitHub App** — already done if you signed in with GitHub; the
+- **GitHub** (`/profile/github`) — already done if you signed in with GitHub; the
   installation you authorized is listed here. Otherwise **Connect
   GitHub App** sends you to GitHub's installation flow; once
   installed, runners push over HTTPS using your installation and
   Camelot can poll PR/issue status for tasks you create. This is the
   recommended way to connect GitHub — most users don't need to touch
   the SSH key at all. **Disconnect** removes it any time.
-- **Credentials** — add any API keys your agents need: a Claude or
-  OpenAI API key, or a generic secret. Pick a **Kind**, give
-  it a **Name**, and paste the **Value**. These are encrypted at rest
+- **API keys** (`/profile/api-keys`) — add any API keys your agents
+  need: a Claude or OpenAI API key, or a generic secret. Each key type
+  has its own row: paste the value and click **Save** (or **Replace**
+  if one is already set). These are encrypted at rest
   and shipped securely to runner containers. Pasted GitHub personal
   access tokens or OAuth tokens aren't supported — use the GitHub App
   above for git/GitHub access instead. Right now, **Claude Code is the

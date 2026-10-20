@@ -21,14 +21,12 @@ path.
 
 ## 2. Add it as a Credential
 
-Go to `/profile` (any signed-in user, not admin-only) and add a
-**Credential**:
+Open the avatar menu (top right) and choose **API keys** (any
+signed-in user, not admin-only), or go to `/profile/api-keys`. Find the
+**OpenAI API key — Codex** row, paste the API key from step 1 and click
+**Save**. Saving again replaces it; **Remove** deletes it.
 
-- **Kind**: `openai_api_key`
-- **Name**: anything memorable, e.g. `openai`
-- **Value**: the API key from step 1
-
-Credentials are encrypted at rest and shipped securely to the runner
+Keys are encrypted at rest and shipped securely to the runner
 container that executes your tasks. The `openai_api_key` credential is
 mapped to `OPENAI_API_KEY` before the runner starts.
 

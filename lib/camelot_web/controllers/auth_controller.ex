@@ -73,7 +73,7 @@ defmodule CamelotWeb.AuthController do
 
   # Folding the App installation into the login round-trip is
   # the whole point of the feature: a new user lands on the
-  # board connected, with no second step on /profile. Failure
+  # board connected, with no second step on /profile/github. Failure
   # is non-fatal — they are signed in either way, and
   # GithubLoginFlow sends them to GitHub's install page.
   defp sync_github_installations(user) do
