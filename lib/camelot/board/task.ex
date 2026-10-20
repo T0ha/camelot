@@ -19,6 +19,7 @@ defmodule Camelot.Board.Task do
 
   alias Camelot.Agents.Agent
   alias Camelot.Agents.ModelDiscovery
+  alias Camelot.Board.Notifiers.EnqueueIssuePost
   alias Camelot.Board.Notifiers.NotifyTaskStateEmail
   alias Camelot.Board.Task.Changes.ApplySkipPlanning
   alias Camelot.Board.Task.Changes.RejectBlocked
@@ -70,6 +71,26 @@ defmodule Camelot.Board.Task do
           expr(
             not is_nil(pr_number) and
               stage == :pr and
+              project.status == :active
+          )
+        )
+      end
+
+      trigger :check_issue_plan do
+        action(:check_issue_plan)
+        scheduler_cron("*/2 * * * *")
+        queue(:github)
+        max_attempts(3)
+
+        worker_module_name(Camelot.Board.Task.AshOban.Trigger.CheckIssuePlan)
+
+        scheduler_module_name(Camelot.Board.Task.AshOban.Scheduler.CheckIssuePlan)
+
+        where(
+          expr(
+            stage == :planning and
+              state == :waiting_for_input and
+              not is_nil(plan_comment_id) and
               project.status == :active
           )
         )
@@ -559,17 +580,19 @@ defmodule Camelot.Board.Task do
 
     update :submit_plan do
       accept([:plan, :full_plan])
-      notifiers([NotifyTaskStateEmail])
+      notifiers([NotifyTaskStateEmail, EnqueueIssuePost])
 
       validate(attribute_equals(:stage, :planning))
       validate(attribute_equals(:state, :in_progress))
       validate(present(:plan))
       change(set_attribute(:state, :waiting_for_input))
       change(set_attribute(:interrupt_requeues, 0))
+      change(set_attribute(:plan_comment_id, nil))
     end
 
     update :approve_plan do
       accept([])
+      notifiers([EnqueueIssuePost])
 
       validate(attribute_equals(:stage, :planning))
       validate(attribute_equals(:state, :waiting_for_input))
@@ -578,8 +601,46 @@ defmodule Camelot.Board.Task do
       change(set_attribute(:state, :queued))
     end
 
-    update :request_plan_changes do
+    # The same transition as `:approve_plan`, for an approval read off
+    # the GitHub issue (`/approve`, a 👍 on the plan comment or the
+    # `camelot:approved` label). Kept separate so the issue is not told
+    # "approved in Camelot" about an approval it just gave itself, and
+    # so telemetry can tell the two apart.
+    update :approve_plan_from_github do
+      accept([:issue_comments_seen_at])
+
+      validate(attribute_equals(:stage, :planning))
+      validate(attribute_equals(:state, :waiting_for_input))
+      validate(present(:plan))
+      change(set_attribute(:stage, :executing))
+      change(set_attribute(:state, :queued))
+    end
+
+    update :record_plan_comment do
+      accept([:plan_comment_id])
+
+      validate(present(:plan_comment_id))
+    end
+
+    update :mark_issue_comments_seen do
+      accept([:issue_comments_seen_at])
+    end
+
+    update :mark_merge_summary_posted do
+      accept([:merge_summary_posted_at])
+
+      validate(present(:merge_summary_posted_at))
+    end
+
+    update :check_issue_plan do
       accept([])
+      require_atomic?(false)
+
+      change(Camelot.Board.Changes.CheckIssuePlan)
+    end
+
+    update :request_plan_changes do
+      accept([:issue_comments_seen_at])
 
       validate(attribute_equals(:stage, :planning))
       validate(attribute_equals(:state, :waiting_for_input))
