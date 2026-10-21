@@ -17,6 +17,7 @@ defmodule Camelot.Runtime.UsageLimit do
   """
 
   alias Camelot.Runtime.OutputParser
+  alias Camelot.Runtime.RateLimitEvents
 
   @type info :: %{reset_at: DateTime.t(), window: String.t() | nil}
 
@@ -100,14 +101,11 @@ defmodule Camelot.Runtime.UsageLimit do
   defp to_int(""), do: 0
   defp to_int(digits), do: String.to_integer(digits)
 
-  # The last `rate_limit_event` line in the buffer, rather than the
-  # first: a session that got rejected and then recovered mid-run
-  # would otherwise read as still limited.
+  # Only the last `rate_limit_event` counts — see
+  # `RateLimitEvents.last_event/1`.
   defp rejected_rate_limit_event(output_buffer) do
     output_buffer
-    |> OutputParser.jsonl_events()
-    |> Enum.filter(&(&1["type"] == "rate_limit_event"))
-    |> List.last()
+    |> RateLimitEvents.last_event()
     |> extract_rejected()
   end
 

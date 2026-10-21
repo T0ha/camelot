@@ -7,5 +7,7 @@ defmodule Camelot.Agents do
   resources do
     resource(Camelot.Agents.Agent)
     resource(Camelot.Agents.Session)
+    resource(Camelot.Agents.UsagePolicy)
+    resource(Camelot.Agents.UsageSnapshot)
   end
 end

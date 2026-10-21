@@ -112,9 +112,7 @@ defmodule Camelot.Board.TaskScheduleTest do
       {:ok, task} = create(ctx)
 
       assert {:error, _} =
-               Ash.update(task, %{start_at: later(7200), deadline_at: later(60)},
-                 action: :set_schedule
-               )
+               Ash.update(task, %{start_at: later(7200), deadline_at: later(60)}, action: :set_schedule)
     end
   end
 end

@@ -130,13 +130,6 @@ config :camelot, :scheduling,
   minutes_per_percent: 30,
   duration_fallback_minutes: 30
 
-# Run-window and schedule times are stored in UTC and only converted
-# for display (`Camelot.TimeZone`). The bundled IANA database is used
-# as shipped: auto-updating needs an HTTP client tzdata does not
-# depend on here and a writable data dir a release does not have.
-config :elixir, :time_zone_database, Tzdata.TimeZoneDatabase
-config :tzdata, :autoupdate, :disabled
-
 # Global properties on every PostHog capture. `environment` keeps the
 # test cluster and production apart (they share one PostHog project);
 # `config/runtime.exs` resolves it from DEPLOYMENT_ENV, the same
@@ -162,6 +155,12 @@ config :camelot,
     Camelot.Settings,
     Camelot.Github
   ]
+
+# Run-window and schedule times are stored in UTC and only converted
+# for display (`Camelot.TimeZone`). The bundled IANA database is used
+# as shipped: auto-updating needs an HTTP client tzdata does not
+# depend on here and a writable data dir a release does not have.
+config :elixir, :time_zone_database, Tzdata.TimeZoneDatabase
 
 # Configure esbuild (the version is required)
 config :esbuild,
@@ -204,5 +203,7 @@ config :tailwind,
     # of this file so it overrides the configuration defined above.
     cd: Path.expand("..", __DIR__)
   ]
+
+config :tzdata, :autoupdate, :disabled
 
 import_config "#{config_env()}.exs"

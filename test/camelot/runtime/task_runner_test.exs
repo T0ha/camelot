@@ -19,6 +19,8 @@ defmodule Camelot.Runtime.TaskRunnerTest do
   alias Camelot.Runtime.TaskRunner
   alias Camelot.Settings.SystemSetting
 
+  require Ash.Query
+
   setup do
     {:ok, project} =
       Ash.create(Project, %{
@@ -895,6 +897,7 @@ defmodule Camelot.Runtime.TaskRunnerTest do
       assert Ash.get!(Task, sibling.id).state == :paused
     end
   end
+
   describe "finish_session/5 usage capture" do
     defp rate_limit_buffer do
       Enum.map_join(

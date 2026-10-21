@@ -186,6 +186,7 @@ defmodule Camelot.Board.Changes.DispatchTasksTest do
       assert Ash.get!(Task, task.id).state == :in_progress
     end
   end
+
   describe "usage-aware gate" do
     defp policy!(ctx, attrs) do
       UsagePolicy
@@ -261,9 +262,7 @@ defmodule Camelot.Board.Changes.DispatchTasksTest do
       task = create_task(ctx)
 
       {:ok, _} =
-        Ash.update(task, %{start_at: DateTime.add(DateTime.utc_now(), -60, :second)},
-          action: :set_schedule
-        )
+        Ash.update(task, %{start_at: DateTime.add(DateTime.utc_now(), -60, :second)}, action: :set_schedule)
 
       dispatch!()
 

@@ -115,9 +115,7 @@ defmodule Camelot.Agents.UsageSnapshotsTest do
       observed_at = DateTime.add(DateTime.utc_now(), -3600, :second)
 
       {:ok, _} =
-        UsageSnapshots.record(user.id, :openai_api_key, [weekly(5.0)], :manual,
-          observed_at: observed_at
-        )
+        UsageSnapshots.record(user.id, :openai_api_key, [weekly(5.0)], :manual, observed_at: observed_at)
 
       {:ok, session} = Ash.create(Session, %{agent_id: agent.id, user_id: user.id})
       {:ok, _} = Ash.update(session, %{duration_ms: 45 * 60_000}, action: :complete)

@@ -175,9 +175,7 @@ defmodule CamelotWeb.UsageSchedulingLiveTest do
     end
 
     test "warns when the snapshot is already over the effective cap", ctx do
-      Ash.create!(UsagePolicy, %{user_id: ctx.user.id, agent_id: ctx.agent.id, weekly_cap_percent: 50},
-        action: :upsert
-      )
+      Ash.create!(UsagePolicy, %{user_id: ctx.user.id, agent_id: ctx.agent.id, weekly_cap_percent: 50}, action: :upsert)
 
       weekly_usage!(ctx.user, 60.0)
       task = task!(ctx)
@@ -199,9 +197,7 @@ defmodule CamelotWeb.UsageSchedulingLiveTest do
 
   describe "board" do
     test "a card waiting on the cap shows a badge", ctx do
-      Ash.create!(UsagePolicy, %{user_id: ctx.user.id, agent_id: ctx.agent.id, weekly_cap_percent: 5},
-        action: :upsert
-      )
+      Ash.create!(UsagePolicy, %{user_id: ctx.user.id, agent_id: ctx.agent.id, weekly_cap_percent: 5}, action: :upsert)
 
       weekly_usage!(ctx.user, 60.0)
       task = task!(ctx)

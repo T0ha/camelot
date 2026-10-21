@@ -6,8 +6,7 @@ defmodule Camelot.Scheduling.WindowsTest do
 
   # 2026-10-19 is a Monday.
   defp at(day_offset, hour, minute) do
-    ~U[2026-10-19 00:00:00Z]
-    |> DateTime.add(day_offset * 86_400 + hour * 3600 + minute * 60, :second)
+    DateTime.add(~U[2026-10-19 00:00:00Z], day_offset * 86_400 + hour * 3600 + minute * 60, :second)
   end
 
   defp window(start_minute, end_minute) do
