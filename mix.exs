@@ -87,6 +87,7 @@ defmodule Camelot.MixProject do
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:styler, "~> 1.0", only: [:dev, :test], runtime: false},
       {:usage_rules, "~> 1.2", only: [:dev, :test], runtime: false},
+      {:tzdata, "~> 1.1"},
       {:yaml_elixir, "~> 2.11"},
       {:logger_json, "~> 7.0"}
     ]
