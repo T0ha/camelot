@@ -3,9 +3,13 @@ defmodule Camelot.Board.Changes.DispatchTasksTest do
 
   alias Camelot.Accounts.Credential
   alias Camelot.Accounts.User
+  alias Camelot.Agents.UsagePolicy
+  alias Camelot.Agents.UsageSnapshots
+  alias Camelot.Board.Changes.DispatchTasks
   alias Camelot.Board.Task
   alias Camelot.Board.TaskLink
   alias Camelot.Projects.Project
+  alias Camelot.Scheduling.Windows
 
   setup do
     {:ok, project} =
@@ -180,6 +184,132 @@ defmodule Camelot.Board.Changes.DispatchTasksTest do
       dispatch!()
 
       assert Ash.get!(Task, task.id).state == :in_progress
+    end
+  end
+  describe "usage-aware gate" do
+    defp policy!(ctx, attrs) do
+      UsagePolicy
+      |> Ash.Changeset.for_create(
+        :upsert,
+        Map.merge(%{user_id: ctx.user.id, agent_id: agent!("claude_code").id}, attrs)
+      )
+      |> Ash.create!()
+    end
+
+    defp weekly_usage!(ctx, percent) do
+      {:ok, _} =
+        UsageSnapshots.record(
+          ctx.user.id,
+          :claude_api_key,
+          [
+            %{
+              window: :weekly,
+              used_percent: percent,
+              resets_at: DateTime.add(DateTime.utc_now(), 86_400, :second)
+            }
+          ],
+          :manual
+        )
+    end
+
+    # A one-hour window starting an hour from now, so now is outside it.
+    defp window_excluding_now do
+      now = Windows.minute_of_week(DateTime.utc_now())
+      %{start_minute: rem(now + 60, 10_080), end_minute: rem(now + 120, 10_080)}
+    end
+
+    defp gated_ids(now \\ DateTime.utc_now()) do
+      Task
+      |> Ash.read!(load: [:agent])
+      |> DispatchTasks.apply_gate(now)
+      |> Enum.map(& &1.id)
+    end
+
+    test "an over-cap card is not dispatched, and is once the cap is cleared", ctx do
+      policy = policy!(ctx, %{weekly_cap_percent: 1})
+      weekly_usage!(ctx, 5.0)
+      task = create_task(ctx)
+
+      dispatch!()
+      assert Ash.get!(Task, task.id).state == :queued
+
+      {:ok, _} =
+        UsagePolicy
+        |> Ash.Changeset.for_create(:upsert, %{
+          user_id: policy.user_id,
+          agent_id: policy.agent_id,
+          weekly_cap_percent: nil
+        })
+        |> Ash.create()
+
+      dispatch!()
+      assert Ash.get!(Task, task.id).state == :in_progress
+    end
+
+    test "a window that excludes now keeps the card waiting", ctx do
+      policy!(ctx, %{windows: [window_excluding_now()]})
+      task = create_task(ctx)
+
+      dispatch!()
+
+      assert Ash.get!(Task, task.id).state == :queued
+    end
+
+    test "a pinned card is dispatched even when over the cap", ctx do
+      policy!(ctx, %{weekly_cap_percent: 1})
+      weekly_usage!(ctx, 5.0)
+      task = create_task(ctx)
+
+      {:ok, _} =
+        Ash.update(task, %{start_at: DateTime.add(DateTime.utc_now(), -60, :second)},
+          action: :set_schedule
+        )
+
+      dispatch!()
+
+      assert Ash.get!(Task, task.id).state == :in_progress
+    end
+
+    test "a card with a future start_at waits", ctx do
+      task = create_task(ctx, %{start_at: DateTime.add(DateTime.utc_now(), 3600, :second)})
+
+      dispatch!()
+
+      assert Ash.get!(Task, task.id).state == :queued
+    end
+
+    test "a deadline card is dispatched ahead of a higher-priority card", ctx do
+      urgent = create_task(ctx, %{priority: 10})
+
+      deadline =
+        create_task(ctx, %{
+          priority: 0,
+          deadline_at: DateTime.add(DateTime.utc_now(), 15 * 60, :second)
+        })
+
+      assert gated_ids() == [deadline.id, urgent.id]
+    end
+
+    test "between unpromoted cards the nearer deadline goes first, then priority", ctx do
+      high = create_task(ctx, %{priority: 10})
+      far = create_task(ctx, %{priority: 0, deadline_at: DateTime.add(DateTime.utc_now(), 30, :day)})
+
+      assert gated_ids() == [far.id, high.id]
+    end
+
+    test "waiting cards expose why on the scheduled_wait calculation", ctx do
+      policy!(ctx, %{weekly_cap_percent: 1})
+      weekly_usage!(ctx, 5.0)
+      task = create_task(ctx)
+
+      assert %{reason: :cap, until: %DateTime{}} =
+               Ash.load!(Ash.get!(Task, task.id), :scheduled_wait).scheduled_wait
+    end
+
+    test "a card with nothing gating it has no scheduled_wait", ctx do
+      task = create_task(ctx)
+
+      assert Ash.load!(task, :scheduled_wait).scheduled_wait == nil
     end
   end
 end
