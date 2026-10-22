@@ -499,4 +499,121 @@ defmodule Camelot.Runtime.OutputParserTest do
       )
     end
   end
+
+  describe "parse/2 with :antigravity_json" do
+    test "reads the response, usage and turns off the result event" do
+      assert {:ok, parsed} = OutputParser.parse(:antigravity_json, agy_stream())
+
+      assert parsed.result_text == "## Plan\n\n1. Do the thing."
+      assert parsed.assistant_texts == ["## Plan\n\n1. Do the thing."]
+      assert parsed.num_turns == 3
+      assert parsed.usage == %{"input_tokens" => 1200, "output_tokens" => 80}
+      assert is_nil(parsed.cost_usd)
+      assert is_nil(parsed.duration_api_ms)
+      assert is_nil(parsed.structured)
+      assert parsed.permission_denials == []
+    end
+
+    test "converts duration_seconds to milliseconds" do
+      assert {:ok, parsed} = OutputParser.parse(:antigravity_json, agy_stream())
+
+      assert parsed.duration_ms == 12_345
+    end
+
+    test "surfaces structured_output from a --json-schema run" do
+      buffer =
+        agy_result(%{
+          "response" => "",
+          "status" => "SUCCESS",
+          "structured_output" => %{
+            "decision" => "question",
+            "questions" => ["Global or per-chat?"]
+          }
+        })
+
+      assert {:ok, parsed} = OutputParser.parse(:antigravity_json, buffer)
+
+      assert parsed.structured == %{
+               "decision" => "question",
+               "questions" => ["Global or per-chat?"]
+             }
+
+      assert parsed.result_text == ""
+      assert parsed.assistant_texts == []
+    end
+
+    test "tolerates log noise around the event stream" do
+      buffer = "[entrypoint] cloning repo\n" <> agy_stream() <> "\n\e[0m"
+
+      assert {:ok, parsed} = OutputParser.parse(:antigravity_json, buffer)
+      assert parsed.result_text == "## Plan\n\n1. Do the thing."
+    end
+
+    test "reports a non-SUCCESS status as an error" do
+      buffer =
+        agy_result(%{
+          "response" => "quota exhausted",
+          "status" => "ERROR"
+        })
+
+      assert {:error, "antigravity error: quota exhausted"} =
+               OutputParser.parse(:antigravity_json, buffer)
+    end
+
+    test "prefers an explicit error message over the response" do
+      buffer =
+        agy_result(%{
+          "response" => "",
+          "status" => "FAILED",
+          "error" => %{"message" => "model not found"}
+        })
+
+      assert {:error, "antigravity error: model not found"} =
+               OutputParser.parse(:antigravity_json, buffer)
+    end
+
+    test "names the status when the failure carries no message" do
+      buffer = agy_result(%{"status" => "CANCELLED"})
+
+      assert {:error, "antigravity error: status CANCELLED"} =
+               OutputParser.parse(:antigravity_json, buffer)
+    end
+
+    test "errors on a stream that never reached a result event" do
+      buffer = ~s({"event":"message","text":"thinking"})
+
+      assert {:error, "no result event found in output"} =
+               OutputParser.parse(:antigravity_json, buffer)
+    end
+
+    test "errors on a buffer with no decodable event" do
+      assert {:error, "no JSON object found in output"} =
+               OutputParser.parse(:antigravity_json, "agy: command not found\n")
+
+      assert {:error, "no JSON object found in output"} =
+               OutputParser.parse(:antigravity_json, "")
+    end
+
+    defp agy_stream do
+      Enum.join(
+        [
+          ~s({"event":"init","session_id":"s1","model":"gemini-3.8-flash-high"}),
+          ~s({"event":"message","role":"assistant","text":"Investigating."}),
+          ~s({"event":"tool_use","tool":"read_file","input":{"path":"mix.exs"}}),
+          agy_result(%{
+            "response" => "## Plan\n\n1. Do the thing.",
+            "status" => "SUCCESS",
+            "duration_seconds" => 12.345,
+            "num_turns" => 3,
+            "usage" => %{"input_tokens" => 1200, "output_tokens" => 80}
+          })
+        ],
+        "\n"
+      )
+    end
+
+    defp agy_result(result) do
+      Jason.encode!(%{"event" => "result", "result" => result})
+    end
+  end
 end

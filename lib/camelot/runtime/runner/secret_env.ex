@@ -33,6 +33,12 @@ defmodule Camelot.Runtime.Runner.SecretEnv do
 
   def to_env(%{kind: :openai_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]
 
+  # `agy` reads either variable, so set both and let a value baked into
+  # the container under the other name never win.
+  def to_env(%{kind: :gemini_api_key, value: v}) do
+    ["GEMINI_API_KEY=#{v}", "GOOGLE_API_KEY=#{v}"]
+  end
+
   def to_env(%{kind: :github_app_token, value: v}) do
     ["GH_TOKEN=#{v}", "GITHUB_TOKEN=#{v}"]
   end

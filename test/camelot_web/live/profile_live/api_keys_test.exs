@@ -7,7 +7,7 @@ defmodule CamelotWeb.ProfileLive.ApiKeysTest do
 
   require Ash.Query
 
-  @kinds [:claude_api_key, :openai_api_key, :generic]
+  @kinds [:claude_api_key, :openai_api_key, :gemini_api_key, :generic]
 
   setup :register_and_log_in_user
 
@@ -39,6 +39,7 @@ defmodule CamelotWeb.ProfileLive.ApiKeysTest do
     refute html =~ "Kind"
     assert html =~ "Claude API key — Claude Code"
     assert html =~ "OpenAI API key — Codex"
+    assert html =~ "Gemini API key — Antigravity"
   end
 
   test "rows start as not set with a Save button and no Remove", %{conn: conn} do

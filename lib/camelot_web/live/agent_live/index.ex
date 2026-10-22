@@ -21,6 +21,7 @@ defmodule CamelotWeb.AgentLive.Index do
   @parser_options [
     {"Claude Code JSON", "claude_code_json"},
     {"Codex JSONL", "codex_jsonl"},
+    {"Antigravity JSON", "antigravity_json"},
     {"Raw Text", "raw_text"}
   ]
 
@@ -34,7 +35,8 @@ defmodule CamelotWeb.AgentLive.Index do
                  models_probe)
   @integer_fields ~w(base_retry_delay_ms max_retries)
 
-  @credential_kinds ~w(claude_api_key openai_api_key ssh_private_key generic)
+  @credential_kinds ~w(claude_api_key openai_api_key gemini_api_key
+                       ssh_private_key generic)
 
   @impl true
   def mount(_params, _session, socket) do
@@ -475,6 +477,11 @@ defmodule CamelotWeb.AgentLive.Index do
               Asks the provider which models the task creator's own key may use, and supersedes the
               list above when it answers. Empty <code>{"{}"}</code>
               disables discovery. Example: <code>{~s({"strategy": "http_models_endpoint", "url": "https://api.anthropic.com/v1/models", "auth": "anthropic", "credential_kind": "claude_api_key", "include": "^claude-"})}</code>.
+              <code>auth</code>
+              is one of <code>anthropic</code>, <code>bearer</code>
+              or <code>google</code>; an optional <code>strip_prefix</code>
+              trims a prefix such as <code>models/</code>
+              off each id.
             </p>
             <.input
               field={@form[:default_model]}
