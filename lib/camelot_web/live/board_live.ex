@@ -17,13 +17,18 @@ defmodule CamelotWeb.BoardLive do
   alias Camelot.Board.TaskLink
   alias Camelot.Projects.Project
   alias Camelot.Telemetry.Capture
+  alias Camelot.TimeZone
   alias CamelotWeb.Components.TaskPicker
   alias CamelotWeb.Scope
   alias CamelotWeb.TaskAttachments
   alias Phoenix.LiveView.Socket
 
+  # Optional `datetime-local` pins on the New Task form, entered in the
+  # user's own zone.
   require Ash.Query
   require Logger
+
+  @schedule_inputs ["start_at", "deadline_at"]
 
   @impl true
   @spec mount(map(), map(), Socket.t()) ::
@@ -260,7 +265,7 @@ defmodule CamelotWeb.BoardLive do
     tasks =
       Task
       |> Scope.maybe_scope(user, see_all, &Scope.scope_tasks/2)
-      |> Ash.read!(load: [:project, :waiting_for_slot?, :blocked?])
+      |> Ash.read!(load: [:project, :waiting_for_slot?, :blocked?, :scheduled_wait])
 
     projects =
       Project
@@ -341,6 +346,7 @@ defmodule CamelotWeb.BoardLive do
       forms: [auto?: false],
       params: %{"priority" => "0"},
       prepare_params: &prepare_task_params/2,
+      transform_params: &utc_schedule_params(&1, &2, user.time_zone),
       prepare_source: &Ash.Changeset.set_argument(&1, :creator_id, user.id)
     )
     |> to_form()
@@ -350,6 +356,45 @@ defmodule CamelotWeb.BoardLive do
     params
     |> drop_blank_priority(type)
     |> drop_blank_next_model(type)
+    |> drop_blank_schedule(type)
+  end
+
+  # The optional start/deadline inputs arrive blank when unused.
+  @spec drop_blank_schedule(map(), atom()) :: map()
+  defp drop_blank_schedule(params, _type) do
+    Enum.reduce(@schedule_inputs, params, fn field, acc ->
+      case Map.get(acc, field) do
+        "" -> Map.delete(acc, field)
+        _value -> acc
+      end
+    end)
+  end
+
+  # `datetime-local` values are in the user's zone. Converted only on
+  # the way into the changeset (`transform_params`), so the form keeps
+  # showing what the user typed instead of drifting by the offset on
+  # every validate. AshPhoenix can run this more than once per submit,
+  # so a value that already carries an offset is left alone. An
+  # unparsable value is passed through for Ash to reject.
+  @spec utc_schedule_params(map(), atom(), String.t()) :: map()
+  defp utc_schedule_params(params, _type, zone) do
+    Enum.reduce(@schedule_inputs, params, fn field, acc ->
+      acc
+      |> Map.get(field)
+      |> to_utc_param(zone)
+      |> then(&Map.put(acc, field, &1))
+    end)
+  end
+
+  defp to_utc_param(nil, _zone), do: nil
+
+  defp to_utc_param(value, zone) do
+    with {:error, _not_utc} <- DateTime.from_iso8601(value),
+         {:ok, %DateTime{} = utc} <- TimeZone.local_input_to_utc(value, zone) do
+      DateTime.to_iso8601(utc)
+    else
+      _utc_blank_or_invalid -> value
+    end
   end
 
   # A cleared number input arrives as "", which would fail the
@@ -533,6 +578,7 @@ defmodule CamelotWeb.BoardLive do
           <.task_card
             :for={task <- tasks}
             task={task}
+            time_zone={@current_user.time_zone}
             on_click={JS.navigate(~p"/tasks/#{task.id}")}
           />
         </.column>
@@ -596,6 +642,18 @@ defmodule CamelotWeb.BoardLive do
             type="checkbox"
             label="Skip planning — use the description as the plan"
           />
+          <div class="grid grid-cols-2 gap-x-4">
+            <.input
+              field={@task_form[:start_at]}
+              type="datetime-local"
+              label="Start at (optional)"
+            />
+            <.input
+              field={@task_form[:deadline_at]}
+              type="datetime-local"
+              label="Finish by (optional, best effort)"
+            />
+          </div>
           <fieldset class="fieldset">
             <label class="label" for={@uploads.attachment.ref}>
               Attachments

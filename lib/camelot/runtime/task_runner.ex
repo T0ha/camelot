@@ -31,6 +31,7 @@ defmodule Camelot.Runtime.TaskRunner do
   alias Camelot.Accounts.Credential
   alias Camelot.Agents.Agent
   alias Camelot.Agents.Session
+  alias Camelot.Agents.UsageSnapshots
   alias Camelot.Board.Interruption
   alias Camelot.Board.PromptBuilder
   alias Camelot.Board.Task
@@ -44,6 +45,7 @@ defmodule Camelot.Runtime.TaskRunner do
   alias Camelot.Runtime.EnvVarResolver
   alias Camelot.Runtime.OutputParser
   alias Camelot.Runtime.Progress
+  alias Camelot.Runtime.RateLimitEvents
   alias Camelot.Runtime.Runner
   alias Camelot.Runtime.Runner.AdoptPolicy
   alias Camelot.Runtime.Runner.DockerApi
@@ -596,7 +598,8 @@ defmodule Camelot.Runtime.TaskRunner do
         agent_id: task.agent_id,
         task_id: state.task_id,
         user_id: task.creator_id,
-        retry_number: retry_number
+        retry_number: retry_number,
+        stage: task.stage
       })
 
     {:ok, %{position: position}} = RunnerPool.enqueue(task.creator_id, session.id, self())
@@ -1476,6 +1479,7 @@ defmodule Camelot.Runtime.TaskRunner do
   end
 
   def finish_session(state, exit_code, parsed, denials, empty?) do
+    record_usage(state)
     session = Ash.get!(Session, state.current_session_id)
     action = session_action(exit_code, empty?)
 
@@ -1511,6 +1515,39 @@ defmodule Camelot.Runtime.TaskRunner do
       )
 
       :ok
+  end
+
+  # Every Claude run reports the account's live weekly and five-hour
+  # utilisation on its `rate_limit_event` lines — on success and
+  # failure alike — so each finished session refreshes the snapshot
+  # `Camelot.Scheduling.Gate` reads. Attributed to the task creator's
+  # credential of the agent's primary kind, the one the run mounted.
+  # Best-effort: a failure here must never cost the session row.
+  @spec record_usage(t()) :: :ok
+  defp record_usage(%__MODULE__{config: %AgentConfig{parser: :claude_code_json}} = state) do
+    case RateLimitEvents.claude_windows(state.output_buffer) do
+      [] -> :ok
+      windows -> write_usage(state, windows)
+    end
+  rescue
+    error ->
+      Logger.warning("TaskRunner #{state.task_id} could not record usage: #{Exception.message(error)}")
+
+      :ok
+  end
+
+  defp record_usage(_state), do: :ok
+
+  defp write_usage(%__MODULE__{user_id: nil}, _windows), do: :ok
+
+  defp write_usage(state, windows) do
+    case UsageSnapshots.record(state.user_id, credential_kind(state), windows, :cli) do
+      {:ok, _snapshots} ->
+        :ok
+
+      {:error, error} ->
+        Logger.warning("TaskRunner #{state.task_id} could not record usage: #{inspect(error)}")
+    end
   end
 
   defp session_action(_exit_code, true), do: :mark_empty

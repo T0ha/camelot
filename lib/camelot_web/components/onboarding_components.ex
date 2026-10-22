@@ -60,11 +60,11 @@ defmodule CamelotWeb.OnboardingComponents do
   Screen a setup step hands off to.
   """
   @spec step_path(Status.step()) :: String.t()
-  # The Connect button on /profile re-signs a short-lived
-  # state token on render, so the strip links to the section
+  # The Connect button on /profile/github re-signs a short-lived
+  # state token on render, so the strip links to the screen
   # rather than carrying a token of its own.
-  def step_path(:github), do: ~p"/profile#github-app"
-  def step_path(:claude_token), do: ~p"/profile#credentials"
+  def step_path(:github), do: ~p"/profile/github"
+  def step_path(:claude_token), do: ~p"/profile/api-keys"
   def step_path(:project), do: ~p"/projects/new"
   def step_path(:task), do: ~p"/?onboarding=task"
 

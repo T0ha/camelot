@@ -19,10 +19,14 @@ defmodule Camelot.Board.Task do
 
   alias Camelot.Agents.Agent
   alias Camelot.Agents.ModelDiscovery
+  alias Camelot.Agents.RunWindow
   alias Camelot.Board.Notifiers.EnqueueIssuePost
   alias Camelot.Board.Notifiers.NotifyTaskStateEmail
+  alias Camelot.Board.Task.Calculations.ScheduledWait
   alias Camelot.Board.Task.Changes.ApplySkipPlanning
+  alias Camelot.Board.Task.Changes.ImplyIgnoreLimits
   alias Camelot.Board.Task.Changes.RejectBlocked
+  alias Camelot.Board.Task.Validations.DeadlineAfterStart
   alias Camelot.Board.TaskLink
 
   @stages [
@@ -36,6 +40,16 @@ defmodule Camelot.Board.Task do
   ]
 
   @states [:queued, :waiting_for_input, :in_progress, :error, :paused]
+
+  # Per-card overrides of `Camelot.Agents.UsagePolicy` and the pins
+  # `Camelot.Scheduling.Gate` reads at dispatch.
+  @schedule_fields [
+    :weekly_cap_override,
+    :windows_override,
+    :ignore_limits,
+    :start_at,
+    :deadline_at
+  ]
 
   # Stages from which work can be (re)started: the dispatcher picks a
   # `:queued` task up again and resumes it from wherever it left off.
@@ -257,6 +271,54 @@ defmodule Camelot.Board.Task do
       )
     end
 
+    attribute :weekly_cap_override, :integer do
+      allow_nil?(true)
+      public?(true)
+      constraints(min: 1, max: 100)
+
+      description(
+        "Per-card weekly usage cap %. Nil inherits the creator's " <>
+          "`UsagePolicy` for this agent."
+      )
+    end
+
+    attribute :windows_override, {:array, RunWindow} do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Per-card UTC run windows. Nil inherits the policy's windows; " <>
+          "an empty list lifts the window restriction for this card."
+      )
+    end
+
+    attribute :ignore_limits, :boolean do
+      allow_nil?(false)
+      public?(true)
+      default(false)
+
+      description(
+        "Dispatch even over the weekly cap and outside run windows. " <>
+          "Set implicitly when the card is pinned to a start or deadline."
+      )
+    end
+
+    attribute :start_at, :utc_datetime_usec do
+      allow_nil?(true)
+      public?(true)
+      description("Not dispatched before this time.")
+    end
+
+    attribute :deadline_at, :utc_datetime_usec do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Best-effort finish-by time: the card is promoted ahead of " <>
+          "the queue once its estimated run would otherwise miss it."
+      )
+    end
+
     attribute :issue_number, :integer do
       allow_nil?(true)
       public?(true)
@@ -444,6 +506,16 @@ defmodule Camelot.Board.Task do
   end
 
   calculations do
+    calculate :scheduled_wait, :map, ScheduledWait do
+      public?(true)
+
+      description(
+        "Why a queued card is held back or pushed forward by usage " <>
+          "scheduling — `%{reason, until, flag}`, or nil when nothing " <>
+          "applies. See `Camelot.Scheduling.Gate`."
+      )
+    end
+
     calculate :blocked?, :boolean, expr(blocked_by_blockers? or blocked_by_subtasks?) do
       public?(true)
 
@@ -460,7 +532,11 @@ defmodule Camelot.Board.Task do
 
     create :create do
       primary?(true)
-      accept([:title, :description, :priority, :next_model, :issue_number])
+
+      accept(
+        [:title, :description, :priority, :next_model, :issue_number] ++
+          @schedule_fields
+      )
 
       # Not persisted: picks the initial stage/state. The description
       # is taken as the plan, so the task goes straight to execution.
@@ -495,6 +571,9 @@ defmodule Camelot.Board.Task do
           Ash.Changeset.get_argument(changeset, :creator_id)
         )
       end)
+
+      validate(DeadlineAfterStart)
+      change(ImplyIgnoreLimits)
     end
 
     update :update do
@@ -529,6 +608,16 @@ defmodule Camelot.Board.Task do
       validate(fn changeset, _context ->
         validate_next_model(changeset, changeset.data.agent_id, changeset.data.creator_id)
       end)
+    end
+
+    # Mirrors `:set_next_model`: a sticky per-card choice the
+    # dispatcher reads on every tick (`Camelot.Scheduling.Gate`).
+    update :set_schedule do
+      accept(@schedule_fields)
+      require_atomic?(false)
+
+      validate(DeadlineAfterStart)
+      change(ImplyIgnoreLimits)
     end
 
     update :begin_work do

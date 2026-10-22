@@ -240,7 +240,7 @@
       "references": null,
       "scale": null,
       "size": null,
-      "source": "issue_number",
+      "source": "weekly_cap_override",
       "type": "bigint"
     },
     {
@@ -252,8 +252,23 @@
       "references": null,
       "scale": null,
       "size": null,
-      "source": "plan_comment_id",
-      "type": "bigint"
+      "source": "windows_override",
+      "type": [
+        "array",
+        "map"
+      ]
+    },
+    {
+      "allow_nil?": false,
+      "default": "false",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "ignore_limits",
+      "type": "boolean"
     },
     {
       "allow_nil?": true,
@@ -264,7 +279,7 @@
       "references": null,
       "scale": null,
       "size": null,
-      "source": "issue_comments_seen_at",
+      "source": "start_at",
       "type": "utc_datetime_usec"
     },
     {
@@ -276,7 +291,7 @@
       "references": null,
       "scale": null,
       "size": null,
-      "source": "merge_summary_posted_at",
+      "source": "deadline_at",
       "type": "utc_datetime_usec"
     },
     {

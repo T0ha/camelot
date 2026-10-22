@@ -28,14 +28,12 @@ below.
 
 ## 2. Add it as a Credential
 
-Go to `/profile` (any signed-in user, not admin-only) and add a
-**Credential**:
+Open the avatar menu (top right) and choose **API keys** (any
+signed-in user, not admin-only), or go to `/profile/api-keys`. Find the
+**Claude API key — Claude Code** row, paste the key or token from step 1
+and click **Save**. Saving again replaces it; **Remove** deletes it.
 
-- **Kind**: `claude_api_key`
-- **Name**: anything memorable, e.g. `anthropic`
-- **Value**: the key or token from step 1
-
-Credentials are encrypted at rest and shipped securely to the runner
+Keys are encrypted at rest and shipped securely to the runner
 container that executes your tasks.
 
 ### Why either key format "just works"

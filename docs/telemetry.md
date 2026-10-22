@@ -142,14 +142,14 @@ the users who engage with the guide:
 * clicking a step dismisses the guide, and a dismissed guide never
   auto-opens again, so `onboarding_shown` stops;
 * three of the four steps finish across a navigation or a full page
-  redirect — GitHub connect redirects to `/profile`, project creation
+  redirect — GitHub connect redirects to `/profile/github`, project creation
   `push_navigate`s — so the next mount recomputes the status from
   scratch and `refresh/1` has no `false -> true` flip left to see.
 
 Without the restatement those users would show as stuck at a step they
 had already finished. `onboarding_step_completed` still only fires on
 a flip the hook actually observes, which needs the step to complete in
-the same LiveView process: `/profile` and the board both nudge the
+the same LiveView process: `/profile/api-keys` and the board both nudge the
 guide with `send(self(), {:onboarding, :refresh})` after completing
 one — the convention `AGENTS.md` documents.
 
@@ -221,7 +221,7 @@ be connected two ways. `CamelotWeb.GithubSetupController` handles the
 profile's "Connect GitHub App" round-trip, and
 `Camelot.Github.UserInstallations` handles the login one — a
 first-time GitHub sign-in lands on the board already connected, with
-no second step on /profile, which is the *intended* path. Reporting
+no second step on /profile/github, which is the *intended* path. Reporting
 only the first would have shown everyone who took the intended path
 as a drop-off at the funnel's GitHub step.
 
@@ -286,10 +286,26 @@ every signup is skipped — it is not something the user did.
 | `task_form_blocked` | `reason` (`no_project \| no_agent \| no_credential`) |
 | `task_errored` / `task_runner_lost` | `stage`, `reason` |
 | `task_paused` / `task_resumed` | `data_id` |
+| `task_gated` | `data_id`, `reason` (`start_at \| cap \| window \| promoted \| at_risk \| reserve_risk`) |
+| `usage_snapshot_recorded` | `window` (`weekly \| session`), `source` (`cli \| manual`), `credential_kind`, `used_percent` (rounded, 0–100) |
 | `issue_attached` | `data_id`, `has_model_label`, `skip_planning` |
 | `plan_posted`, `plan_approved_via_github`, `merge_summary_posted` | `data_id` |
 
-The last four belong to the GitHub issue workflow
+`task_gated` is captured by `Camelot.Board.Changes.DispatchTasks` when
+usage-aware scheduling (`docs/usage-scheduling.md`) changes what it does
+with a queued card: held back (`start_at`, `cap`, `window`) or pushed
+through out of the ordinary (`promoted`/`at_risk` for a deadline,
+`reserve_risk` for a card running over its weekly cap). The dispatcher
+runs every minute, so the last reason per card is kept in
+`Camelot.Cache` and the event fires only when it changes — a cache miss
+at worst repeats one. A card returning to normal is not reported.
+
+`usage_snapshot_recorded` comes from the `UsageSnapshot` notifier: one
+per window per finished Claude run (`source: cli`) and one per manual
+reading saved on the profile.
+
+`issue_attached`, `plan_posted`, `plan_approved_via_github` and
+`merge_summary_posted` belong to the GitHub issue workflow
 (`docs/github-issues-workflow.md`). `issue_attached` is captured by
 `Camelot.Projects.Changes.SyncGithubIssues` when an issue becomes a
 task, alongside the usual `task_created`; `skip_planning` is whether
