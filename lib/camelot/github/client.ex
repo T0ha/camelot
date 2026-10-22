@@ -1,7 +1,9 @@
 defmodule Camelot.Github.Client do
   @moduledoc """
   Req-based GitHub API client for PR status polling,
-  issue sync, and the PR write calls (approve, merge).
+  issue sync, the PR write calls (approve, merge), and the
+  issue write calls (comments, labels, closing) behind
+  `Camelot.Github.PullRequestApi`.
 
   Authenticates as a GitHub App installation when an
   `installation_id:` opt is given and the App is
@@ -125,6 +127,134 @@ defmodule Camelot.Github.Client do
       opts
     )
   end
+
+  @doc """
+  Fetches one issue (title, body, state, labels, author).
+  """
+  @spec get_issue(String.t(), String.t(), integer(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def get_issue(owner, repo, issue_number, opts \\ []) do
+    request(:get, "/repos/#{owner}/#{repo}/issues/#{issue_number}", opts)
+  end
+
+  @doc """
+  Lists an issue's comments, oldest first (up to 100).
+
+  `since:` (a `DateTime`) restricts the list to comments *updated* at
+  or after that moment — GitHub filters on `updated_at`, not
+  `created_at`, so an edited old comment is returned again.
+  """
+  @spec list_issue_comments(String.t(), String.t(), integer(), keyword()) ::
+          {:ok, [map()]} | {:error, term()}
+  def list_issue_comments(owner, repo, issue_number, opts \\ []) do
+    request(
+      :get,
+      "/repos/#{owner}/#{repo}/issues/#{issue_number}/comments" <>
+        "?per_page=100" <> since_param(Keyword.get(opts, :since)),
+      opts
+    )
+  end
+
+  @doc "Lists the reactions on one issue comment (up to 100)."
+  @spec list_comment_reactions(String.t(), String.t(), integer(), keyword()) ::
+          {:ok, [map()]} | {:error, term()}
+  def list_comment_reactions(owner, repo, comment_id, opts \\ []) do
+    request(
+      :get,
+      "/repos/#{owner}/#{repo}/issues/comments/#{comment_id}/reactions?per_page=100",
+      opts
+    )
+  end
+
+  @doc "Lists the reactions on the issue itself (up to 100)."
+  @spec list_issue_reactions(String.t(), String.t(), integer(), keyword()) ::
+          {:ok, [map()]} | {:error, term()}
+  def list_issue_reactions(owner, repo, issue_number, opts \\ []) do
+    request(
+      :get,
+      "/repos/#{owner}/#{repo}/issues/#{issue_number}/reactions?per_page=100",
+      opts
+    )
+  end
+
+  @doc """
+  Lists an issue's events (`labeled`, `unlabeled`, `closed`, …), oldest
+  first (up to 100). `labeled` events carry the `actor` who applied the
+  label, which is what `Camelot.Github.IssueTrust` checks.
+  """
+  @spec list_issue_events(String.t(), String.t(), integer(), keyword()) ::
+          {:ok, [map()]} | {:error, term()}
+  def list_issue_events(owner, repo, issue_number, opts \\ []) do
+    request(
+      :get,
+      "/repos/#{owner}/#{repo}/issues/#{issue_number}/events?per_page=100",
+      opts
+    )
+  end
+
+  @doc "Posts a comment on an issue (or a pull request's conversation)."
+  @spec create_issue_comment(String.t(), String.t(), integer(), String.t(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def create_issue_comment(owner, repo, issue_number, body, opts \\ []) do
+    request(
+      :post,
+      "/repos/#{owner}/#{repo}/issues/#{issue_number}/comments",
+      Keyword.put(opts, :json, %{body: body})
+    )
+  end
+
+  @doc "Replaces the body of an existing issue comment."
+  @spec update_issue_comment(String.t(), String.t(), integer(), String.t(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def update_issue_comment(owner, repo, comment_id, body, opts \\ []) do
+    request(
+      :patch,
+      "/repos/#{owner}/#{repo}/issues/comments/#{comment_id}",
+      Keyword.put(opts, :json, %{body: body})
+    )
+  end
+
+  @doc """
+  Adds labels to an issue. GitHub creates a label that does not exist
+  in the repository yet.
+  """
+  @spec add_issue_labels(String.t(), String.t(), integer(), [String.t()], keyword()) ::
+          {:ok, [map()]} | {:error, term()}
+  def add_issue_labels(owner, repo, issue_number, labels, opts \\ []) do
+    request(
+      :post,
+      "/repos/#{owner}/#{repo}/issues/#{issue_number}/labels",
+      Keyword.put(opts, :json, %{labels: labels})
+    )
+  end
+
+  @doc """
+  Removes one label from an issue. GitHub answers `404` when the issue
+  does not carry it.
+  """
+  @spec remove_issue_label(String.t(), String.t(), integer(), String.t(), keyword()) ::
+          {:ok, [map()]} | {:error, term()}
+  def remove_issue_label(owner, repo, issue_number, label, opts \\ []) do
+    request(
+      :delete,
+      "/repos/#{owner}/#{repo}/issues/#{issue_number}/labels/#{URI.encode(label, &URI.char_unreserved?/1)}",
+      opts
+    )
+  end
+
+  @doc "Closes an issue as completed."
+  @spec close_issue(String.t(), String.t(), integer(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def close_issue(owner, repo, issue_number, opts \\ []) do
+    request(
+      :patch,
+      "/repos/#{owner}/#{repo}/issues/#{issue_number}",
+      Keyword.put(opts, :json, %{state: "closed", state_reason: "completed"})
+    )
+  end
+
+  defp since_param(nil), do: ""
+  defp since_param(%DateTime{} = since), do: "&since=" <> DateTime.to_iso8601(since)
 
   @spec find_open_pr_by_head(String.t(), String.t(), String.t(), keyword()) ::
           {:ok, map()} | :none | {:error, term()}

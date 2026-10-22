@@ -288,6 +288,8 @@ every signup is skipped — it is not something the user did.
 | `task_paused` / `task_resumed` | `data_id` |
 | `task_gated` | `data_id`, `reason` (`start_at \| cap \| window \| promoted \| at_risk \| reserve_risk`) |
 | `usage_snapshot_recorded` | `window` (`weekly \| session`), `source` (`cli \| manual`), `credential_kind`, `used_percent` (rounded, 0–100) |
+| `issue_attached` | `data_id`, `has_model_label`, `skip_planning` |
+| `plan_posted`, `plan_approved_via_github`, `merge_summary_posted` | `data_id` |
 
 `task_gated` is captured by `Camelot.Board.Changes.DispatchTasks` when
 usage-aware scheduling (`docs/usage-scheduling.md`) changes what it does
@@ -301,6 +303,21 @@ at worst repeats one. A card returning to normal is not reported.
 `usage_snapshot_recorded` comes from the `UsageSnapshot` notifier: one
 per window per finished Claude run (`source: cli`) and one per manual
 reading saved on the profile.
+
+`issue_attached`, `plan_posted`, `plan_approved_via_github` and
+`merge_summary_posted` belong to the GitHub issue workflow
+(`docs/github-issues-workflow.md`). `issue_attached` is captured by
+`Camelot.Projects.Changes.SyncGithubIssues` when an issue becomes a
+task, alongside the usual `task_created`; `skip_planning` is whether
+the task started straight in execution. `plan_posted` is
+`Task :record_plan_comment` (the plan comment landed on the issue),
+`merge_summary_posted` is `Task :mark_merge_summary_posted` (for a
+merged *or* closed-without-merge PR). `plan_approved_via_github` is
+`Task :approve_plan_from_github` — an approval read off the issue
+(`/approve`, a 👍 on the plan comment, or the `camelot:approved`
+label). It is a separate action from `:approve_plan`, so such an
+approval does **not** also emit `task_plan_approved`: count both when
+measuring plan approvals.
 
 `agent_models_probe_failed` is `Camelot.Agents.ModelDiscovery` failing
 to ask a provider which models the user's own credential may use. It

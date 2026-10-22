@@ -4,8 +4,9 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   the task accordingly.
 
   Transitions:
-  - merged → done (via complete)
-  - closed → cancelled (via cancel)
+  - merged → done (via complete), after the issue's merge summary
+    (`Camelot.Board.Changes.PostMergeSummary`) for issue-imported tasks
+  - closed → cancelled (via cancel), after a closed-without-merge note
   - merge conflict → queued for agent fix (via request_pr_changes)
   - failing CI checks → queued for agent fix (via request_pr_changes)
   - changes_requested → queued for agent fix (via request_pr_changes)
@@ -48,6 +49,7 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   """
   use Ash.Resource.Change
 
+  alias Camelot.Board.Changes.PostMergeSummary
   alias Camelot.Board.PrApproval
   alias Camelot.Board.Task
   alias Camelot.Board.TaskLink
@@ -226,9 +228,11 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   defp apply_pr_state(task, pr, reviews, comments, commits, check_runs) do
     cond do
       pr["merged"] == true ->
+        PostMergeSummary.post(task, :merged, pr, commits, reviews)
         transition(task, :complete)
 
       pr["state"] == "closed" ->
+        PostMergeSummary.post(task, :closed, pr, commits, reviews)
         transition(task, :cancel)
 
       task.state == :waiting_for_input ->

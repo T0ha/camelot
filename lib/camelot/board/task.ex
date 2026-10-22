@@ -20,8 +20,10 @@ defmodule Camelot.Board.Task do
   alias Camelot.Agents.Agent
   alias Camelot.Agents.ModelDiscovery
   alias Camelot.Agents.RunWindow
+  alias Camelot.Board.Notifiers.EnqueueIssuePost
   alias Camelot.Board.Notifiers.NotifyTaskStateEmail
   alias Camelot.Board.Task.Calculations.ScheduledWait
+  alias Camelot.Board.Task.Changes.ApplySkipPlanning
   alias Camelot.Board.Task.Changes.ImplyIgnoreLimits
   alias Camelot.Board.Task.Changes.RejectBlocked
   alias Camelot.Board.Task.Validations.DeadlineAfterStart
@@ -83,6 +85,26 @@ defmodule Camelot.Board.Task do
           expr(
             not is_nil(pr_number) and
               stage == :pr and
+              project.status == :active
+          )
+        )
+      end
+
+      trigger :check_issue_plan do
+        action(:check_issue_plan)
+        scheduler_cron("*/2 * * * *")
+        queue(:github)
+        max_attempts(3)
+
+        worker_module_name(Camelot.Board.Task.AshOban.Trigger.CheckIssuePlan)
+
+        scheduler_module_name(Camelot.Board.Task.AshOban.Scheduler.CheckIssuePlan)
+
+        where(
+          expr(
+            stage == :planning and
+              state == :waiting_for_input and
+              not is_nil(plan_comment_id) and
               project.status == :active
           )
         )
@@ -297,6 +319,50 @@ defmodule Camelot.Board.Task do
       )
     end
 
+    attribute :issue_number, :integer do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Number of the GitHub issue this task was imported from (in " <>
+          "the project's repository). Nil for tasks created in Camelot. " <>
+          "Together with `project_id` it is the issue-sync de-dup key."
+      )
+    end
+
+    attribute :plan_comment_id, :integer do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Id of the issue comment carrying the plan currently awaiting " <>
+          "review. Cleared on every `:submit_plan`, so a 👍 left on an " <>
+          "older plan comment can never approve a newer plan."
+      )
+    end
+
+    attribute :issue_comments_seen_at, :utc_datetime_usec do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "When `Camelot.Board.Changes.CheckIssuePlan` last finished a " <>
+          "poll of the issue — comments and reactions older than this " <>
+          "have already been acted on."
+      )
+    end
+
+    attribute :merge_summary_posted_at, :utc_datetime_usec do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "When the merge (or closed-without-merge) summary was posted " <>
+          "on the issue. Makes `Camelot.Board.Changes.PostMergeSummary` " <>
+          "idempotent across polls."
+      )
+    end
+
     timestamps()
   end
 
@@ -466,7 +532,18 @@ defmodule Camelot.Board.Task do
 
     create :create do
       primary?(true)
-      accept([:title, :description, :priority, :next_model] ++ @schedule_fields)
+
+      accept(
+        [:title, :description, :priority, :next_model, :issue_number] ++
+          @schedule_fields
+      )
+
+      # Not persisted: picks the initial stage/state. The description
+      # is taken as the plan, so the task goes straight to execution.
+      argument :skip_planning, :boolean do
+        allow_nil?(false)
+        default(false)
+      end
 
       argument :project_id, :uuid do
         allow_nil?(false)
@@ -483,6 +560,9 @@ defmodule Camelot.Board.Task do
       change(manage_relationship(:project_id, :project, type: :append))
       change(manage_relationship(:creator_id, :creator, type: :append))
       change(manage_relationship(:agent_id, :agent, type: :append))
+      change(ApplySkipPlanning)
+
+      validate(present(:description), where: [argument_equals(:skip_planning, true)])
 
       validate(fn changeset, _context ->
         validate_next_model(
@@ -589,17 +669,19 @@ defmodule Camelot.Board.Task do
 
     update :submit_plan do
       accept([:plan, :full_plan])
-      notifiers([NotifyTaskStateEmail])
+      notifiers([NotifyTaskStateEmail, EnqueueIssuePost])
 
       validate(attribute_equals(:stage, :planning))
       validate(attribute_equals(:state, :in_progress))
       validate(present(:plan))
       change(set_attribute(:state, :waiting_for_input))
       change(set_attribute(:interrupt_requeues, 0))
+      change(set_attribute(:plan_comment_id, nil))
     end
 
     update :approve_plan do
       accept([])
+      notifiers([EnqueueIssuePost])
 
       validate(attribute_equals(:stage, :planning))
       validate(attribute_equals(:state, :waiting_for_input))
@@ -608,8 +690,46 @@ defmodule Camelot.Board.Task do
       change(set_attribute(:state, :queued))
     end
 
-    update :request_plan_changes do
+    # The same transition as `:approve_plan`, for an approval read off
+    # the GitHub issue (`/approve`, a 👍 on the plan comment or the
+    # `camelot:approved` label). Kept separate so the issue is not told
+    # "approved in Camelot" about an approval it just gave itself, and
+    # so telemetry can tell the two apart.
+    update :approve_plan_from_github do
+      accept([:issue_comments_seen_at])
+
+      validate(attribute_equals(:stage, :planning))
+      validate(attribute_equals(:state, :waiting_for_input))
+      validate(present(:plan))
+      change(set_attribute(:stage, :executing))
+      change(set_attribute(:state, :queued))
+    end
+
+    update :record_plan_comment do
+      accept([:plan_comment_id])
+
+      validate(present(:plan_comment_id))
+    end
+
+    update :mark_issue_comments_seen do
+      accept([:issue_comments_seen_at])
+    end
+
+    update :mark_merge_summary_posted do
+      accept([:merge_summary_posted_at])
+
+      validate(present(:merge_summary_posted_at))
+    end
+
+    update :check_issue_plan do
       accept([])
+      require_atomic?(false)
+
+      change(Camelot.Board.Changes.CheckIssuePlan)
+    end
+
+    update :request_plan_changes do
+      accept([:issue_comments_seen_at])
 
       validate(attribute_equals(:stage, :planning))
       validate(attribute_equals(:state, :waiting_for_input))
