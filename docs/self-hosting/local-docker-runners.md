@@ -21,7 +21,7 @@ For the multi-node Swarm story, see
 - PostgreSQL in a container (existing `docker-compose.yml`).
 - Every agent CLI dispatch spawns a one-shot `camelot-runner-<id>`
   container on your local Docker daemon.
-- A working `/profile` page where you can add credentials and watch
+- Working profile screens (`/profile/api-keys`, `/profile/capacity`) where you can add credentials and watch
   pool usage in real time.
 
 ## Prerequisites
@@ -170,9 +170,9 @@ RUNNER_BACKEND=local iex -S mix phx.server
 
 Then `path` on the project drives the BEAM's `cd` for the CLI.
 
-## 7. Add credentials at /profile
+## 7. Add credentials at /profile/api-keys
 
-Visit <http://localhost:4000/profile>:
+Visit <http://localhost:4000/profile/api-keys>:
 
 - Add credentials for whatever the Agent CLI's
   `required_credential_kinds` lists (e.g. `:claude_api_key`).
@@ -239,7 +239,7 @@ You should see:
 - On exit, container disappears, session marked `:completed` /
   `:failed`.
 
-Verify the pool snapshot updates at `/profile`:
+Verify the pool snapshot updates at `/profile/capacity`:
 
 ```
 You — running: 0/2
@@ -295,7 +295,7 @@ Quit (`Ctrl+C` twice) and relaunch with the env var prefix.
 
 ### Session never transitions out of `:queued`
 
-- `RunnerPool` may be at its `per_user_max` cap. Check `/profile`.
+- `RunnerPool` may be at its `per_user_max` cap. Check `/profile/capacity`.
 - The pool monitors the TaskRunner pid — if your IEx node restarted,
   the monitor fires and the slot frees, but the queued sessions may
   still be in the DB. Run the DB reset from step 10.

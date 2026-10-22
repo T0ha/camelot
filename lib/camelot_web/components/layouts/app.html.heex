@@ -43,25 +43,42 @@
           </a>
         </li>
       <% end %>
-      <%= if assigns[:current_user] do %>
-        <li>
-          <a href="/profile" class="btn btn-ghost btn-sm">
-            Profile
-          </a>
-        </li>
-      <% end %>
       <li>
         <.theme_toggle />
       </li>
       <%= if assigns[:current_user] do %>
-        <li>
-          <a
-            href="/sign-out"
-            data-posthog-reset
-            class="btn btn-ghost btn-sm"
+        <li class="dropdown dropdown-end">
+          <div
+            tabindex="0"
+            role="button"
+            id="user-menu"
+            aria-label="Account menu"
+            class="btn btn-ghost btn-circle avatar avatar-placeholder"
           >
-            Sign out
-          </a>
+            <div class="bg-neutral text-neutral-content w-8 rounded-full">
+              <span>{CamelotWeb.Layouts.user_initial(@current_user)}</span>
+            </div>
+          </div>
+          <ul
+            id="user-menu-items"
+            tabindex="0"
+            class="menu dropdown-content bg-base-100 rounded-box z-10 mt-3 w-60 p-2 shadow"
+          >
+            <li class="menu-title truncate">{@current_user.email}</li>
+            <li><.link navigate={~p"/profile/ssh-key"}>SSH key</.link></li>
+            <li>
+              <.link navigate={~p"/profile/notifications"}>
+                Email notifications
+              </.link>
+            </li>
+            <li><.link navigate={~p"/profile/api-keys"}>API keys</.link></li>
+            <li>
+              <.link navigate={~p"/profile/capacity"}>Running capacity</.link>
+            </li>
+            <li><.link navigate={~p"/profile/github"}>GitHub</.link></li>
+            <li class="divider my-0"></li>
+            <li><a href="/sign-out" data-posthog-reset>Sign out</a></li>
+          </ul>
         </li>
       <% end %>
     </ul>

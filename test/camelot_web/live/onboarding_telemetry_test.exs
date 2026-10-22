@@ -139,13 +139,11 @@ defmodule CamelotWeb.OnboardingTelemetryTest do
   # The profile page is where the Claude token step is really
   # finished. It nudges the guide, which is what lets the hook see the
   # transition at all — without it the step completes in silence.
-  test "adding a credential on the profile page reports the step", %{conn: conn, user: user} do
-    {:ok, view, _html} = live(conn, ~p"/profile")
+  test "saving an API key on the profile page reports the step", %{conn: conn, user: user} do
+    {:ok, view, _html} = live(conn, ~p"/profile/api-keys")
 
     view
-    |> form("#credential-form",
-      credential: %{kind: "claude_api_key", name: "key", value: "sk-test"}
-    )
+    |> form("#api-key-form-claude_api_key", %{"value" => "sk-test"})
     |> render_submit()
 
     # The nudge is a message to self/0, so it is handled after the
@@ -159,7 +157,7 @@ defmodule CamelotWeb.OnboardingTelemetryTest do
   end
 
   # The guide is just as often finished across a navigation as inside
-  # one — connecting the App redirects to /profile, saving a project
+  # one — connecting the App redirects to /profile/github, saving a project
   # pushes to /projects — and a fresh mount reaches completion through
   # `install/2`, which has no `false -> true` flip to report and so
   # restates nothing. Left there, the person properties keep whatever

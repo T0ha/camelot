@@ -16,7 +16,7 @@ defmodule CamelotWeb.GithubSetupControllerTest do
 
       conn = get(conn, ~p"/github/setup")
 
-      assert redirected_to(conn) == ~p"/profile"
+      assert redirected_to(conn) == ~p"/profile/github"
       assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "Missing installation_id"
     end
 
@@ -25,7 +25,7 @@ defmodule CamelotWeb.GithubSetupControllerTest do
 
       conn = get(conn, ~p"/github/setup?installation_id=1")
 
-      assert redirected_to(conn) == ~p"/profile"
+      assert redirected_to(conn) == ~p"/profile/github"
       assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "Could not connect"
     end
 
@@ -37,7 +37,7 @@ defmodule CamelotWeb.GithubSetupControllerTest do
 
       conn = get(conn, ~p"/github/setup?installation_id=1&state=#{state}")
 
-      assert redirected_to(conn) == ~p"/profile"
+      assert redirected_to(conn) == ~p"/profile/github"
       assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "Could not connect"
     end
 
@@ -48,7 +48,7 @@ defmodule CamelotWeb.GithubSetupControllerTest do
 
       conn = get(conn, ~p"/github/setup?installation_id=1&state=#{state}")
 
-      assert redirected_to(conn) == ~p"/profile"
+      assert redirected_to(conn) == ~p"/profile/github"
       assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "Could not connect"
     end
   end

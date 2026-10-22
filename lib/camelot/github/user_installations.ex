@@ -5,7 +5,7 @@ defmodule Camelot.Github.UserInstallations do
 
   Used by the "Log in with GitHub" callback so a first-time
   user lands on the board already connected, instead of
-  being sent to `/profile` for a second, manual step.
+  being sent to `/profile/github` for a second, manual step.
   GitHub's `GET /user/installations` payloads already have
   the exact shape `Camelot.Github.InstallationSync.upsert/1`
   consumes, so nothing needs normalising here.
@@ -155,7 +155,7 @@ defmodule Camelot.Github.UserInstallations do
 
   # Folding the install into the login round-trip is the *intended*
   # way to connect — a first-time GitHub sign-in lands on the board
-  # already connected, with no second step on /profile. Capturing the
+  # already connected, with no second step on /profile/github. Capturing the
   # same event `CamelotWeb.GithubSetupController` does is what keeps
   # the funnel's GitHub step reachable from both paths; without it
   # everyone who took this one looked like a drop-off.

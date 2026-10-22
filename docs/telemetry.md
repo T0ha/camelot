@@ -142,14 +142,14 @@ the users who engage with the guide:
 * clicking a step dismisses the guide, and a dismissed guide never
   auto-opens again, so `onboarding_shown` stops;
 * three of the four steps finish across a navigation or a full page
-  redirect — GitHub connect redirects to `/profile`, project creation
+  redirect — GitHub connect redirects to `/profile/github`, project creation
   `push_navigate`s — so the next mount recomputes the status from
   scratch and `refresh/1` has no `false -> true` flip left to see.
 
 Without the restatement those users would show as stuck at a step they
 had already finished. `onboarding_step_completed` still only fires on
 a flip the hook actually observes, which needs the step to complete in
-the same LiveView process: `/profile` and the board both nudge the
+the same LiveView process: `/profile/api-keys` and the board both nudge the
 guide with `send(self(), {:onboarding, :refresh})` after completing
 one — the convention `AGENTS.md` documents.
 
@@ -221,7 +221,7 @@ be connected two ways. `CamelotWeb.GithubSetupController` handles the
 profile's "Connect GitHub App" round-trip, and
 `Camelot.Github.UserInstallations` handles the login one — a
 first-time GitHub sign-in lands on the board already connected, with
-no second step on /profile, which is the *intended* path. Reporting
+no second step on /profile/github, which is the *intended* path. Reporting
 only the first would have shown everyone who took the intended path
 as a drop-off at the funnel's GitHub step.
 
