@@ -7,6 +7,12 @@ defmodule Camelot.Board.Changes.DispatchTasks do
   (keyed by task creator), not by this dispatcher — a task's agent CLI
   is fixed at creation time, so there's no per-agent idle/busy slot to
   gate on anymore. `RunnerPool` never refuses a dispatch; it queues.
+
+  What *is* gated here is usage: `apply_gate/2` runs every candidate
+  through `Camelot.Scheduling.Gate` (weekly cap, run windows,
+  start-at, deadline) and dispatches the rest in deadline-aware order.
+  A held-back card simply stays `:queued` and is looked at again on
+  the next tick; nothing already running is ever stopped.
   """
   use Ash.Resource.Actions.Implementation
 
@@ -14,14 +20,23 @@ defmodule Camelot.Board.Changes.DispatchTasks do
   alias Camelot.Board.PromptBuilder
   alias Camelot.Board.Task
   alias Camelot.Board.UsageLimitPause
+  alias Camelot.Cache
   alias Camelot.Runtime.TaskRegistry
   alias Camelot.Runtime.TaskRunner
   alias Camelot.Runtime.TaskRunnerSupervisor
+  alias Camelot.Scheduling.Gate
+  alias Camelot.Scheduling.Planner
+  alias Camelot.Telemetry.Capture
 
   require Ash.Query
   require Logger
 
   @dispatchable_stages [:todo, :planning, :executing, :pr]
+
+  # How long the last reported gate reason of a card is remembered, so
+  # `task_gated` fires on a change rather than every minute. A miss
+  # only re-reports the same reason once.
+  @gated_ttl to_timeout(day: 1)
 
   @impl true
   @spec run(
@@ -30,9 +45,27 @@ defmodule Camelot.Board.Changes.DispatchTasks do
           Ash.Resource.Actions.Implementation.Context.t()
         ) :: :ok
   def run(_input, _opts, _context) do
-    UsageLimitPause.resume_due(DateTime.utc_now())
-    Enum.each(dispatchable_tasks(), &dispatch_task/1)
+    now = DateTime.utc_now()
+    UsageLimitPause.resume_due(now)
+
+    dispatchable_tasks()
+    |> apply_gate(now)
+    |> Enum.each(&dispatch_task/1)
+
     :ok
+  end
+
+  @doc """
+  Drops the cards `Camelot.Scheduling.Gate` holds back at `now` and
+  orders the rest for dispatch — deadline-promoted first, then nearest
+  deadline, then priority (see `Camelot.Scheduling.Planner.runnable/1`).
+  Reports `task_gated` whenever a card's wait reason changes.
+  """
+  @spec apply_gate([Task.t()], DateTime.t()) :: [Task.t()]
+  def apply_gate(tasks, now) do
+    decisions = Planner.decide_all(tasks, now)
+    Enum.each(decisions, &report_gated/1)
+    Planner.runnable(decisions)
   end
 
   # `project.status == :active` keeps an archived project's tasks out
@@ -72,6 +105,33 @@ defmodule Camelot.Board.Changes.DispatchTasks do
       _ -> false
     end
   end
+
+  @spec report_gated({Task.t(), Gate.decision()}) :: :ok
+  defp report_gated({task, decision}) do
+    reason = gated_reason(decision)
+    key = {:task_gated, task.id}
+
+    case Cache.get(key) do
+      {:ok, ^reason} -> :ok
+      _changed_or_miss -> remember_gated(key, task, reason)
+    end
+  end
+
+  defp remember_gated(key, task, reason) do
+    _ = Cache.put(key, reason, ttl: @gated_ttl)
+    capture_gated(task, reason)
+  end
+
+  # A card that was never gated and still is not is not news.
+  defp capture_gated(_task, :none), do: :ok
+
+  defp capture_gated(task, reason) do
+    Capture.capture("task_gated", task.creator_id, %{data_id: task.id, reason: reason})
+  end
+
+  defp gated_reason({:wait, reason, _until}), do: reason
+  defp gated_reason({:run, flag}), do: flag
+  defp gated_reason(:run), do: :none
 
   defp dispatch_task(task) do
     case Ash.update(task, %{}, action: :begin_work) do

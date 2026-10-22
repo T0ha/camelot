@@ -143,6 +143,7 @@ defmodule CamelotWeb.Router do
       live "/profile/api-keys", ProfileLive.ApiKeys
       live "/profile/capacity", ProfileLive.Capacity
       live "/profile/github", ProfileLive.Github
+      live "/profile/usage", ProfileLive.Usage
     end
   end
 

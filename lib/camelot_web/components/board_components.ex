@@ -6,6 +6,7 @@ defmodule CamelotWeb.BoardComponents do
 
   import CamelotWeb.CoreComponents, only: [icon: 1]
 
+  alias CamelotWeb.UsageScheduling
   alias Phoenix.LiveView.Rendered
 
   attr :stage, :atom, required: true
@@ -43,9 +44,12 @@ defmodule CamelotWeb.BoardComponents do
 
   attr :task, :map, required: true
   attr :on_click, :any, default: nil
+  attr :time_zone, :string, default: "Etc/UTC", doc: "zone the schedule badge is shown in"
 
   @spec task_card(map()) :: Rendered.t()
   def task_card(assigns) do
+    assigns = assign(assigns, :schedule_badge, schedule_badge(assigns.task, assigns.time_zone))
+
     ~H"""
     <div
       class={[
@@ -102,6 +106,12 @@ defmodule CamelotWeb.BoardComponents do
         >
           {@task.last_error}
         </p>
+        <p :if={@schedule_badge} id={"task-#{@task.id}-schedule"} class="mt-1">
+          <span class={["badge badge-xs h-auto py-0.5", elem(@schedule_badge, 1)]}>
+            <.icon name="hero-clock" class="size-3" />
+            {elem(@schedule_badge, 0)}
+          </span>
+        </p>
         <p
           :if={@task.state == :paused && @task.pause_reason}
           class="mt-1 text-xs text-warning whitespace-pre-line line-clamp-3"
@@ -127,6 +137,17 @@ defmodule CamelotWeb.BoardComponents do
     </span>
     """
   end
+
+  # Only the board loads `:scheduled_wait`; elsewhere the card has no
+  # badge rather than a crash.
+  defp schedule_badge(%{scheduled_wait: %{} = wait} = task, zone) do
+    case UsageScheduling.badge_text(wait, task, zone) do
+      nil -> nil
+      text -> {text, UsageScheduling.badge_class(wait)}
+    end
+  end
+
+  defp schedule_badge(_task, _zone), do: nil
 
   # A task is flipped to :in_progress at dispatch, before its session
   # is granted a runner slot, so :in_progress alone would report a

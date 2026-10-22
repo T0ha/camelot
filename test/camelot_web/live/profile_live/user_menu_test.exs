@@ -14,7 +14,7 @@ defmodule CamelotWeb.ProfileLive.UserMenuTest do
     initial = user.email |> to_string() |> String.first() |> String.upcase()
     assert has_element?(view, "#user-menu", initial)
 
-    for path <- ~w(ssh-key notifications api-keys capacity github) do
+    for path <- ~w(ssh-key notifications api-keys capacity github usage) do
       assert has_element?(view, "#user-menu-items a[href='/profile/#{path}']")
     end
 

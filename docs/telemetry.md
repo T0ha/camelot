@@ -286,6 +286,21 @@ every signup is skipped — it is not something the user did.
 | `task_form_blocked` | `reason` (`no_project \| no_agent \| no_credential`) |
 | `task_errored` / `task_runner_lost` | `stage`, `reason` |
 | `task_paused` / `task_resumed` | `data_id` |
+| `task_gated` | `data_id`, `reason` (`start_at \| cap \| window \| promoted \| at_risk \| reserve_risk`) |
+| `usage_snapshot_recorded` | `window` (`weekly \| session`), `source` (`cli \| manual`), `credential_kind`, `used_percent` (rounded, 0–100) |
+
+`task_gated` is captured by `Camelot.Board.Changes.DispatchTasks` when
+usage-aware scheduling (`docs/usage-scheduling.md`) changes what it does
+with a queued card: held back (`start_at`, `cap`, `window`) or pushed
+through out of the ordinary (`promoted`/`at_risk` for a deadline,
+`reserve_risk` for a card running over its weekly cap). The dispatcher
+runs every minute, so the last reason per card is kept in
+`Camelot.Cache` and the event fires only when it changes — a cache miss
+at worst repeats one. A card returning to normal is not reported.
+
+`usage_snapshot_recorded` comes from the `UsageSnapshot` notifier: one
+per window per finished Claude run (`source: cli`) and one per manual
+reading saved on the profile.
 
 `agent_models_probe_failed` is `Camelot.Agents.ModelDiscovery` failing
 to ask a provider which models the user's own credential may use. It

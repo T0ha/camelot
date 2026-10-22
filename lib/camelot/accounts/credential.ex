@@ -211,12 +211,17 @@ defmodule Camelot.Accounts.Credential do
   decrypted `value`, hence `load_value?: true`) and
   `Camelot.Board.UsageLimitPause` (which only inspects/updates the
   row itself).
+
+  The oldest matching row wins, so every caller — the runner, the
+  usage-limit pause and usage scheduling — agrees on which credential
+  a user with several keys of one kind is running on.
   """
   @spec for_user_and_kind(String.t(), atom(), keyword()) :: t() | nil
   def for_user_and_kind(user_id, kind, opts \\ []) do
     query =
       __MODULE__
       |> Ash.Query.filter(user_id == ^user_id and kind == ^kind)
+      |> Ash.Query.sort(inserted_at: :asc)
       |> Ash.Query.limit(1)
 
     query =
