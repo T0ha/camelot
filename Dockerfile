@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Find eligible builder and runner images on Docker Hub. We use Ubuntu/Debian
 # instead of Alpine to avoid DNS resolution issues in production.
 #
@@ -64,7 +65,16 @@ COPY assets assets
 
 # install asset tooling + JS deps (assets/node_modules), then compile assets
 RUN mix assets.setup
-RUN mix assets.deploy
+
+# assets.deploy uploads the JS sourcemaps to PostHog error tracking
+# (assets/scripts/posthog_sourcemaps.sh) and strips them from the
+# image. Credentials arrive as build secrets, so they never land in a
+# layer; without them the upload is skipped and the build still works.
+ARG POSTHOG_RELEASE_VERSION=""
+ARG POSTHOG_CLI_HOST=""
+RUN --mount=type=secret,id=posthog_cli_api_key,env=POSTHOG_CLI_API_KEY \
+  --mount=type=secret,id=posthog_cli_project_id,env=POSTHOG_CLI_PROJECT_ID \
+  mix assets.deploy
 
 # Changes to config/runtime.exs don't require recompiling the code
 COPY config/runtime.exs config/

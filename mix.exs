@@ -142,8 +142,9 @@ defmodule Camelot.MixProject do
       "assets.build": ["compile", "tailwind camelot", "esbuild camelot", "esbuild docs"],
       "assets.deploy": [
         "tailwind camelot --minify",
-        "esbuild camelot --minify",
-        "esbuild docs --minify",
+        "esbuild camelot --minify --sourcemap",
+        "esbuild docs --minify --sourcemap",
+        "cmd sh assets/scripts/posthog_sourcemaps.sh priv/static/assets/js",
         "phx.digest"
       ],
       precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]

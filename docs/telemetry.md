@@ -59,8 +59,9 @@ each other by a test in `test/camelot/telemetry/context_test.exs`.
 
 The browser gets both as PostHog super-properties
 (`assets/js/posthog_client.js`), so autocaptured events —
-`$pageview`, and the `$exception` volume nothing else tags — carry
-them too. A LiveView can add page context on top by pushing
+`$pageview`, and the browser `$exception`s described under
+[Browser exceptions and console logs](#browser-exceptions-and-console-logs) —
+carry them too. A LiveView can add page context on top by pushing
 `posthog:register` — `CamelotWeb.TaskLive` sends `task_id` /
 `project_id`, which is what makes an exception on a task page
 attributable. PostHog persists registered properties, so page context
@@ -475,6 +476,75 @@ per attempt, and a job that retries three times is one failure, not
 three; the attempts in between log at `warning`, which the handler
 ignores.
 
+## Browser exceptions and console logs
+
+`assets/js/posthog_client.js` (shared by `app.js` and `docs.js`)
+passes `buildPostHogOptions` from `assets/js/posthog_options.mjs` to
+`posthog.init`. Nothing is left to the PostHog project's remote
+toggles that the code can decide itself:
+
+| Option | Effect |
+|---|---|
+| `capture_exceptions` | unhandled errors, unhandled promise rejections **and** `console.error` become `$exception`. The object form is required for the last one, and it is how LiveView reports its own client failures (an unknown hook, a hook that failed to construct). `true` alone covers only the first two |
+| `enable_recording_console_log` | when a session is recorded, the replay's console panel holds the browser console |
+| `session_recording.maskAllInputs` | typed input never leaves the browser in a replay |
+
+Session replay itself still records only when it is enabled in the
+PostHog project settings — no browser option can switch it on.
+
+On top of autocapture:
+
+- **LiveView hooks** — `reportingHookErrors` wraps every lifecycle
+  callback of the hooks passed to `LiveSocket`. A callback that throws
+  is reported with `posthog.captureException` carrying
+  `liveview_hook` and `liveview_callback`, logged as a
+  `console.warn` (a `console.error` would be captured a second time),
+  and not rethrown, so one broken hook no longer aborts the rest of
+  the DOM patch. Class-based hooks are left unwrapped. Errors thrown
+  later, from listeners a hook added, reach PostHog through
+  autocapture without the hook name.
+- **`liveview_error`** — a plain event, not an `$exception`: a main
+  LiveView that crashed or could not (re)join dispatches
+  `phx:page-loading-start{kind: "error"}`. Properties: `error_kind`
+  (`server` while the socket is up — the server has already reported
+  the crash — or `client` when the connection is gone), `reason` when
+  LiveView gave a string one, and `path`. A reconnect loop repeats the
+  signal on every attempt, so one outage is one event: nothing more is
+  sent until the next `phx:page-loading-stop`, and never more than one
+  a minute.
+
+All of it goes through `window.posthog`, which exists only when the
+page rendered `#posthog-config` — a page without `POSTHOG_API_KEY`
+captures nothing. Both root layouts (`root.html.heex`,
+`docs_root.html.heex`) render the same attributes, so a docs-site
+exception carries `environment` and `is_internal` too
+(`test/camelot_web/posthog_layout_test.exs`).
+
+### Readable stacks
+
+`mix assets.deploy` builds the bundles with `--sourcemap`, then
+`assets/scripts/posthog_sourcemaps.sh` runs `posthog-cli sourcemap
+process` on `priv/static/assets/js` *before* `phx.digest`, since the
+CLI injects a `//# chunkId=` comment the digested files must carry.
+The release name is `camelot`, the version the git sha. The maps are
+deleted and the `sourceMappingURL` comments stripped afterwards
+whatever happened, so they are never served.
+
+The Dockerfile takes the credentials as BuildKit secrets
+(`posthog_cli_api_key`, `posthog_cli_project_id`) and the host and
+version as build args (`POSTHOG_CLI_HOST`, `POSTHOG_RELEASE_VERSION`),
+so no layer contains them. `build-docker-image.yml` has to pass them
+to `docker/build-push-action` from:
+
+| Name | Kind | Value |
+|---|---|---|
+| `POSTHOG_CLI_API_KEY` | secret | personal API key, scopes *error tracking write* and *organization read* |
+| `POSTHOG_CLI_PROJECT_ID` | secret | PostHog project id |
+| `POSTHOG_CLI_HOST` | variable, optional | e.g. `https://eu.posthog.com`; the CLI defaults to US |
+
+Without them the upload is skipped and the build succeeds, and a
+failed upload only warns — Error Tracking then shows minified stacks.
+
 ## The funnel
 
 ```
@@ -583,6 +653,14 @@ carries `environment` and the process's person and ids, and
 `test/camelot/telemetry/job_failures_test.exs` drives
 `[:oban, :job, :exception]` and asserts that a retryable attempt
 produces no exception and that the job's args never leave the log.
+
+The pure browser-side pieces — the init options, the `liveview_error`
+properties and throttle, the hook wrapper — live in
+`assets/js/posthog_options.mjs`, which imports nothing, so
+`cd assets && npm test` (`node --test`) covers them
+without a browser or `npm ci`. What needs a real page — exceptions
+arriving in Error Tracking, the replay console panel — is checked by
+hand with `POSTHOG_API_KEY` set.
 
 ## Not here yet
 
