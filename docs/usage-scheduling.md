@@ -15,9 +15,9 @@ on the same credential (`Camelot.Runtime.UsageLimit` →
 
 | Where | What | Stored as |
 |---|---|---|
-| Profile → Usage limits | Time zone | `User.time_zone` (IANA, default `Etc/UTC`) |
-| Profile → Usage limits, per agent | Weekly cap %, run windows | `Camelot.Agents.UsagePolicy` (one row per user + agent) |
-| Profile → Usage limits, per agent | Manual "current weekly usage %" | a `:manual` `Camelot.Agents.UsageSnapshot` |
+| Profile → Usage limits (`/profile/usage`) | Time zone | `User.time_zone` (IANA, default `Etc/UTC`) |
+| Profile → Usage limits (`/profile/usage`), per agent | Weekly cap %, run windows | `Camelot.Agents.UsagePolicy` (one row per user + agent) |
+| Profile → Usage limits (`/profile/usage`), per agent | Manual "current weekly usage %" | a `:manual` `Camelot.Agents.UsageSnapshot` |
 | Task page → Schedule | Cap override, windows override, start at, finish by, "run even if over limits" | `Task.weekly_cap_override`, `windows_override`, `start_at`, `deadline_at`, `ignore_limits` |
 | New Task form | Start at, finish by | `Task.start_at`, `deadline_at` |
 
@@ -54,7 +54,7 @@ kind. The latest unexpired row is authoritative; a row whose
 | Source | How |
 |---|---|
 | `:cli` (Claude Code) | `Camelot.Runtime.TaskRunner.finish_session/5` parses the **last** `rate_limit_event` of every run (success or failure) with `Camelot.Runtime.RateLimitEvents`: `rate_limit_info.unifiedWindows.seven_day` → `:weekly`, `five_hour` → `:session`, `utilization` × 100, `resetsAt` epoch seconds. Older CLIs that send only the top-level `rateLimitType`/`resetsAt` record nothing. |
-| `:manual` | Typed on the profile. Keeps the provider's last known reset, or assumes a fresh week. |
+| `:manual` | Typed on the Usage limits profile screen. Keeps the provider's last known reset, or assumes a fresh week. |
 | `:estimated` | Computed, never stored: a manual reading plus Camelot's own session time on that account since the reading (`duration_ms` of the user's finished sessions whose agent mounts the same credential kind), at `config :camelot, :scheduling, minutes_per_percent`. It cannot see use outside Camelot. |
 
 Codex keeps its limit data in its rollout file

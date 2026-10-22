@@ -22,7 +22,7 @@ defmodule CamelotWeb.ProfileTelemetryTest do
   end
 
   test "following the connect link is counted as a started setup", ctx do
-    {:ok, view, _html} = live(ctx.conn, ~p"/profile")
+    {:ok, view, _html} = live(ctx.conn, ~p"/profile/github")
 
     view |> element("a[phx-click=github_setup_started]") |> render_click()
 
@@ -34,7 +34,7 @@ defmodule CamelotWeb.ProfileTelemetryTest do
   # keep working: a capture that swallowed the click would cost a
   # conversion to measure one.
   test "the link still carries the GitHub install URL it navigates to", ctx do
-    {:ok, view, _html} = live(ctx.conn, ~p"/profile")
+    {:ok, view, _html} = live(ctx.conn, ~p"/profile/github")
 
     href =
       view
@@ -45,7 +45,7 @@ defmodule CamelotWeb.ProfileTelemetryTest do
   end
 
   test "merely opening the profile is not a started setup", ctx do
-    {:ok, _view, _html} = live(ctx.conn, ~p"/profile")
+    {:ok, _view, _html} = live(ctx.conn, ~p"/profile/github")
 
     refute captured_started(ctx.user.id)
   end

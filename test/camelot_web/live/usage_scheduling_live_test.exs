@@ -63,7 +63,7 @@ defmodule CamelotWeb.UsageSchedulingLiveTest do
 
   describe "profile usage limits" do
     test "renders a section per agent", %{conn: conn, agent: agent} do
-      {:ok, view, html} = live(conn, ~p"/profile")
+      {:ok, view, html} = live(conn, ~p"/profile/usage")
 
       assert html =~ "Usage limits"
       assert has_element?(view, "#usage-policy-#{agent.slug}")
@@ -71,7 +71,7 @@ defmodule CamelotWeb.UsageSchedulingLiveTest do
     end
 
     test "saving the time zone persists it", %{conn: conn, user: user} do
-      {:ok, view, _html} = live(conn, ~p"/profile")
+      {:ok, view, _html} = live(conn, ~p"/profile/usage")
 
       view
       |> form("#time-zone-form", %{"tz" => %{"time_zone" => "America/New_York"}})
@@ -81,7 +81,7 @@ defmodule CamelotWeb.UsageSchedulingLiveTest do
     end
 
     test "saves the cap and converts local window rows to UTC", ctx do
-      {:ok, view, _html} = live(ctx.conn, ~p"/profile")
+      {:ok, view, _html} = live(ctx.conn, ~p"/profile/usage")
 
       view
       |> form("#usage-policy-#{ctx.agent.slug}", %{
@@ -104,7 +104,7 @@ defmodule CamelotWeb.UsageSchedulingLiveTest do
     end
 
     test "a blank cap clears it", ctx do
-      {:ok, view, _html} = live(ctx.conn, ~p"/profile")
+      {:ok, view, _html} = live(ctx.conn, ~p"/profile/usage")
 
       view
       |> form("#usage-policy-#{ctx.agent.slug}", %{"policy" => %{"weekly_cap_percent" => ""}})
@@ -114,7 +114,7 @@ defmodule CamelotWeb.UsageSchedulingLiveTest do
     end
 
     test "a manual current-% reading writes a :manual snapshot", ctx do
-      {:ok, view, _html} = live(ctx.conn, ~p"/profile")
+      {:ok, view, _html} = live(ctx.conn, ~p"/profile/usage")
 
       view
       |> form("#usage-policy-#{ctx.agent.slug}", %{"policy" => %{"current_percent" => "42"}})
@@ -129,7 +129,7 @@ defmodule CamelotWeb.UsageSchedulingLiveTest do
     test "shows the current snapshot, its source and its reset in local time", ctx do
       weekly_usage!(ctx.user, 23.0, :cli)
 
-      {:ok, view, _html} = live(ctx.conn, ~p"/profile")
+      {:ok, view, _html} = live(ctx.conn, ~p"/profile/usage")
       html = view |> element("#usage-policy-#{ctx.agent.slug}-snapshot") |> render()
 
       assert html =~ "23%"
