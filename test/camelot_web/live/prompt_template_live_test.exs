@@ -86,6 +86,26 @@ defmodule CamelotWeb.PromptTemplateLiveTest do
       assert html =~ "Edit Template"
     end
 
+    test "scope select omits archived projects", %{
+      conn: conn,
+      user: user,
+      own_project: %{project_id: project_id}
+    } do
+      archived =
+        Ash.create!(
+          Project,
+          %{name: "arch-#{System.unique_integer([:positive])}", path: "/tmp/a"},
+          actor: user
+        )
+
+      Ash.update!(archived, %{}, action: :archive)
+
+      {:ok, view, _html} = live(conn, ~p"/prompts/new")
+
+      assert has_element?(view, "#template-form option[value='#{project_id}']")
+      refute has_element?(view, "#template-form option[value='#{archived.id}']")
+    end
+
     test "create defaults to user-global", %{conn: conn, user: user} do
       require Ash.Query
 

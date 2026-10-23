@@ -31,6 +31,17 @@ defmodule CamelotWeb.Scope do
     Ash.Query.filter(query, exists(memberships, user_id == ^user_id))
   end
 
+  @doc """
+  Filter a Project query to projects that have not been archived.
+
+  Meant for pickers that attach new records to a project; archived
+  projects stay visible on the project list and in existing records.
+  """
+  @spec active_projects(queryable()) :: Ash.Query.t()
+  def active_projects(query) do
+    Ash.Query.filter(query, status == :active)
+  end
+
   @doc "Filter a Task query to tasks whose project the user is a member of."
   @spec scope_tasks(queryable(), User.t()) :: Ash.Query.t()
   def scope_tasks(query, %User{id: user_id}) do
