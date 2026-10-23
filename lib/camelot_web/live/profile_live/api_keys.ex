@@ -133,6 +133,7 @@ defmodule CamelotWeb.ProfileLive.ApiKeys do
 
   defp kind_label(:claude_api_key), do: "Claude API key — Claude Code"
   defp kind_label(:openai_api_key), do: "OpenAI API key — Codex"
+  defp kind_label(:gemini_api_key), do: "Gemini API key — Antigravity"
   defp kind_label(:generic), do: "Generic"
   defp kind_label(kind), do: Atom.to_string(kind)
 

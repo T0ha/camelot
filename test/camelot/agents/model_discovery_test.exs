@@ -14,6 +14,7 @@ defmodule Camelot.Agents.ModelDiscoveryTest do
 
   @anthropic_url "https://api.anthropic.com/v1/models"
   @openai_url "https://api.openai.com/v1/models"
+  @google_url "https://generativelanguage.googleapis.com/v1beta/models"
 
   setup do
     on_exit(&StubModelApi.uninstall/0)
@@ -91,6 +92,32 @@ defmodule Camelot.Agents.ModelDiscoveryTest do
     end
   end
 
+  describe "for_user/2 against Google" do
+    # Google names each model `models/<id>` and wants the key on its own
+    # header rather than as a Bearer token.
+    test "strips the models/ prefix and keeps gemini ids only" do
+      user = credentialed_user(:gemini_api_key, "AIza-live")
+
+      StubModelApi.install(
+        reply:
+          {:ok,
+           %{
+             "models" => [
+               %{"name" => "models/embedding-001"},
+               %{"name" => "models/gemini-3.8-flash"},
+               %{"name" => "models/gemini-3.8-pro"}
+             ]
+           }}
+      )
+
+      assert {:ok, ["gemini-3.8-pro", "gemini-3.8-flash"]} =
+               ModelDiscovery.for_user(agent!("antigravity"), user.id)
+
+      assert_received {:list_models, @google_url, headers}
+      assert headers == [{"x-goog-api-key", "AIza-live"}]
+    end
+  end
+
   describe "for_user/2 degraded cases" do
     test "no probe configured" do
       user = credentialed_user(:claude_api_key, "sk-ant-api03-noprobe")
@@ -101,7 +128,7 @@ defmodule Camelot.Agents.ModelDiscoveryTest do
     test "a probe naming a credential kind this app doesn't store" do
       user = credentialed_user(:claude_api_key, "sk-ant-api03-badkind")
 
-      agent = probed_agent(%{"credential_kind" => "gemini_api_key"})
+      agent = probed_agent(%{"credential_kind" => "mistral_api_key"})
 
       assert {:error, :no_probe} = ModelDiscovery.for_user(agent, user.id)
     end

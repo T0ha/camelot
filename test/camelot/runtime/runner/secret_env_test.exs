@@ -22,6 +22,13 @@ defmodule Camelot.Runtime.Runner.SecretEnvTest do
       assert SecretEnv.to_env(%{kind: :openai_api_key, value: "sk-oai"}) == ["OPENAI_API_KEY=sk-oai"]
     end
 
+    test "gemini_api_key sets both GEMINI_API_KEY and GOOGLE_API_KEY" do
+      assert SecretEnv.to_env(%{kind: :gemini_api_key, value: "AIza-key"}) == [
+               "GEMINI_API_KEY=AIza-key",
+               "GOOGLE_API_KEY=AIza-key"
+             ]
+    end
+
     test "github_app_token sets both GH_TOKEN and GITHUB_TOKEN" do
       assert SecretEnv.to_env(%{kind: :github_app_token, value: "ghs_abc"}) == [
                "GH_TOKEN=ghs_abc",

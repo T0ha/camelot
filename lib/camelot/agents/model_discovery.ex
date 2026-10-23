@@ -61,7 +61,8 @@ defmodule Camelot.Agents.ModelDiscovery do
           kind: atom(),
           list_key: String.t(),
           id_key: String.t(),
-          include: String.t() | nil
+          include: String.t() | nil,
+          strip_prefix: String.t() | nil
         }
 
   @typedoc "Why a probe produced no list of its own."
@@ -73,7 +74,7 @@ defmodule Camelot.Agents.ModelDiscovery do
   @anthropic_version "2023-06-01"
   @anthropic_oauth_beta "oauth-2025-04-20"
 
-  @auth_strategies ["anthropic", "bearer"]
+  @auth_strategies ["anthropic", "bearer", "google"]
 
   @doc """
   The models to offer `user_id` for `agent`: the discovered list when
@@ -145,7 +146,8 @@ defmodule Camelot.Agents.ModelDiscovery do
        kind: kind,
        list_key: Map.get(config, "list_key", "data"),
        id_key: Map.get(config, "id_key", "id"),
-       include: pattern(Map.get(config, "include"))
+       include: pattern(Map.get(config, "include")),
+       strip_prefix: pattern(Map.get(config, "strip_prefix"))
      }}
   end
 
@@ -270,6 +272,10 @@ defmodule Camelot.Agents.ModelDiscovery do
 
   defp headers("bearer", value), do: [{"authorization", "Bearer #{value}"}]
 
+  # Google takes an API key on its own header; a Bearer token there must
+  # be an OAuth access token, which a Gemini key is not.
+  defp headers("google", value), do: [{"x-goog-api-key", value}]
+
   # Newest-first, which is how the seeded lists read and how the
   # dropdown is expected to be ordered.
   @spec parse_models(map(), probe()) :: [String.t()]
@@ -277,6 +283,7 @@ defmodule Camelot.Agents.ModelDiscovery do
     body
     |> Map.get(probe.list_key, [])
     |> model_ids(probe.id_key)
+    |> Enum.map(&strip_prefix(&1, probe.strip_prefix))
     |> included(probe.include)
     |> Enum.sort(:desc)
   end
@@ -295,6 +302,12 @@ defmodule Camelot.Agents.ModelDiscovery do
   @spec model_id(term(), String.t()) :: term()
   defp model_id(%{} = entry, id_key), do: Map.get(entry, id_key)
   defp model_id(_entry, _id_key), do: nil
+
+  # Google names models `models/<id>`, but the CLI takes the bare id.
+  @spec strip_prefix(String.t(), String.t() | nil) :: String.t()
+  defp strip_prefix(id, nil), do: id
+
+  defp strip_prefix(id, prefix), do: String.replace_prefix(id, prefix, "")
 
   @spec binary_id?(term()) :: boolean()
   defp binary_id?(id), do: is_binary(id) and id != ""

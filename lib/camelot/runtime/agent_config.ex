@@ -12,10 +12,12 @@ defmodule Camelot.Runtime.AgentConfig do
   """
 
   alias Camelot.Agents.Agent
+  alias Camelot.Agents.AntigravityDefaults
   alias Camelot.Agents.ClaudeCodeDefaults
   alias Camelot.Agents.CodexDefaults
   alias Camelot.Projects.Project
   alias Camelot.Prompts.Renderer
+  alias Camelot.Runtime.OutputParser
 
   require Logger
 
@@ -56,7 +58,7 @@ defmodule Camelot.Runtime.AgentConfig do
           output_schema_by_stage: %{optional(String.t()) => String.t()},
           internal_tools: [String.t()],
           env_vars: %{optional(String.t()) => String.t()},
-          parser: :claude_code_json | :raw_text,
+          parser: OutputParser.parser(),
           pr_url_pattern: String.t() | nil,
           question_phrases: [String.t()],
           base_retry_delay_ms: pos_integer(),
@@ -280,6 +282,21 @@ defmodule Camelot.Runtime.AgentConfig do
   defp fallback_for("codex_pr_system_prompt") do
     Logger.warning("Missing PromptTemplate codex_pr_system_prompt; using built-in default")
     CodexDefaults.pr_system_prompt()
+  end
+
+  defp fallback_for("agy_planning_system_prompt") do
+    Logger.warning("Missing PromptTemplate agy_planning_system_prompt; using built-in default")
+    AntigravityDefaults.planning_system_prompt()
+  end
+
+  defp fallback_for("agy_execution_system_prompt") do
+    Logger.warning("Missing PromptTemplate agy_execution_system_prompt; using built-in default")
+    AntigravityDefaults.execution_system_prompt()
+  end
+
+  defp fallback_for("agy_pr_system_prompt") do
+    Logger.warning("Missing PromptTemplate agy_pr_system_prompt; using built-in default")
+    AntigravityDefaults.pr_system_prompt()
   end
 
   defp fallback_for(slug) do

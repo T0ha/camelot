@@ -2,6 +2,7 @@ defmodule Camelot.Agents.AgentTest do
   use Camelot.DataCase, async: true
 
   alias Camelot.Agents.Agent
+  alias Camelot.Agents.AntigravityDefaults
   alias Camelot.Agents.ClaudeCodeDefaults
   alias Camelot.Agents.CodexDefaults
   alias Ecto.Adapters.SQL
@@ -37,6 +38,30 @@ defmodule Camelot.Agents.AgentTest do
                ClaudeCodeDefaults.required_credential_kinds()
 
       assert agent.required_credential_kinds == [:claude_api_key]
+    end
+
+    test "antigravity agent is seeded from AntigravityDefaults" do
+      agent = agent!("antigravity")
+
+      assert agent.name == "Antigravity"
+      assert agent.executable == "agy"
+      assert agent.base_args == AntigravityDefaults.base_args()
+      assert agent.prompt_flag == "-p"
+      assert agent.model_flag == "--model"
+      assert agent.available_models == AntigravityDefaults.available_models()
+      assert agent.default_model == AntigravityDefaults.default_model()
+      assert agent.models_probe == AntigravityDefaults.models_probe()
+      assert agent.parser == :antigravity_json
+
+      assert agent.permission_args_by_stage ==
+               AntigravityDefaults.permission_args_by_stage()
+
+      assert agent.system_prompt_by_stage ==
+               AntigravityDefaults.system_prompt_by_stage()
+
+      assert agent.question_phrases == AntigravityDefaults.question_phrases()
+      assert agent.runner_image == AntigravityDefaults.runner_image()
+      assert agent.required_credential_kinds == [:gemini_api_key]
     end
 
     test "codex agent exists with raw_text parser" do

@@ -20,7 +20,7 @@ defmodule Camelot.Agents.Agent do
     authorizers: [],
     simple_notifiers: [Camelot.Telemetry.Notifier]
 
-  @parsers [:claude_code_json, :codex_jsonl, :raw_text]
+  @parsers [:claude_code_json, :codex_jsonl, :antigravity_json, :raw_text]
 
   postgres do
     table("agents")

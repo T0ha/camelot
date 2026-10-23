@@ -33,6 +33,7 @@ defmodule Camelot.Accounts.Credential do
   @kinds [
     :claude_api_key,
     :openai_api_key,
+    :gemini_api_key,
     :ssh_private_key,
     :generic
   ]

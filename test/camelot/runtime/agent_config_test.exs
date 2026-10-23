@@ -10,6 +10,7 @@ defmodule Camelot.Runtime.AgentConfigTest do
   import ExUnit.CaptureLog
 
   alias Camelot.Accounts.User
+  alias Camelot.Agents.AntigravityDefaults
   alias Camelot.Agents.ClaudeCodeDefaults
   alias Camelot.Agents.CodexDefaults
   alias Camelot.Projects.Project
@@ -21,7 +22,8 @@ defmodule Camelot.Runtime.AgentConfigTest do
   setup do
     %{
       claude: build_config("claude_code"),
-      codex: build_config("codex")
+      codex: build_config("codex"),
+      agy: build_config("antigravity")
     }
   end
 
@@ -317,6 +319,101 @@ defmodule Camelot.Runtime.AgentConfigTest do
       rendered = AgentConfig.render_system_prompts(config, nil, nil)
 
       assert rendered.system_prompt_by_stage["executing"] == "Literal text"
+    end
+  end
+
+  describe "build_cli_args/5 — antigravity" do
+    test "planning passes plan mode, the schema and a -p prompt", ctx do
+      args = AgentConfig.build_cli_args(ctx.agy, "plan it", [], :planning, nil)
+
+      assert args ==
+               AntigravityDefaults.base_args() ++
+                 AntigravityDefaults.permission_args_by_stage()["planning"] ++
+                 ["-p", "{{prompt:agy_planning_system_prompt}}\n\nplan it"]
+    end
+
+    test "executing accepts edits and pins the chosen model", ctx do
+      args =
+        AgentConfig.build_cli_args(
+          ctx.agy,
+          "do it",
+          [],
+          :executing,
+          "claude-sonnet-4-6"
+        )
+
+      assert ["--mode", "accept-edits", "--dangerously-skip-permissions"] --
+               args == []
+
+      assert ["--model", "claude-sonnet-4-6"] ==
+               args |> Enum.drop_while(&(&1 != "--model")) |> Enum.take(2)
+
+      assert List.last(args) =~ "do it"
+    end
+
+    test "rendered system prompts are prepended to the prompt", ctx do
+      config = AgentConfig.render_system_prompts(ctx.agy, nil, nil)
+
+      args = AgentConfig.build_cli_args(config, "do it", [], :executing, nil)
+
+      assert List.last(args) ==
+               AntigravityDefaults.execution_system_prompt() <> "\n\ndo it"
+    end
+
+    test "a missing template falls back to the literal default and logs", ctx do
+      PromptTemplate
+      |> Ash.Query.filter(
+        slug == ^AntigravityDefaults.pr_system_prompt_slug() and
+          is_nil(project_id) and is_nil(user_id)
+      )
+      |> Ash.read_one!()
+      |> Ash.destroy!()
+
+      {rendered, log} =
+        with_log(fn -> AgentConfig.render_system_prompts(ctx.agy, nil, nil) end)
+
+      assert rendered.system_prompt_by_stage["pr"] ==
+               AntigravityDefaults.pr_system_prompt()
+
+      assert log =~ "Missing PromptTemplate agy_pr_system_prompt"
+    end
+
+    test "every stage falls back to its literal default" do
+      config = %AgentConfig{
+        executable: "agy",
+        parser: :antigravity_json,
+        system_prompt_by_stage: %{
+          "planning" => "{{prompt:agy_planning_system_prompt}}",
+          "executing" => "{{prompt:agy_execution_system_prompt}}",
+          "pr" => "{{prompt:agy_pr_system_prompt}}"
+        }
+      }
+
+      PromptTemplate
+      |> Ash.Query.filter(
+        slug in [
+          "agy_planning_system_prompt",
+          "agy_execution_system_prompt",
+          "agy_pr_system_prompt"
+        ] and is_nil(project_id) and is_nil(user_id)
+      )
+      |> Ash.read!()
+      |> Enum.each(&Ash.destroy!/1)
+
+      {rendered, _log} =
+        with_log(fn -> AgentConfig.render_system_prompts(config, nil, nil) end)
+
+      assert rendered.system_prompt_by_stage == %{
+               "planning" => AntigravityDefaults.planning_system_prompt(),
+               "executing" => AntigravityDefaults.execution_system_prompt(),
+               "pr" => AntigravityDefaults.pr_system_prompt()
+             }
+    end
+
+    test "carries the agy runner image, parser and credential", ctx do
+      assert ctx.agy.runner_image == AntigravityDefaults.runner_image()
+      assert ctx.agy.parser == :antigravity_json
+      assert ctx.agy.required_credential_kinds == [:gemini_api_key]
     end
   end
 

@@ -11,6 +11,7 @@
 # and so on) as they will fail if something goes wrong.
 
 alias Camelot.Agents.Agent
+alias Camelot.Agents.AntigravityDefaults
 alias Camelot.Agents.ClaudeCodeDefaults
 alias Camelot.Agents.CodexDefaults
 alias Camelot.Prompts.PromptTemplate
@@ -116,6 +117,38 @@ case Enum.find(existing_templates, &(&1.slug == "codex")) do
     Ash.update!(template, codex_attrs)
 end
 
+# Google Antigravity CLI (`agy`): `-p` prompt like Claude Code, but no
+# `--append-system-prompt`, so like Codex the stage system prompt is
+# prepended to the prompt. See `Camelot.Agents.AntigravityDefaults`.
+antigravity_attrs = %{
+  name: "Antigravity",
+  executable: "agy",
+  base_args: AntigravityDefaults.base_args(),
+  prompt_flag: AntigravityDefaults.prompt_flag(),
+  model_flag: AntigravityDefaults.model_flag(),
+  available_models: AntigravityDefaults.available_models(),
+  default_model: AntigravityDefaults.default_model(),
+  models_probe: AntigravityDefaults.models_probe(),
+  tools_separator: ",",
+  permission_args_by_stage: AntigravityDefaults.permission_args_by_stage(),
+  system_prompt_by_stage: AntigravityDefaults.system_prompt_by_stage(),
+  parser: AntigravityDefaults.parser(),
+  pr_url_pattern: pr_url_pattern,
+  question_phrases: AntigravityDefaults.question_phrases(),
+  runner_image: AntigravityDefaults.runner_image(),
+  required_credential_kinds: AntigravityDefaults.required_credential_kinds(),
+  base_retry_delay_ms: 5_000,
+  max_retries: 3
+}
+
+case Enum.find(existing_templates, &(&1.slug == "antigravity")) do
+  nil ->
+    Ash.create!(Agent, Map.put(antigravity_attrs, :slug, "antigravity"))
+
+  template ->
+    Ash.update!(template, antigravity_attrs)
+end
+
 existing = Ash.read!(PromptTemplate)
 
 if !Enum.any?(existing, &(&1.slug == "planning" and is_nil(&1.project_id))) do
@@ -133,3 +166,20 @@ if !Enum.any?(existing, &(&1.slug == "execution" and is_nil(&1.project_id))) do
     body: "Task: {{title}}\nDescription: {{description}}\nPlan: {{plan}}"
   })
 end
+
+# The migration that adds the `antigravity` row seeds these too; this
+# keeps a database built from `seeds.exs` alone in step with it.
+[
+  {AntigravityDefaults.planning_system_prompt_slug(), "Antigravity Planning System Prompt",
+   AntigravityDefaults.planning_system_prompt()},
+  {AntigravityDefaults.execution_system_prompt_slug(), "Antigravity Execution System Prompt",
+   AntigravityDefaults.execution_system_prompt()},
+  {AntigravityDefaults.pr_system_prompt_slug(), "Antigravity PR Review System Prompt",
+   AntigravityDefaults.pr_system_prompt()}
+]
+|> Enum.reject(fn {slug, _name, _body} ->
+  Enum.any?(existing, &(&1.slug == slug and is_nil(&1.project_id) and is_nil(&1.user_id)))
+end)
+|> Enum.each(fn {slug, name, body} ->
+  Ash.create!(PromptTemplate, %{slug: slug, name: name, body: body})
+end)
