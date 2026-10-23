@@ -12,6 +12,12 @@ defmodule Camelot.Agents.UsageSnapshotsTest do
     %{window: :weekly, used_percent: percent, resets_at: resets_at}
   end
 
+  # For tests that read against the real clock: a window anchored on
+  # `@now` expires once the wall clock passes `@now + 3 days`.
+  defp live_weekly(percent) do
+    weekly(percent, DateTime.add(DateTime.utc_now(), 3 * 86_400, :second))
+  end
+
   defp credential!(user, kind \\ :claude_api_key) do
     {:ok, credential} = Ash.create(Credential, %{user_id: user.id, kind: kind, value: "secret"})
     credential
@@ -115,7 +121,7 @@ defmodule Camelot.Agents.UsageSnapshotsTest do
       observed_at = DateTime.add(DateTime.utc_now(), -3600, :second)
 
       {:ok, _} =
-        UsageSnapshots.record(user.id, :openai_api_key, [weekly(5.0)], :manual, observed_at: observed_at)
+        UsageSnapshots.record(user.id, :openai_api_key, [live_weekly(5.0)], :manual, observed_at: observed_at)
 
       {:ok, session} = Ash.create(Session, %{agent_id: agent.id, user_id: user.id})
       {:ok, _} = Ash.update(session, %{duration_ms: 45 * 60_000}, action: :complete)
@@ -132,7 +138,7 @@ defmodule Camelot.Agents.UsageSnapshotsTest do
 
     test "a manual reading with no runs since stays :manual" do
       user = user!()
-      {:ok, _} = UsageSnapshots.record(user.id, :openai_api_key, [weekly(5.0)], :manual)
+      {:ok, _} = UsageSnapshots.record(user.id, :openai_api_key, [live_weekly(5.0)], :manual)
 
       assert %{used_percent: 5.0, source: :manual} =
                UsageSnapshots.effective_weekly(user.id, :openai_api_key, DateTime.utc_now(), 30)
