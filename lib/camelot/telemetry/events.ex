@@ -18,6 +18,7 @@ defmodule Camelot.Telemetry.Events do
   alias Camelot.Accounts.Credential
   alias Camelot.Accounts.User
   alias Camelot.Agents.Agent
+  alias Camelot.Agents.UsageSnapshot
   alias Camelot.Board.Task
   alias Camelot.Github.Installation
   alias Camelot.Projects.Project
@@ -33,6 +34,9 @@ defmodule Camelot.Telemetry.Events do
     {Task, :begin_work} => "task_started",
     {Task, :submit_plan} => "task_plan_submitted",
     {Task, :approve_plan} => "task_plan_approved",
+    {Task, :record_plan_comment} => "plan_posted",
+    {Task, :approve_plan_from_github} => "plan_approved_via_github",
+    {Task, :mark_merge_summary_posted} => "merge_summary_posted",
     {Task, :pr_created} => "task_pr_created",
     {Task, :complete} => "task_completed",
     {Task, :cancel} => "task_cancelled",
@@ -52,7 +56,8 @@ defmodule Camelot.Telemetry.Events do
     {Installation, :suspend} => "github_installation_suspended",
     {Installation, :unsuspend} => "github_installation_unsuspended",
     {Agent, :create} => "agent_created",
-    {Agent, :update} => "agent_updated"
+    {Agent, :update} => "agent_updated",
+    {UsageSnapshot, :record} => "usage_snapshot_recorded"
   }
 
   # Both `:register_with_github` and `:sign_in_with_magic_link` are
@@ -131,6 +136,19 @@ defmodule Camelot.Telemetry.Events do
 
   defp build(event, _action, %Installation{} = installation, _actor) do
     {:ok, event, %{data_id: installation.id, installation_id: installation.installation_id}}
+  end
+
+  # `used_percent` is bounded (0..100) by the attribute's constraints,
+  # and rounded so the property groups.
+  defp build("usage_snapshot_recorded", _action, %UsageSnapshot{} = snapshot, _actor) do
+    {:ok, "usage_snapshot_recorded",
+     %{
+       data_id: snapshot.id,
+       window: snapshot.window,
+       source: snapshot.source,
+       credential_kind: snapshot.credential_kind,
+       used_percent: round(snapshot.used_percent)
+     }}
   end
 
   defp build(event, _action, %Agent{} = agent, _actor) do

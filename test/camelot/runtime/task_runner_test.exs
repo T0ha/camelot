@@ -6,6 +6,7 @@ defmodule Camelot.Runtime.TaskRunnerTest do
   alias Camelot.Agents.Agent
   alias Camelot.Agents.CodexDefaults
   alias Camelot.Agents.Session
+  alias Camelot.Agents.UsageSnapshot
   alias Camelot.Board.AttachmentStore
   alias Camelot.Board.Task
   alias Camelot.Board.TaskAttachment
@@ -17,6 +18,8 @@ defmodule Camelot.Runtime.TaskRunnerTest do
   alias Camelot.Runtime.TaskRegistry
   alias Camelot.Runtime.TaskRunner
   alias Camelot.Settings.SystemSetting
+
+  require Ash.Query
 
   setup do
     {:ok, project} =
@@ -892,6 +895,79 @@ defmodule Camelot.Runtime.TaskRunnerTest do
       assert {:noreply, _reset} = TaskRunner.handle_info({:runner_exit, runner, 1}, state)
 
       assert Ash.get!(Task, sibling.id).state == :paused
+    end
+  end
+
+  describe "finish_session/5 usage capture" do
+    defp rate_limit_buffer do
+      Enum.map_join(
+        [
+          %{
+            "type" => "rate_limit_event",
+            "rate_limit_info" => %{
+              "status" => "allowed",
+              "unifiedWindows" => %{
+                "five_hour" => %{"resetsAt" => 1_892_578_000, "utilization" => 0.4},
+                "seven_day" => %{"resetsAt" => 1_892_904_400, "utilization" => 0.23}
+              }
+            }
+          },
+          %{"type" => "result", "result" => "done"}
+        ],
+        "\n",
+        &Jason.encode!/1
+      )
+    end
+
+    defp usage_state(task, session, parser) do
+      %TaskRunner{
+        task_id: task.id,
+        current_session_id: session.id,
+        user_id: task.creator_id,
+        config: build_config(parser: parser, required_credential_kinds: [:claude_api_key]),
+        output_buffer: rate_limit_buffer()
+      }
+    end
+
+    defp snapshots_for(user) do
+      UsageSnapshot
+      |> Ash.Query.filter(user_id == ^user.id)
+      |> Ash.read!()
+    end
+
+    test "a Claude run records weekly and session snapshots on the credential it ran with",
+         %{task: task, user: user} do
+      {:ok, credential} =
+        Ash.create(Credential, %{user_id: user.id, kind: :claude_api_key, value: "sk-ant"})
+
+      {:ok, session} = Ash.create(Session, %{agent_id: task.agent_id, task_id: task.id})
+
+      assert :ok =
+               TaskRunner.finish_session(usage_state(task, session, :claude_code_json), 0, nil, [])
+
+      snapshots = snapshots_for(user)
+
+      assert %{used_percent: 23.0, source: :cli, credential_id: cred_id} =
+               Enum.find(snapshots, &(&1.window == :weekly))
+
+      assert cred_id == credential.id
+      assert %{used_percent: 40.0} = Enum.find(snapshots, &(&1.window == :session))
+    end
+
+    test "a failed run still records usage", %{task: task, user: user} do
+      {:ok, session} = Ash.create(Session, %{agent_id: task.agent_id, task_id: task.id})
+
+      TaskRunner.finish_session(usage_state(task, session, :claude_code_json), 1, {:error, "x"}, [])
+
+      assert length(snapshots_for(user)) == 2
+    end
+
+    test "other parsers record nothing", %{task: task, user: user} do
+      {:ok, session} = Ash.create(Session, %{agent_id: task.agent_id, task_id: task.id})
+
+      TaskRunner.finish_session(usage_state(task, session, :codex_jsonl), 0, nil, [])
+
+      assert snapshots_for(user) == []
     end
   end
 end

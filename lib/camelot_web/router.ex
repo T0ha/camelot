@@ -137,7 +137,13 @@ defmodule CamelotWeb.Router do
       live "/prompts/new", PromptTemplateLive, :new
       live "/prompts/:id/edit", PromptTemplateLive, :edit
 
-      live "/profile", UserProfileLive
+      live "/profile", ProfileLive.Index
+      live "/profile/ssh-key", ProfileLive.SshKey
+      live "/profile/notifications", ProfileLive.Notifications
+      live "/profile/api-keys", ProfileLive.ApiKeys
+      live "/profile/capacity", ProfileLive.Capacity
+      live "/profile/github", ProfileLive.Github
+      live "/profile/usage", ProfileLive.Usage
     end
   end
 

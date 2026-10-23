@@ -169,4 +169,58 @@ defmodule Camelot.Github.ClientTest do
                )
     end
   end
+
+  describe "issue reads" do
+    test "list_issue_comments/4 handles API errors gracefully" do
+      assert {:error, _} =
+               Client.list_issue_comments("nonexistent-owner", "nonexistent-repo", 999_999,
+                 since: ~U[2026-10-01 00:00:00Z]
+               )
+    end
+
+    test "list_comment_reactions/4 handles API errors gracefully" do
+      assert {:error, _} =
+               Client.list_comment_reactions("nonexistent-owner", "nonexistent-repo", 1)
+    end
+
+    test "list_issue_reactions/4 handles API errors gracefully" do
+      assert {:error, _} =
+               Client.list_issue_reactions("nonexistent-owner", "nonexistent-repo", 999_999)
+    end
+
+    test "get_issue/4 handles API errors gracefully" do
+      assert {:error, _} = Client.get_issue("nonexistent-owner", "nonexistent-repo", 999_999)
+    end
+
+    test "list_issue_events/4 handles API errors gracefully" do
+      assert {:error, _} =
+               Client.list_issue_events("nonexistent-owner", "nonexistent-repo", 999_999)
+    end
+  end
+
+  describe "issue writes" do
+    test "create_issue_comment/5 handles API errors gracefully" do
+      assert {:error, _} =
+               Client.create_issue_comment("nonexistent-owner", "nonexistent-repo", 999_999, "hi")
+    end
+
+    test "update_issue_comment/5 handles API errors gracefully" do
+      assert {:error, _} =
+               Client.update_issue_comment("nonexistent-owner", "nonexistent-repo", 1, "hi")
+    end
+
+    test "add_issue_labels/5 handles API errors gracefully" do
+      assert {:error, _} =
+               Client.add_issue_labels("nonexistent-owner", "nonexistent-repo", 999_999, ["x"])
+    end
+
+    test "remove_issue_label/5 handles API errors gracefully" do
+      assert {:error, _} =
+               Client.remove_issue_label("nonexistent-owner", "nonexistent-repo", 999_999, "a b")
+    end
+
+    test "close_issue/4 handles API errors gracefully" do
+      assert {:error, _} = Client.close_issue("nonexistent-owner", "nonexistent-repo", 999_999)
+    end
+  end
 end

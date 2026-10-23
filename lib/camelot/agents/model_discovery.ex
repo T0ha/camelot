@@ -175,7 +175,7 @@ defmodule Camelot.Agents.ModelDiscovery do
   end
 
   # Not holding the key yet is the ordinary state of a user who hasn't
-  # reached `/profile`, not a fault: info, and no PostHog event, since
+  # reached `/profile/api-keys`, not a fault: info, and no PostHog event, since
   # this is on the path of every board render.
   @spec credential_result(Credential.t() | nil, atom(), String.t()) ::
           {:ok, String.t()} | {:error, :no_credential}

@@ -137,6 +137,59 @@ defmodule CamelotWeb.BoardLiveTest do
     assert task.priority == 0
   end
 
+  describe "New Task skip planning" do
+    test "the checkbox starts the task in executing with the description as plan", %{
+      conn: conn,
+      home_project: project
+    } do
+      title = "skip-plan-#{System.unique_integer([:positive])}"
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_new_task")
+
+      assert view |> element("#new-task-form input[name='task[skip_planning]']") |> has_element?()
+
+      view
+      |> form("#new-task-form", %{
+        "task" => %{
+          "title" => title,
+          "description" => "Exact steps to follow",
+          "project_id" => project.id,
+          "agent_id" => agent!("claude_code").id,
+          "skip_planning" => "true"
+        }
+      })
+      |> render_submit()
+
+      task = Task |> Ash.Query.filter(title == ^title) |> Ash.read_one!()
+      assert task.stage == :executing
+      assert task.state == :queued
+      assert task.plan == "Exact steps to follow"
+    end
+
+    test "left unchecked, the task is planned as usual", %{conn: conn, home_project: project} do
+      title = "plan-as-usual-#{System.unique_integer([:positive])}"
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_new_task")
+
+      view
+      |> form("#new-task-form", %{
+        "task" => %{
+          "title" => title,
+          "description" => "details",
+          "project_id" => project.id,
+          "agent_id" => agent!("claude_code").id,
+          "skip_planning" => "false"
+        }
+      })
+      |> render_submit()
+
+      task = Task |> Ash.Query.filter(title == ^title) |> Ash.read_one!()
+      assert task.stage == :todo
+    end
+  end
+
   describe "New Task model picker" do
     test "is disabled with a placeholder before an agent is selected", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")

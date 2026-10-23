@@ -188,6 +188,17 @@ defmodule Camelot.Agents.Session do
       description("When `progress_message` was last updated")
     end
 
+    attribute :stage, :atom do
+      allow_nil?(true)
+      public?(true)
+
+      description(
+        "Task stage this run was dispatched for (planning, executing, " <>
+          "pr). Lets `Camelot.Scheduling.DurationEstimate` size runs " <>
+          "per stage; nil for bootstrap sessions and older rows."
+      )
+    end
+
     attribute :was_adopted, :boolean do
       allow_nil?(false)
       public?(true)
@@ -230,7 +241,7 @@ defmodule Camelot.Agents.Session do
 
     create :create do
       primary?(true)
-      accept([:kind, :bootstrap_kind, :retry_number, :model])
+      accept([:kind, :bootstrap_kind, :retry_number, :model, :stage])
 
       argument :agent_id, :uuid do
         allow_nil?(false)

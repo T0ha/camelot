@@ -152,6 +152,18 @@ defmodule Camelot.Accounts.User do
       description("Email this user when their usage-limit-paused tasks resume.")
     end
 
+    attribute :time_zone, :string do
+      allow_nil?(false)
+      public?(true)
+      default("Etc/UTC")
+
+      description(
+        "IANA zone the UI shows and reads times in. Display only — " <>
+          "every stored time (run windows, start/deadline, snapshots) " <>
+          "is UTC; see `Camelot.TimeZone`."
+      )
+    end
+
     attribute :onboarding_dismissed_at, :utc_datetime_usec do
       allow_nil?(true)
 
@@ -228,6 +240,12 @@ defmodule Camelot.Accounts.User do
         :notify_on_usage_limit_paused,
         :notify_on_usage_limit_resumed
       ])
+    end
+
+    update :set_time_zone do
+      accept([:time_zone])
+      require_atomic?(false)
+      validate(Camelot.Accounts.User.Validations.KnownTimeZone)
     end
 
     update :set_role do
@@ -320,6 +338,10 @@ defmodule Camelot.Accounts.User do
     end
 
     policy action(:update_notification_preferences) do
+      authorize_if(expr(id == ^actor(:id)))
+    end
+
+    policy action(:set_time_zone) do
       authorize_if(expr(id == ^actor(:id)))
     end
 

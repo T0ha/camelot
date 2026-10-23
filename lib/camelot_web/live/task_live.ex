@@ -20,9 +20,13 @@ defmodule CamelotWeb.TaskLive do
   alias Camelot.Github.Resolver
   alias Camelot.Runtime.TaskRegistry
   alias Camelot.Runtime.TaskRunnerSupervisor
+  alias Camelot.Scheduling.Gate
+  alias Camelot.Scheduling.Planner
+  alias Camelot.TimeZone
   alias CamelotWeb.Components.TaskPicker
   alias CamelotWeb.Scope
   alias CamelotWeb.TaskAttachments
+  alias CamelotWeb.UsageScheduling
 
   require Ash.Query
   require Logger
@@ -62,6 +66,7 @@ defmodule CamelotWeb.TaskLive do
             page_title: task.title,
             task: task,
             model_options: model_options(task, connected?(socket)),
+            schedule_inputs: Planner.inputs(task, DateTime.utc_now()),
             message_input: "",
             live_output: "",
             progress: nil,
@@ -110,7 +115,7 @@ defmodule CamelotWeb.TaskLive do
 
     {:noreply,
      socket
-     |> assign(task: task)
+     |> assign(task: task, schedule_inputs: Planner.inputs(task, DateTime.utc_now()))
      |> reset_live_output_unless_running(task)}
   end
 
@@ -350,6 +355,25 @@ defmodule CamelotWeb.TaskLive do
     end
   end
 
+  def handle_event("save_schedule", %{"schedule" => params}, socket) do
+    task = socket.assigns.task
+
+    with {:ok, attrs} <- schedule_attrs(params, socket.assigns.current_user.time_zone),
+         {:ok, updated} <- Ash.update(task, attrs, action: :set_schedule) do
+      broadcast_update(updated)
+
+      {:noreply,
+       socket
+       |> assign(
+         task: Ash.load!(updated, @task_load),
+         schedule_inputs: Planner.inputs(updated, DateTime.utc_now())
+       )
+       |> put_flash(:info, "Schedule saved")}
+    else
+      {:error, _} -> {:noreply, put_flash(socket, :error, "Failed to save schedule")}
+    end
+  end
+
   def handle_event("validate_attachment", _params, socket), do: {:noreply, socket}
 
   def handle_event("save_attachments", _params, socket) do
@@ -534,6 +558,62 @@ defmodule CamelotWeb.TaskLive do
   defp model_options(%Task{agent: %{available_models: models}}, false), do: models
   defp model_options(_task, false), do: []
 
+  # The schedule form posts local times; everything is stored in UTC.
+  # `ignore_limits` is a three-way select so that "automatic" (blank)
+  # leaves `Task`'s `ImplyIgnoreLimits` free to pin the card, while an
+  # explicit yes/no always wins.
+  @spec schedule_attrs(map(), String.t()) :: {:ok, map()} | {:error, :invalid_datetime}
+  defp schedule_attrs(params, zone) do
+    with {:ok, start_at} <- TimeZone.local_input_to_utc(params["start_at"], zone),
+         {:ok, deadline_at} <- TimeZone.local_input_to_utc(params["deadline_at"], zone) do
+      {:ok,
+       params
+       |> ignore_limits_attr()
+       |> Map.merge(%{
+         start_at: start_at,
+         deadline_at: deadline_at,
+         weekly_cap_override: UsageScheduling.parse_integer(params["weekly_cap_override"]),
+         windows_override: windows_override(params, zone)
+       })}
+    end
+  end
+
+  defp ignore_limits_attr(%{"ignore_limits" => "true"}), do: %{ignore_limits: true}
+  defp ignore_limits_attr(%{"ignore_limits" => "false"}), do: %{ignore_limits: false}
+  defp ignore_limits_attr(_params), do: %{}
+
+  defp windows_override(%{"windows_mode" => "any"}, _zone), do: []
+
+  defp windows_override(%{"windows_mode" => "custom"} = params, zone) do
+    UsageScheduling.windows_from_params(params["windows"], zone, DateTime.utc_now())
+  end
+
+  defp windows_override(_params, _zone), do: nil
+
+  defp schedule_form(task, zone) do
+    to_form(
+      %{
+        "start_at" => TimeZone.to_local_input(task.start_at, zone),
+        "deadline_at" => TimeZone.to_local_input(task.deadline_at, zone),
+        "weekly_cap_override" => task.weekly_cap_override,
+        "ignore_limits" => ignore_limits_value(task),
+        "windows_mode" => windows_mode(task.windows_override)
+      },
+      as: "schedule",
+      id: "task-schedule-form"
+    )
+  end
+
+  defp ignore_limits_value(%Task{ignore_limits: true}), do: "true"
+  defp ignore_limits_value(%Task{start_at: nil, deadline_at: nil}), do: ""
+  defp ignore_limits_value(_pinned_but_respecting), do: "false"
+
+  defp windows_mode(nil), do: "inherit"
+  defp windows_mode([]), do: "any"
+  defp windows_mode(_windows), do: "custom"
+
+  defp over_reserve?(task, {policy, snapshot}), do: Gate.over_cap?(task, policy, snapshot)
+
   # Read-only summary of the effective model, shown once a task reaches a
   # terminal stage (the picker itself is hidden — no further runs will
   # use it).
@@ -568,6 +648,8 @@ defmodule CamelotWeb.TaskLive do
       assigns
       |> assign(:transitions, available_transitions(assigns.task))
       |> assign(:link_view, link_view(assigns.task, assigns.current_user))
+      |> assign(:schedule_form, schedule_form(assigns.task, assigns.current_user.time_zone))
+      |> assign(:over_reserve?, over_reserve?(assigns.task, assigns.schedule_inputs))
 
     ~H"""
     <div class="space-y-6">
@@ -604,6 +686,83 @@ defmodule CamelotWeb.TaskLive do
               </option>
             </select>
           </form>
+          <details
+            :if={@task.stage not in [:done, :cancelled]}
+            id="task-schedule"
+            class="dropdown dropdown-end"
+          >
+            <summary class="btn btn-sm btn-ghost">
+              <.icon name="hero-clock" class="size-4" /> Schedule
+            </summary>
+            <div class="dropdown-content z-10 mt-1 w-[34rem] rounded-box bg-base-100 p-4 shadow space-y-2">
+              <p
+                :if={@over_reserve?}
+                id="schedule-reserve-warning"
+                class="text-sm text-warning"
+              >
+                Weekly usage is already at {UsageScheduling.format_percent(
+                  elem(@schedule_inputs, 1).used_percent
+                )}, over
+                this card's cap — running it anyway cuts into the quota you kept for
+                manual use.
+              </p>
+              <.simple_form for={@schedule_form} phx-submit="save_schedule" id="task-schedule-form">
+                <div class="grid grid-cols-2 gap-x-4">
+                  <.input
+                    field={@schedule_form[:start_at]}
+                    type="datetime-local"
+                    label={"Start at (#{@current_user.time_zone})"}
+                  />
+                  <.input
+                    field={@schedule_form[:deadline_at]}
+                    type="datetime-local"
+                    label="Finish by (best effort)"
+                  />
+                  <.input
+                    field={@schedule_form[:weekly_cap_override]}
+                    type="number"
+                    min="1"
+                    max="100"
+                    label="Weekly cap % (blank = your default)"
+                  />
+                  <.input
+                    field={@schedule_form[:ignore_limits]}
+                    type="select"
+                    label="Run even if over limits"
+                    options={[
+                      {"Automatic — yes when pinned", ""},
+                      {"Yes", "true"},
+                      {"No", "false"}
+                    ]}
+                  />
+                </div>
+                <.input
+                  field={@schedule_form[:windows_mode]}
+                  type="select"
+                  label="Run windows"
+                  options={[
+                    {"Your default windows", "inherit"},
+                    {"Any time", "any"},
+                    {"Only these windows", "custom"}
+                  ]}
+                />
+                <UsageScheduling.window_rows
+                  id="task-schedule-windows"
+                  name="schedule[windows]"
+                  rows={
+                    UsageScheduling.editor_rows(
+                      @task.windows_override,
+                      @current_user.time_zone,
+                      @now
+                    )
+                  }
+                />
+                <:actions>
+                  <.button>Save schedule</.button>
+                </:actions>
+              </.simple_form>
+            </div>
+          </details>
           <div
             :if={@task.stage in [:done, :cancelled]}
             class="flex items-center gap-1 text-xs text-base-content/60"

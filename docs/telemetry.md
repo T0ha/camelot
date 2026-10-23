@@ -59,8 +59,9 @@ each other by a test in `test/camelot/telemetry/context_test.exs`.
 
 The browser gets both as PostHog super-properties
 (`assets/js/posthog_client.js`), so autocaptured events —
-`$pageview`, and the `$exception` volume nothing else tags — carry
-them too. A LiveView can add page context on top by pushing
+`$pageview`, and the browser `$exception`s described under
+[Browser exceptions and console logs](#browser-exceptions-and-console-logs) —
+carry them too. A LiveView can add page context on top by pushing
 `posthog:register` — `CamelotWeb.TaskLive` sends `task_id` /
 `project_id`, which is what makes an exception on a task page
 attributable. PostHog persists registered properties, so page context
@@ -142,14 +143,14 @@ the users who engage with the guide:
 * clicking a step dismisses the guide, and a dismissed guide never
   auto-opens again, so `onboarding_shown` stops;
 * three of the four steps finish across a navigation or a full page
-  redirect — GitHub connect redirects to `/profile`, project creation
+  redirect — GitHub connect redirects to `/profile/github`, project creation
   `push_navigate`s — so the next mount recomputes the status from
   scratch and `refresh/1` has no `false -> true` flip left to see.
 
 Without the restatement those users would show as stuck at a step they
 had already finished. `onboarding_step_completed` still only fires on
 a flip the hook actually observes, which needs the step to complete in
-the same LiveView process: `/profile` and the board both nudge the
+the same LiveView process: `/profile/api-keys` and the board both nudge the
 guide with `send(self(), {:onboarding, :refresh})` after completing
 one — the convention `AGENTS.md` documents.
 
@@ -221,7 +222,7 @@ be connected two ways. `CamelotWeb.GithubSetupController` handles the
 profile's "Connect GitHub App" round-trip, and
 `Camelot.Github.UserInstallations` handles the login one — a
 first-time GitHub sign-in lands on the board already connected, with
-no second step on /profile, which is the *intended* path. Reporting
+no second step on /profile/github, which is the *intended* path. Reporting
 only the first would have shown everyone who took the intended path
 as a drop-off at the funnel's GitHub step.
 
@@ -286,6 +287,38 @@ every signup is skipped — it is not something the user did.
 | `task_form_blocked` | `reason` (`no_project \| no_agent \| no_credential`) |
 | `task_errored` / `task_runner_lost` | `stage`, `reason` |
 | `task_paused` / `task_resumed` | `data_id` |
+| `task_gated` | `data_id`, `reason` (`start_at \| cap \| window \| promoted \| at_risk \| reserve_risk`) |
+| `usage_snapshot_recorded` | `window` (`weekly \| session`), `source` (`cli \| manual`), `credential_kind`, `used_percent` (rounded, 0–100) |
+| `issue_attached` | `data_id`, `has_model_label`, `skip_planning` |
+| `plan_posted`, `plan_approved_via_github`, `merge_summary_posted` | `data_id` |
+
+`task_gated` is captured by `Camelot.Board.Changes.DispatchTasks` when
+usage-aware scheduling (`docs/usage-scheduling.md`) changes what it does
+with a queued card: held back (`start_at`, `cap`, `window`) or pushed
+through out of the ordinary (`promoted`/`at_risk` for a deadline,
+`reserve_risk` for a card running over its weekly cap). The dispatcher
+runs every minute, so the last reason per card is kept in
+`Camelot.Cache` and the event fires only when it changes — a cache miss
+at worst repeats one. A card returning to normal is not reported.
+
+`usage_snapshot_recorded` comes from the `UsageSnapshot` notifier: one
+per window per finished Claude run (`source: cli`) and one per manual
+reading saved on the profile.
+
+`issue_attached`, `plan_posted`, `plan_approved_via_github` and
+`merge_summary_posted` belong to the GitHub issue workflow
+(`docs/github-issues-workflow.md`). `issue_attached` is captured by
+`Camelot.Projects.Changes.SyncGithubIssues` when an issue becomes a
+task, alongside the usual `task_created`; `skip_planning` is whether
+the task started straight in execution. `plan_posted` is
+`Task :record_plan_comment` (the plan comment landed on the issue),
+`merge_summary_posted` is `Task :mark_merge_summary_posted` (for a
+merged *or* closed-without-merge PR). `plan_approved_via_github` is
+`Task :approve_plan_from_github` — an approval read off the issue
+(`/approve`, a 👍 on the plan comment, or the `camelot:approved`
+label). It is a separate action from `:approve_plan`, so such an
+approval does **not** also emit `task_plan_approved`: count both when
+measuring plan approvals.
 
 `agent_models_probe_failed` is `Camelot.Agents.ModelDiscovery` failing
 to ask a provider which models the user's own credential may use. It
@@ -443,6 +476,75 @@ per attempt, and a job that retries three times is one failure, not
 three; the attempts in between log at `warning`, which the handler
 ignores.
 
+## Browser exceptions and console logs
+
+`assets/js/posthog_client.js` (shared by `app.js` and `docs.js`)
+passes `buildPostHogOptions` from `assets/js/posthog_options.mjs` to
+`posthog.init`. Nothing is left to the PostHog project's remote
+toggles that the code can decide itself:
+
+| Option | Effect |
+|---|---|
+| `capture_exceptions` | unhandled errors, unhandled promise rejections **and** `console.error` become `$exception`. The object form is required for the last one, and it is how LiveView reports its own client failures (an unknown hook, a hook that failed to construct). `true` alone covers only the first two |
+| `enable_recording_console_log` | when a session is recorded, the replay's console panel holds the browser console |
+| `session_recording.maskAllInputs` | typed input never leaves the browser in a replay |
+
+Session replay itself still records only when it is enabled in the
+PostHog project settings — no browser option can switch it on.
+
+On top of autocapture:
+
+- **LiveView hooks** — `reportingHookErrors` wraps every lifecycle
+  callback of the hooks passed to `LiveSocket`. A callback that throws
+  is reported with `posthog.captureException` carrying
+  `liveview_hook` and `liveview_callback`, logged as a
+  `console.warn` (a `console.error` would be captured a second time),
+  and not rethrown, so one broken hook no longer aborts the rest of
+  the DOM patch. Class-based hooks are left unwrapped. Errors thrown
+  later, from listeners a hook added, reach PostHog through
+  autocapture without the hook name.
+- **`liveview_error`** — a plain event, not an `$exception`: a main
+  LiveView that crashed or could not (re)join dispatches
+  `phx:page-loading-start{kind: "error"}`. Properties: `error_kind`
+  (`server` while the socket is up — the server has already reported
+  the crash — or `client` when the connection is gone), `reason` when
+  LiveView gave a string one, and `path`. A reconnect loop repeats the
+  signal on every attempt, so one outage is one event: nothing more is
+  sent until the next `phx:page-loading-stop`, and never more than one
+  a minute.
+
+All of it goes through `window.posthog`, which exists only when the
+page rendered `#posthog-config` — a page without `POSTHOG_API_KEY`
+captures nothing. Both root layouts (`root.html.heex`,
+`docs_root.html.heex`) render the same attributes, so a docs-site
+exception carries `environment` and `is_internal` too
+(`test/camelot_web/posthog_layout_test.exs`).
+
+### Readable stacks
+
+`mix assets.deploy` builds the bundles with `--sourcemap`, then
+`assets/scripts/posthog_sourcemaps.sh` runs `posthog-cli sourcemap
+process` on `priv/static/assets/js` *before* `phx.digest`, since the
+CLI injects a `//# chunkId=` comment the digested files must carry.
+The release name is `camelot`, the version the git sha. The maps are
+deleted and the `sourceMappingURL` comments stripped afterwards
+whatever happened, so they are never served.
+
+The Dockerfile takes the credentials as BuildKit secrets
+(`posthog_cli_api_key`, `posthog_cli_project_id`) and the host and
+version as build args (`POSTHOG_CLI_HOST`, `POSTHOG_RELEASE_VERSION`),
+so no layer contains them. `build-docker-image.yml` has to pass them
+to `docker/build-push-action` from:
+
+| Name | Kind | Value |
+|---|---|---|
+| `POSTHOG_CLI_API_KEY` | secret | personal API key, scopes *error tracking write* and *organization read* |
+| `POSTHOG_CLI_PROJECT_ID` | secret | PostHog project id |
+| `POSTHOG_CLI_HOST` | variable, optional | e.g. `https://eu.posthog.com`; the CLI defaults to US |
+
+Without them the upload is skipped and the build succeeds, and a
+failed upload only warns — Error Tracking then shows minified stacks.
+
 ## The funnel
 
 ```
@@ -551,6 +653,14 @@ carries `environment` and the process's person and ids, and
 `test/camelot/telemetry/job_failures_test.exs` drives
 `[:oban, :job, :exception]` and asserts that a retryable attempt
 produces no exception and that the job's args never leave the log.
+
+The pure browser-side pieces — the init options, the `liveview_error`
+properties and throttle, the hook wrapper — live in
+`assets/js/posthog_options.mjs`, which imports nothing, so
+`cd assets && npm test` (`node --test`) covers them
+without a browser or `npm ci`. What needs a real page — exceptions
+arriving in Error Tracking, the replay console panel — is checked by
+hand with `POSTHOG_API_KEY` set.
 
 ## Not here yet
 

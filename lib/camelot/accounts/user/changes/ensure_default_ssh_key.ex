@@ -9,7 +9,7 @@ defmodule Camelot.Accounts.User.Changes.EnsureDefaultSshKey do
   a Swarm secret already on its way to the cluster.
 
   Also exposed as `ensure_default_for/1` so legacy users without a key
-  get backfilled on their next visit to `/profile`.
+  get backfilled on their next visit to `/profile/ssh-key`.
 
   Keygen failure is non-fatal: the user is created either way and the
   fallback path in the UI lets them retry.

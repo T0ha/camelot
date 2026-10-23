@@ -87,6 +87,7 @@ defmodule Camelot.MixProject do
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:styler, "~> 1.0", only: [:dev, :test], runtime: false},
       {:usage_rules, "~> 1.2", only: [:dev, :test], runtime: false},
+      {:tzdata, "~> 1.1"},
       {:yaml_elixir, "~> 2.11"},
       {:logger_json, "~> 7.0"}
     ]
@@ -141,8 +142,9 @@ defmodule Camelot.MixProject do
       "assets.build": ["compile", "tailwind camelot", "esbuild camelot", "esbuild docs"],
       "assets.deploy": [
         "tailwind camelot --minify",
-        "esbuild camelot --minify",
-        "esbuild docs --minify",
+        "esbuild camelot --minify --sourcemap",
+        "esbuild docs --minify --sourcemap",
+        "cmd sh assets/scripts/posthog_sourcemaps.sh priv/static/assets/js",
         "phx.digest"
       ],
       precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]

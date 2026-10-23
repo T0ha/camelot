@@ -36,14 +36,14 @@ defmodule CamelotWeb.GithubSetupController do
 
       conn
       |> put_flash(:info, "GitHub App connected.")
-      |> redirect(to: ~p"/profile")
+      |> redirect(to: ~p"/profile/github")
     else
       {:error, reason} ->
         report_failure(conn.assigns[:current_user], reason)
 
         conn
         |> put_flash(:error, "Could not connect the GitHub App.")
-        |> redirect(to: ~p"/profile")
+        |> redirect(to: ~p"/profile/github")
     end
   end
 
@@ -57,7 +57,7 @@ defmodule CamelotWeb.GithubSetupController do
 
     conn
     |> put_flash(:error, "Missing installation_id from GitHub.")
-    |> redirect(to: ~p"/profile")
+    |> redirect(to: ~p"/profile/github")
   end
 
   @doc """

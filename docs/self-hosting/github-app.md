@@ -47,9 +47,19 @@ as *verified*.
 
 > **"Request user authorization (OAuth) during installation" must stay off.**
 > With it on, GitHub redirects post-install to the *Callback URL* instead of
-> the *Setup URL*, so the "Connect GitHub App" link on `/profile` lands on
+> the *Setup URL*, so the "Connect GitHub App" link on `/profile/github` lands on
 > `/auth/user/github/callback` carrying a `state` the app never issued, and
 > the sign-in fails with a CSRF error.
+
+**Issues (read/write) is what drives the GitHub issue workflow** —
+importing issues labelled `camelot`, posting the plan as an issue
+comment and reading `/approve` / 👍 / change-request replies, adding
+and removing the `camelot:*` labels, and posting the merge summary and
+closing the issue when the PR lands (see
+`docs/github-issues-workflow.md`). With only read access, issues are
+still imported but every write comes back `403`: no plan comment, so
+plans can only be reviewed in Camelot, and no invalid-config
+explanation or merge summary on the issue.
 
 **Contents (read/write) and Pull requests (read/write) are what make
 "Approve PR" work** — 🏰 Camelot AI submits an approving review and then
@@ -119,7 +129,7 @@ feature is to install the App during login, the coupling is intentional.
 
 ## 3. Connect an installation
 
-Once configured, `/profile` shows a "Connect GitHub App" button that sends
+Once configured, `/profile/github` shows a "Connect GitHub App" button that sends
 you to GitHub's installation flow; after installing (or updating an existing
 installation) on the target repo(s), GitHub redirects back to
 `/github/setup`, which links the installation to your user. Projects then
@@ -151,7 +161,7 @@ trip:
    bounced to github.com on every login.
 
 The result is that a brand-new user lands on the board already connected —
-there is **no separate step on `/profile`**.
+there is **no separate step on `/profile/github`**.
 
 ### Which account a GitHub login belongs to
 
