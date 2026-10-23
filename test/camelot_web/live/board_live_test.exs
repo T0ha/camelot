@@ -425,6 +425,35 @@ defmodule CamelotWeb.BoardLiveTest do
     end
   end
 
+  describe "New Task project select" do
+    test "lists active projects but not archived ones", %{
+      conn: conn,
+      user: user,
+      home_project: home
+    } do
+      archived =
+        Ash.create!(
+          Project,
+          %{name: "gone-#{System.unique_integer([:positive])}", path: "/tmp/gone"},
+          actor: user
+        )
+
+      Ash.update!(archived, %{}, action: :archive)
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(
+               view,
+               "#new-task-form select option[value='#{home.id}']"
+             )
+
+      refute has_element?(
+               view,
+               "#new-task-form select option[value='#{archived.id}']"
+             )
+    end
+  end
+
   describe "scoping" do
     test "non-admin sees only tasks from member projects", %{conn: conn, user: user} do
       {:ok, mine} =

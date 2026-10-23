@@ -270,6 +270,7 @@ defmodule CamelotWeb.BoardLive do
     projects =
       Project
       |> Scope.maybe_scope(user, see_all, &Scope.scope_projects/2)
+      |> Scope.active_projects()
       |> Ash.read!()
 
     agents = Agent |> Ash.read!() |> Enum.sort_by(& &1.name)

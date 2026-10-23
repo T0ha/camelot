@@ -163,11 +163,16 @@ defmodule CamelotWeb.PromptTemplateLive do
     assign(socket, templates: templates)
   end
 
-  defp scoped_projects(%User{role: :admin}), do: Ash.read!(Project)
+  defp scoped_projects(%User{role: :admin}) do
+    Project
+    |> Scope.active_projects()
+    |> Ash.read!()
+  end
 
   defp scoped_projects(%User{} = user) do
     Project
     |> Scope.scope_projects(user)
+    |> Scope.active_projects()
     |> Ash.read!()
   end
 
