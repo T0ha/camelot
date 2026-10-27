@@ -346,9 +346,10 @@ defmodule Camelot.Board.Task do
       public?(true)
 
       description(
-        "When `Camelot.Board.Changes.CheckIssuePlan` last finished a " <>
-          "poll of the issue — comments and reactions older than this " <>
-          "have already been acted on."
+        "Issue feedback acted on up to here. During plan review, when " <>
+          "`Camelot.Board.Changes.CheckIssuePlan` last finished a poll; " <>
+          "while the PR is open, the latest issue comment (or owner 👍) " <>
+          "`Camelot.Board.Changes.CheckPrStatus` handed to the agent."
       )
     end
 
@@ -915,7 +916,7 @@ defmodule Camelot.Board.Task do
     end
 
     update :request_pr_changes do
-      accept([:pr_comments_seen_at, :pr_auto_fix_attempts])
+      accept([:pr_comments_seen_at, :pr_auto_fix_attempts, :issue_comments_seen_at])
 
       validate(attribute_equals(:stage, :pr))
       validate(attribute_equals(:state, :waiting_for_input))
