@@ -183,15 +183,17 @@ defmodule Camelot.Board.PromptBuilder do
   defp prompt_slug(_task), do: "planning"
 
   defp build_variables(%{stage: :pr} = task) do
-    comments = fetch_pr_comments(task)
+    # Read before `fetch_pr_comments/1`: after it Dialyzer narrows
+    # `pr_number` to an integer and flags the `|| ""` fallback.
+    pr_number = to_string(task.pr_number || "")
 
     %{
       "title" => task.title || "",
       "description" => task.description || "",
       "plan" => prompt_plan(task),
       "pr_url" => task.pr_url || "",
-      "pr_number" => to_string(task.pr_number || ""),
-      "pr_comments" => comments,
+      "pr_number" => pr_number,
+      "pr_comments" => fetch_pr_comments(task),
       "attachments" => attachments_block(task)
     }
   end
