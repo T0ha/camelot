@@ -13,6 +13,7 @@ defmodule Camelot.Board.PromptBuilder do
   use CamelotWeb, :verified_routes
 
   alias Camelot.Board.Changes.CheckPrStatus
+  alias Camelot.Board.IssueComments
   alias Camelot.Board.Task
   alias Camelot.Github.Client
   alias Camelot.Github.Resolver
@@ -234,20 +235,39 @@ defmodule Camelot.Board.PromptBuilder do
 
     issue = list_or_empty(Client.list_pull_request_comments(owner, repo, pr, opts))
     review = list_or_empty(Client.list_pull_request_review_comments(owner, repo, pr, opts))
+    task_issue = list_or_empty(IssueComments.fetch(task))
 
-    (issue ++ review)
-    |> Enum.sort_by(& &1["created_at"])
-    |> Enum.map_join("\n\n---\n\n", &format_pr_comment/1)
+    format_feedback(issue ++ review, task_issue, task.issue_number)
   end
 
   defp list_or_empty({:ok, comments}), do: comments
   defp list_or_empty({:error, _reason}), do: []
 
+  @doc """
+  Renders the `pr_comments` prompt variable: the PR's comments and the
+  task issue's accepted comments (non-nil `"acted_at"`, see
+  `Camelot.Board.IssueComments`), oldest first, each labelled by source
+  — `[PR]` or `[Issue #N]`.
+  """
+  @spec format_feedback([map()], [map()], integer() | nil) :: String.t()
+  def format_feedback(pr_comments, issue_comments, issue_number) do
+    pr = Enum.map(pr_comments, &{"[PR]", &1})
+
+    issue =
+      for comment <- issue_comments, comment["acted_at"] do
+        {"[Issue ##{issue_number}]", comment}
+      end
+
+    (pr ++ issue)
+    |> Enum.sort_by(fn {_label, comment} -> comment["created_at"] end)
+    |> Enum.map_join("\n\n---\n\n", &format_comment/1)
+  end
+
   # Inline review comments carry path/line; surface them so the agent
   # knows which code each note refers to.
-  defp format_pr_comment(comment) do
+  defp format_comment({label, comment}) do
     login = get_in(comment, ["user", "login"])
-    "@#{login}#{comment_location(comment)}: " <> (comment["body"] || "")
+    "#{label} @#{login}#{comment_location(comment)}: " <> (comment["body"] || "")
   end
 
   @doc """

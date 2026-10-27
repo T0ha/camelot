@@ -14,6 +14,7 @@ The moving parts:
 | Import labelled issues | `Camelot.Projects.Changes.SyncGithubIssues` | every 5 min (`Project :sync_github_issues`) |
 | Post the plan | `Camelot.Board.Changes.PostPlanToIssue` via `Camelot.Board.Workers.PostToIssue` | right after `:submit_plan` |
 | Read approvals and change requests | `Camelot.Board.Changes.CheckIssuePlan` | every 2 min (`Task :check_issue_plan` trigger) |
+| Read issue comments while the PR is open | `Camelot.Board.Changes.CheckPrStatus` via `Camelot.Board.IssueComments` | every 2 min (`Task :check_pr_status` trigger) |
 | Merge summary, labels, close | `Camelot.Board.Changes.PostMergeSummary` from `CheckPrStatus` | every 2 min (`Task :check_pr_status` trigger) |
 
 ## Labels
@@ -70,6 +71,32 @@ issue.
 Only comments posted after the current plan comment are considered.
 Camelot ignores its own comments (the App bot's).
 
+## While the PR is open
+
+Once the task has a pull request, the issue keeps working as a
+feedback channel. Each PR poll that finds the task waiting for input
+also reads the issue, and a new comment requests changes the same way
+a new PR comment does: the task is queued and the agent runs again.
+
+- A **member's** comment counts as soon as it is posted.
+- A **stranger's** comment counts once an **owner** 👍s it, and stops
+  counting if it is edited after the 👍.
+- `/approve` does nothing at this stage. Approve the PR on GitHub, or
+  in Camelot, instead.
+- Camelot ignores its own comments, and everything up to the plan
+  comment, so plan-review feedback is not replayed.
+- An approval on the PR still wins: it merges the PR, even when there
+  are unhandled issue comments.
+
+`issue_comments_seen_at` records the newest issue comment (or the
+owner 👍) handed to the agent, so each comment is acted on once. The
+issue is not read while the agent is running, so a comment posted then
+is picked up after the run ends. The agent's PR-review prompt lists
+these comments alongside the PR's, labelled `[Issue #N]` and `[PR]`.
+
+If reading the issue fails, Camelot logs a warning and checks the PR
+as usual.
+
 ## Merge
 
 When the PR merges, Camelot posts one summary comment before the card
@@ -121,6 +148,10 @@ even with an owner's 👍. If the comment is edited after the 👍
   for its reactions. All comments are fetched rather than
   `since: issue_comments_seen_at`, because GitHub's `since` filters on
   `updated_at`, and a reaction added later doesn't change it.
+  While the PR is open, each poll of a task waiting for input makes 1
+  more call for the issue's comments, plus 1 per stranger comment
+  since the plan, for its reactions. Building the PR-review prompt
+  makes the same calls once more.
 - **Page sizes**: comments, reactions and events are read one
   100-entry page at a time. An issue with more than 100 comments, or
   100 events, is only partly visible.
@@ -131,3 +162,9 @@ even with an owner's 👍. If the comment is edited after the 👍
 - **Merge summary retries**: the card moves to `:done` even if posting
   the summary fails, for example when the Issues permission is
   missing. Nothing polls a `:done` task, so the summary is not retried.
+- **Tasks imported before 2026-10-23**: the September issue sync
+  imported issues as `GH#<n>: <title>` tasks without an `issue_number`.
+  Those tasks have no issue link, so none of the above applies to
+  them: no plan comment, no issue feedback while the PR is open, no
+  merge summary. Backfilling `issue_number` from the title is possible
+  but not done (see GH#196).
