@@ -20,7 +20,7 @@ defmodule Camelot.Agents.Agent do
     authorizers: [],
     simple_notifiers: [Camelot.Telemetry.Notifier]
 
-  @parsers [:claude_code_json, :codex_jsonl, :raw_text]
+  @parsers [:claude_code_json, :codex_jsonl, :kimi_jsonl, :raw_text]
 
   postgres do
     table("agents")
@@ -33,7 +33,7 @@ defmodule Camelot.Agents.Agent do
     attribute :slug, :string do
       allow_nil?(false)
       public?(true)
-      description("Stable identifier, e.g. claude_code, codex")
+      description("Stable identifier, e.g. claude_code, codex, kimi")
     end
 
     attribute :name, :string do

@@ -97,6 +97,102 @@ codex_login() {
   fi
 }
 
+# Kimi Code has no API-key env var or `login --with-api-key`: `kimi
+# login` is a device-code OAuth flow. Instead the key goes into
+# $KIMI_CODE_HOME/config.toml as a provider, with a `kimi-code/<id>`
+# model alias for every id the key may use — the alias form `kimi
+# login` itself writes, which `-m` names (see
+# Camelot.Agents.KimiDefaults).
+#
+# One Camelot credential takes either a Kimi Code Console key or a Kimi
+# Open Platform key, so the endpoint is probed: the first base URL
+# whose /models answers 200 for the key wins. KIMI_BASE_URL (agent
+# env_vars or a project override) skips the probe, for gateways.
+#
+# No-op in images without the CLI.
+KIMI_CANDIDATE_BASE_URLS=(
+  "https://api.kimi.ai/coding/v1"
+  "https://api.moonshot.ai/v1"
+  "https://api.kimi.com/coding/v1"
+  "https://api.moonshot.cn/v1"
+)
+
+# Prints the /models body for base URL $1 and key $2; fails unless the
+# endpoint answered 2xx. The key goes in via a curl config on stdin so
+# it never lands in argv or `ps`.
+kimi_models() {
+  printf 'header = "Authorization: Bearer %s"\n' "$2" \
+    | curl -fsS -m 10 -K - "$1/models" 2>/dev/null
+}
+
+# TOML basic-string escaping for a value we write verbatim.
+kimi_toml_string() {
+  local s="${1//\\/\\\\}"
+  printf '"%s"' "${s//\"/\\\"}"
+}
+
+kimi_configure() {
+  command -v kimi >/dev/null 2>&1 || return 0
+
+  local key="$1" base_url="${KIMI_BASE_URL:-}" body="" candidate
+
+  if [ -n "$base_url" ]; then
+    body="$(kimi_models "$base_url" "$key" || true)"
+  else
+    for candidate in "${KIMI_CANDIDATE_BASE_URLS[@]}"; do
+      if body="$(kimi_models "$candidate" "$key")"; then
+        base_url="$candidate"
+        break
+      fi
+    done
+  fi
+
+  if [ -z "$base_url" ]; then
+    log "kimi: no endpoint accepted the mounted key; Kimi runs will 401"
+    # Fall back to the CLI's env-only model config so a run fails with
+    # its own clear 401 rather than "model not configured".
+    export KIMI_MODEL_NAME=k3 KIMI_MODEL_API_KEY="$key" \
+      KIMI_MODEL_BASE_URL="${KIMI_CANDIDATE_BASE_URLS[0]}"
+    persist_env KIMI_MODEL_NAME k3
+    persist_env KIMI_MODEL_API_KEY "$key"
+    persist_env KIMI_MODEL_BASE_URL "${KIMI_CANDIDATE_BASE_URLS[0]}"
+    return 0
+  fi
+
+  # Tolerant of a listing shape we haven't seen: no ids means the
+  # pinned list, the same fallback Camelot's model dropdown uses.
+  local ids
+  ids="$(printf '%s' "$body" | jq -r '.data[]?.id // empty' 2>/dev/null || true)"
+  [ -n "$ids" ] || ids="$(printf '%s\n' k3 k3.1-pro k3.1-pro-highspeed k3-256k \
+    kimi-for-coding kimi-for-coding-highspeed)"
+
+  local default_id
+  if grep -qx k3 <<< "$ids"; then
+    default_id=k3
+  else
+    default_id="$(head -n 1 <<< "$ids")"
+  fi
+
+  local home="${KIMI_CODE_HOME:-$HOME/.kimi-code}" id
+  mkdir -p "$home"
+  (
+    umask 077
+    {
+      printf 'default_model = %s\n\n' "$(kimi_toml_string "kimi-code/$default_id")"
+      printf '[providers.camelot]\ntype = "kimi"\n'
+      printf 'base_url = %s\n' "$(kimi_toml_string "$base_url")"
+      printf 'api_key = %s\n' "$(kimi_toml_string "$key")"
+      while IFS= read -r id; do
+        [ -n "$id" ] || continue
+        printf '\n[models.%s]\n' "$(kimi_toml_string "kimi-code/$id")"
+        printf 'provider = "camelot"\nmodel = %s\n' "$(kimi_toml_string "$id")"
+        printf 'max_context_size = 262144\n'
+      done <<< "$ids"
+    } > "$home/config.toml"
+  )
+  log "kimi: configured against $base_url"
+}
+
 materialise_one() {
   local kind="$1"
   local value="$2"
@@ -118,6 +214,9 @@ materialise_one() {
       export OPENAI_API_KEY="$value"
       persist_env OPENAI_API_KEY "$value"
       codex_login "$value"
+      ;;
+    kimi_api_key)
+      kimi_configure "$value"
       ;;
     github_app_token)
       export GH_TOKEN="$value"

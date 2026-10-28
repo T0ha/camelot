@@ -499,4 +499,141 @@ defmodule Camelot.Runtime.OutputParserTest do
       )
     end
   end
+
+  describe "parse/2 with :kimi_jsonl" do
+    test "the last assistant content is the result" do
+      assert {:ok, parsed} = OutputParser.parse(:kimi_jsonl, kimi_tool_run())
+
+      assert parsed.result_text == ~s(a.txt said "hello", so b.txt now says "world".)
+      assert parsed.assistant_texts == [parsed.result_text]
+      assert is_nil(parsed.structured)
+      assert is_nil(parsed.usage)
+      assert is_nil(parsed.cost_usd)
+      assert parsed.permission_denials == []
+    end
+
+    # The bash tool's output is echoed to stderr, which the runner
+    # merges into the same buffer.
+    test "a JSON-only planning answer becomes structured output" do
+      assert {:ok, parsed} = OutputParser.parse(:kimi_jsonl, kimi_planning_run())
+
+      assert %{"decision" => "plan", "plan" => "# Plan: Add c.txt" <> _, "questions" => nil} =
+               parsed.structured
+    end
+
+    test "a fenced JSON answer still becomes structured output" do
+      answer = ~s(```json\n{"decision":"question","plan":null,"questions":["Which file?"]}\n```)
+
+      assert {:ok, parsed} = OutputParser.parse(:kimi_jsonl, kimi_answer(answer))
+
+      assert parsed.structured == %{
+               "decision" => "question",
+               "plan" => nil,
+               "questions" => ["Which file?"]
+             }
+    end
+
+    test "a JSON answer wrapped in prose still becomes structured output" do
+      answer = ~s(Here it is:\n{"decision":"plan","plan":"Do it.","questions":null})
+
+      assert {:ok, parsed} = OutputParser.parse(:kimi_jsonl, kimi_answer(answer))
+      assert parsed.structured["plan"] == "Do it."
+    end
+
+    test "JSON without a decision is not structured output" do
+      assert {:ok, parsed} = OutputParser.parse(:kimi_jsonl, kimi_answer(~s({"foo":1})))
+      assert is_nil(parsed.structured)
+    end
+
+    test "interim narration alongside tool calls is collected" do
+      buffer =
+        Enum.join(
+          [
+            ~S({"role":"meta","type":"system.version","version":"2.3.0"}),
+            ~S|{"role":"assistant","content":"Auto permission mode is active, so I'm directed not to use AskUserQuestion — I'll decide instead and pick `f.txt`.","tool_calls":[{"type":"function","id":"tool_rNQVprvqtbUat9UJKUQP5oYC","function":{"name":"Write","arguments":"{\"path\":\"f.txt\",\"content\":\"\"}"}}]}|,
+            ~S({"role":"tool","tool_call_id":"tool_rNQVprvqtbUat9UJKUQP5oYC","content":"Wrote 0 bytes to f.txt"}),
+            ~S({"role":"assistant","content":"Created f.txt."})
+          ],
+          "\n"
+        )
+
+      assert {:ok, parsed} = OutputParser.parse(:kimi_jsonl, buffer)
+      assert parsed.result_text == "Created f.txt."
+      assert length(parsed.assistant_texts) == 2
+    end
+
+    test "a failed prompt is an error carrying the CLI's message" do
+      buffer = ~S"""
+      {"role":"meta","type":"system.version","version":"2.3.0"}
+      error: failed to run prompt: provider.auth_error: 401 The API Key appears to be invalid or may have expired. Please verify your credentials and try again.
+      See log: /home/runner/.kimi-code/logs/kimi-code.log
+      """
+
+      assert {:error, message} = OutputParser.parse(:kimi_jsonl, buffer)
+
+      assert message ==
+               "kimi error: provider.auth_error: 401 The API Key appears to " <>
+                 "be invalid or may have expired. Please verify your " <>
+                 "credentials and try again."
+    end
+
+    test "an unknown model alias is an error" do
+      buffer = ~S"""
+      {"role":"meta","type":"system.version","version":"2.3.0"}
+      error: failed to run prompt: Model "kimi-code/does-not-exist" is not configured in config.toml.
+      See log: /home/runner/.kimi-code/logs/kimi-code.log
+      """
+
+      assert {:error, ~S(kimi error: Model "kimi-code/does-not-exist" is not configured in config.toml.)} =
+               OutputParser.parse(:kimi_jsonl, buffer)
+    end
+
+    test "a usage error with no JSON at all is an error" do
+      assert {:error, "kimi error: Cannot combine --prompt with --plan."} =
+               OutputParser.parse(:kimi_jsonl, "error: Cannot combine --prompt with --plan.\n")
+    end
+
+    test "nothing recognisable is reported as such" do
+      assert {:error, "no JSON object found in output"} =
+               OutputParser.parse(:kimi_jsonl, "kimi: command not found\n")
+
+      assert {:error, "no JSON object found in output"} = OutputParser.parse(:kimi_jsonl, "")
+    end
+
+    # Appendix A1 of the integration plan (kimi-code 2.3.0).
+    defp kimi_tool_run do
+      ~S"""
+      {"role":"meta","type":"system.version","version":"2.3.0"}
+      {"role":"assistant","tool_calls":[{"type":"function","id":"tool_HqJ8NkVggJB6qskKY8pLF7rt","function":{"name":"Read","arguments":"{\"path\":\"a.txt\"}"}}]}
+      {"role":"tool","tool_call_id":"tool_HqJ8NkVggJB6qskKY8pLF7rt","content":"1\thello"}
+      {"role":"assistant","tool_calls":[{"type":"function","id":"tool_jygumKbEyF0nQWbncBkl0mZz","function":{"name":"Write","arguments":"{\"path\":\"b.txt\",\"content\":\"world\"}"}}]}
+      {"role":"tool","tool_call_id":"tool_jygumKbEyF0nQWbncBkl0mZz","content":"Wrote 5 bytes to b.txt"}
+      {"role":"assistant","content":"a.txt said \"hello\", so b.txt now says \"world\"."}
+      {"role":"meta","type":"session.resume_hint","session_id":"session_ff7881af-366a-4f26-84a5-1712d1410c6a","command":"kimi -r session_ff7881af-366a-4f26-84a5-1712d1410c6a","content":"To resume this session: kimi -r session_ff7881af-366a-4f26-84a5-1712d1410c6a"}
+      """
+    end
+
+    # Appendix A2, with the echoed `ls` stderr interleaved.
+    defp kimi_planning_run do
+      ~S"""
+      {"role":"meta","type":"system.version","version":"2.3.0"}
+      {"role":"assistant","tool_calls":[{"type":"function","id":"tool_D1H6T4WIG9Z81icv2qaTNoXh","function":{"name":"Bash","arguments":"{\"command\":\"ls\"}"}}]}
+      a.txt
+      b.txt
+      {"role":"tool","tool_call_id":"tool_D1H6T4WIG9Z81icv2qaTNoXh","content":"a.txt\nb.txt\n"}
+      {"role":"assistant","content":"{\"decision\":\"plan\",\"plan\":\"# Plan: Add c.txt\\n\\n## Current state\\nThe working directory contains `a.txt` and `b.txt` (confirmed via `ls`). No `c.txt` exists yet.\\n\\n## Steps\\n1. Inspect `a.txt` and `b.txt` to match their content style and conventions.\\n2. Create `c.txt` in the working directory root with content consistent with the existing files.\\n3. Run `ls` to verify `c.txt` appears alongside `a.txt` and `b.txt`.\\n\\n## Verification\\n- `ls` output lists `a.txt`, `b.txt`, and `c.txt`.\\n- `c.txt` content follows the same format as the existing files.\",\"questions\":null}"}
+      {"role":"meta","type":"session.resume_hint","session_id":"session_d3d03cae-1247-4a33-b777-f8e1e7105be4","command":"kimi -r session_d3d03cae-1247-4a33-b777-f8e1e7105be4","content":"To resume this session: kimi -r session_d3d03cae-1247-4a33-b777-f8e1e7105be4"}
+      """
+    end
+
+    defp kimi_answer(answer) do
+      Enum.join(
+        [
+          ~S({"role":"meta","type":"system.version","version":"2.3.0"}),
+          Jason.encode!(%{"role" => "assistant", "content" => answer})
+        ],
+        "\n"
+      )
+    end
+  end
 end

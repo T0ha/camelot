@@ -313,6 +313,21 @@ defmodule Camelot.Telemetry.PostHogHandlerTest do
       refute Enum.any?(PostHog.Test.all_captured(), &(&1.event == "claude_token_added"))
     end
 
+    test "a Kimi key gets its own token events", ctx do
+      {:ok, credential} =
+        Ash.create(Credential, %{kind: :kimi_api_key, value: "sk-kimi", user_id: ctx.user.id})
+
+      assert %{properties: properties} =
+               Enum.find(PostHog.Test.all_captured(), &(&1.event == "kimi_token_added"))
+
+      assert properties.kind == "kimi_api_key"
+
+      :ok = Ash.destroy(credential)
+
+      assert Enum.any?(PostHog.Test.all_captured(), &(&1.event == "kimi_token_removed"))
+      refute Enum.any?(PostHog.Test.all_captured(), &(&1.event in ["credential_added", "claude_token_added"]))
+    end
+
     test "the server-generated SSH key is not a step the user took", ctx do
       {:ok, _credential} =
         Ash.create(Credential, %{

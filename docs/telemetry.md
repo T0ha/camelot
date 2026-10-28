@@ -268,6 +268,7 @@ failures are worth logging.
 | Event | Properties |
 |---|---|
 | `claude_token_added` / `claude_token_removed` | `kind` |
+| `kimi_token_added` / `kimi_token_removed` | `kind` |
 | `credential_added` / `credential_removed` | `kind` |
 
 `claude_token_*` is the funnel step; other kinds get the generic event
