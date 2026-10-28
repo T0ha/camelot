@@ -11,6 +11,7 @@ release image — they ship separately and are referenced by name from
 base/                    debian + asdf + nodejs (default) + git + gh + tini + entrypoint.sh
  ├─ claude/              + claude-code CLI
  ├─ codex/               + codex CLI
+ ├─ kimi/                + kimi-code CLI (on its own node, see below)
  ├─ elixir/              FROM claude — adds elixir+erlang asdf plugins
  ├─ python/              FROM claude — adds python + uv
  └─ polyglot/            FROM base — everything, big and slow
@@ -33,6 +34,25 @@ base/                    debian + asdf + nodejs (default) + git + gh + tini + en
 The cache volume mounted at `/home/agent` is treated as exactly that —
 a cache. Every step above is idempotent; if the volume disappears, the
 next session rebuilds it.
+
+### Kimi credentials
+
+A `kimi_api_key` secret is turned into `$KIMI_CODE_HOME/config.toml`
+(default `~/.kimi-code`) by `kimi_configure`: it probes the Kimi Code
+Console and Open Platform `/models` endpoints (global, then China) and
+writes a provider for the first that accepts the key, plus a
+`kimi-code/<id>` alias for every model listed. `KIMI_BASE_URL` skips
+the probe for gateways. No-op in images without `kimi`.
+
+## Kimi's node pin
+
+`@moonshot-ai/kimi-code` declares `engines.node >= 22.19.0`, newer than
+the base image's `NODEJS_VERSION`. `kimi/Dockerfile` installs its own
+node (`KIMI_NODEJS_VERSION`) with asdf, installs the pinned CLI
+(`KIMI_CODE_VERSION`) with it, and pins the `kimi` shebang to that
+node — the base, and every other stack, keeps its baseline node. The
+image also bakes `/opt/agent-cli/kimi/planning-agent.md`, the
+read-only (`Read`/`Glob`/`Grep`) agent file planning runs load.
 
 ## Multi-arch
 
