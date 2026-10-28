@@ -12,10 +12,15 @@ defmodule Camelot.Runtime.OutputParser do
     messages arriving as `item.completed` events whose item
     `type` is `agent_message`. Under `--output-schema` that
     final message is a JSON object, surfaced as `structured`.
+  - `:kimi_jsonl` expects the `kimi --output-format stream-json`
+    event stream: `role`-tagged JSON lines (`meta`, `assistant`,
+    `tool`), interleaved with whatever the CLI and its `Bash` tool
+    wrote to stderr. The last assistant `content` is the result; a
+    JSON decision object in it is surfaced as `structured`.
   - `:raw_text` passes the buffer through unchanged.
   """
 
-  @type parser :: :claude_code_json | :codex_jsonl | :raw_text
+  @type parser :: :claude_code_json | :codex_jsonl | :kimi_jsonl | :raw_text
 
   @type permission_denial :: %{
           tool_name: String.t(),
@@ -56,6 +61,17 @@ defmodule Camelot.Runtime.OutputParser do
     case decode_lines(buffer) do
       [] -> {:error, "no JSON object found in output"}
       events -> from_codex_events(events)
+    end
+  end
+
+  def parse(:kimi_jsonl, buffer) do
+    events = decode_lines(buffer)
+
+    case {kimi_assistant_texts(events), kimi_error(buffer)} do
+      {_texts, {:fatal, message}} -> {:error, "kimi error: " <> message}
+      {[], {:usage, message}} -> {:error, "kimi error: " <> message}
+      {[], :none} when events == [] -> {:error, "no JSON object found in output"}
+      {texts, _error} -> {:ok, kimi_result(texts)}
     end
   end
 
@@ -357,4 +373,92 @@ defmodule Camelot.Runtime.OutputParser do
 
   defp codex_event?(%{"type" => type}, type), do: true
   defp codex_event?(_event, _type), do: false
+
+  # kimi-code 2.3.0 reports a failed run on stderr only — stdout carries
+  # just the `system.version` event — as
+  #
+  #   error: failed to run prompt: <message>
+  #
+  # which ends the run whatever came before it, so it wins even over
+  # interim narration. Any other `error: …` line (a usage error such as
+  # `Cannot combine --prompt with --plan.`) only counts when the run
+  # produced no answer at all: a `Bash` tool's own stderr is echoed into
+  # the same buffer and may well contain `error:` lines of its own.
+  @kimi_fatal ~r/^error: failed to run prompt: (.+)$/m
+  @kimi_usage ~r/^error: (.+)$/m
+
+  defp kimi_error(buffer) do
+    cleaned = strip_terminal_codes(buffer)
+
+    case Regex.run(@kimi_fatal, cleaned, capture: :all_but_first) do
+      [message] -> {:fatal, String.trim(message)}
+      nil -> kimi_usage_error(cleaned)
+    end
+  end
+
+  defp kimi_usage_error(buffer) do
+    case Regex.run(@kimi_usage, buffer, capture: :all_but_first) do
+      [message] -> {:usage, String.trim(message)}
+      nil -> :none
+    end
+  end
+
+  # Every non-blank `content` the assistant produced, in stream order.
+  # An assistant event may carry `content` alongside `tool_calls`
+  # (interim narration), or only `tool_calls`.
+  defp kimi_assistant_texts(events) do
+    events
+    |> Enum.flat_map(&kimi_content/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  defp kimi_content(%{"role" => "assistant", "content" => "" <> content}), do: [content]
+  defp kimi_content(_event), do: []
+
+  # The stream carries no usage, cost or turn events — those stay nil.
+  # A run that only made tool calls has no answer: an empty result, the
+  # same as Codex with no agent message.
+  defp kimi_result(texts) do
+    final = List.last(texts) || ""
+
+    %{
+      result_text: final,
+      cost_usd: nil,
+      duration_ms: nil,
+      duration_api_ms: nil,
+      num_turns: nil,
+      usage: nil,
+      permission_denials: [],
+      structured: kimi_structured(final),
+      assistant_texts: texts
+    }
+  end
+
+  # Kimi has no schema flag, so the planning prompt asks for a bare JSON
+  # object. Models still sometimes fence it or lead with a sentence, so
+  # the answer is tried as-is, unfenced, then as its outermost `{…}`;
+  # only an object carrying `decision` counts, anything else is left to
+  # the question-phrase fallback.
+  defp kimi_structured(text) do
+    Enum.find_value([text, unfence(text), outermost_object(text)], &decision_object/1)
+  end
+
+  defp unfence(text) do
+    Regex.replace(~r/\A```(?:json)?\s*(.*?)\s*```\z/s, text, "\\1")
+  end
+
+  defp outermost_object(text) do
+    case Regex.run(~r/\{.*\}/s, text) do
+      [object] -> object
+      nil -> ""
+    end
+  end
+
+  defp decision_object(candidate) do
+    case Jason.decode(candidate) do
+      {:ok, %{"decision" => _decision} = object} -> object
+      _other -> nil
+    end
+  end
 end
