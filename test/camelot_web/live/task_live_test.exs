@@ -769,6 +769,117 @@ defmodule CamelotWeb.TaskLiveTest do
     end
   end
 
+  describe "repeat" do
+    alias Camelot.Board.RecurrenceRule
+
+    defp submit_repeat(view, params) do
+      view
+      |> form("#task-repeat-form", %{"repeat" => params})
+      |> render_submit()
+    end
+
+    test "setting a repeat starts a series and pins the card", %{conn: conn, task: task} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      html =
+        submit_repeat(view, %{
+          "frequency" => "weekly",
+          "interval" => "1",
+          "weekdays" => ["1", "4"],
+          "time_of_day" => "09:00"
+        })
+
+      task = Ash.get!(Task, task.id)
+      rule = Ash.get!(RecurrenceRule, task.recurrence_rule_id)
+
+      assert rule.frequency == :weekly
+      assert rule.weekdays == [1, 4]
+      assert rule.time_of_day == ~T[09:00:00]
+      assert rule.enabled
+      assert DateTime.compare(task.start_at, rule.next_run_at) == :eq
+      assert html =~ "Repeats weekly Mon, Thu at 09:00"
+    end
+
+    test "saving again updates the same rule", %{conn: conn, task: task} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      submit_repeat(view, %{"frequency" => "daily", "interval" => "1", "time_of_day" => "09:00"})
+      rule_id = Ash.get!(Task, task.id).recurrence_rule_id
+
+      submit_repeat(view, %{"frequency" => "daily", "interval" => "2", "time_of_day" => "10:15"})
+
+      task = Ash.get!(Task, task.id)
+      rule = Ash.get!(RecurrenceRule, rule_id)
+      assert task.recurrence_rule_id == rule_id
+      assert rule.interval == 2
+      assert rule.time_of_day == ~T[10:15:00]
+    end
+
+    test "don't repeat turns the series off", %{conn: conn, task: task} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      submit_repeat(view, %{"frequency" => "daily", "interval" => "1", "time_of_day" => "09:00"})
+      submit_repeat(view, %{"frequency" => ""})
+
+      task = Ash.get!(Task, task.id)
+      refute Ash.get!(RecurrenceRule, task.recurrence_rule_id).enabled
+    end
+
+    test "an invalid rule is reported, not saved", %{conn: conn, task: task} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      html = submit_repeat(view, %{"frequency" => "weekly", "interval" => "1", "time_of_day" => "09:00"})
+
+      assert html =~ "Failed to save repeat"
+      assert Ash.get!(Task, task.id).recurrence_rule_id == nil
+    end
+
+    test "a done card can be made recurring", %{conn: conn, project: project, user: user} do
+      task =
+        Ash.Seed.seed!(Task, %{
+          title: "Shipped",
+          stage: :done,
+          state: nil,
+          project_id: project.id,
+          creator_id: user.id,
+          agent_id: agent!("claude_code").id
+        })
+
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      assert has_element?(view, "#task-repeat-form")
+      refute has_element?(view, "#task-schedule-form")
+    end
+  end
+
+  describe "edit until started" do
+    test "edits title, description and priority of a queued card", %{conn: conn, task: task} do
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      view |> element("#task-edit-button") |> render_click()
+
+      html =
+        view
+        |> form("#task-edit-form", %{
+          "task_edit" => %{"title" => "Edited", "description" => "New body", "priority" => "4"}
+        })
+        |> render_submit()
+
+      task = Ash.get!(Task, task.id)
+      assert {task.title, task.description, task.priority} == {"Edited", "New body", 4}
+      assert html =~ "Edited"
+      refute has_element?(view, "#task-edit-form")
+    end
+
+    test "is hidden once the card has started", %{conn: conn, task: task} do
+      Ash.update!(task, %{}, action: :begin_work)
+
+      {:ok, view, _html} = live(conn, ~p"/tasks/#{task.id}")
+
+      refute has_element?(view, "#task-edit-button")
+    end
+  end
+
   defp index_of(html, substring) do
     case :binary.match(html, substring) do
       {pos, _len} -> pos
