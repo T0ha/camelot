@@ -27,6 +27,7 @@ defmodule Camelot.Board.Task do
   alias Camelot.Board.Task.Changes.ImplyIgnoreLimits
   alias Camelot.Board.Task.Changes.RejectBlocked
   alias Camelot.Board.Task.Validations.DeadlineAfterStart
+  alias Camelot.Board.Task.Validations.NotStarted
   alias Camelot.Board.TaskLink
 
   @stages [
@@ -115,6 +116,11 @@ defmodule Camelot.Board.Task do
   postgres do
     table("tasks")
     repo(Camelot.Repo)
+
+    references do
+      # Deleting a series turns its cards back into one-offs.
+      reference(:recurrence_rule, on_delete: :nilify, index?: true)
+    end
   end
 
   attributes do
@@ -379,6 +385,13 @@ defmodule Camelot.Board.Task do
       allow_nil?(false)
     end
 
+    # The recurring series this card is one run of — see
+    # `Camelot.Board.RecurrenceRule`. Nil for a one-off card.
+    belongs_to :recurrence_rule, Camelot.Board.RecurrenceRule do
+      allow_nil?(true)
+      public?(true)
+    end
+
     has_many :sessions, Camelot.Agents.Session do
       sort(inserted_at: :desc)
     end
@@ -534,7 +547,7 @@ defmodule Camelot.Board.Task do
       primary?(true)
 
       accept(
-        [:title, :description, :priority, :next_model, :issue_number] ++
+        [:title, :description, :priority, :next_model, :issue_number, :recurrence_rule_id] ++
           @schedule_fields
       )
 
@@ -576,9 +589,24 @@ defmodule Camelot.Board.Task do
       change(ImplyIgnoreLimits)
     end
 
+    # The task page's Edit form: only until the card starts.
     update :update do
       primary?(true)
       accept([:title, :description, :priority])
+      require_atomic?(false)
+
+      validate(NotStarted)
+    end
+
+    # Joins the card to a recurring series and, while it has not
+    # started, pins it to the series' next occurrence. Only called by
+    # `Camelot.Board.RecurrenceRule`'s actions.
+    update :set_recurrence do
+      accept([:recurrence_rule_id, :start_at])
+      require_atomic?(false)
+
+      validate(DeadlineAfterStart)
+      change(ImplyIgnoreLimits)
     end
 
     update :set_runner_handle do

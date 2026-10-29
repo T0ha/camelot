@@ -291,6 +291,7 @@ every signup is skipped — it is not something the user did.
 | `usage_snapshot_recorded` | `window` (`weekly \| session`), `source` (`cli \| manual`), `credential_kind`, `used_percent` (rounded, 0–100) |
 | `issue_attached` | `data_id`, `has_model_label`, `skip_planning` |
 | `plan_posted`, `plan_approved_via_github`, `merge_summary_posted` | `data_id` |
+| `recurrence_created`, `recurrence_updated`, `recurrence_disabled`, `recurrence_spawned` | `data_id`, `frequency` (`daily \| weekly \| monthly`), `interval`, `enabled` |
 
 `task_gated` is captured by `Camelot.Board.Changes.DispatchTasks` when
 usage-aware scheduling (`docs/usage-scheduling.md`) changes what it does

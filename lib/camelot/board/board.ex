@@ -14,6 +14,7 @@ defmodule Camelot.Board do
     resource(Camelot.Board.TaskMessage)
     resource(TaskAttachment)
     resource(Camelot.Board.TaskLink)
+    resource(Camelot.Board.RecurrenceRule)
   end
 
   @doc """
