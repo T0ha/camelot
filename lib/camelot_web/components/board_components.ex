@@ -68,6 +68,9 @@ defmodule CamelotWeb.BoardComponents do
             {state_emoji(display_state(@task))}
           </span>
           {@task.title}
+          <span :if={recurring?(@task)} title="Recurring">
+            <.icon name="hero-arrow-path-rounded-square" class="size-3 text-base-content/60" />
+          </span>
         </h3>
         <p class="text-xs text-base-content/60 line-clamp-1">
           {@task.project.name}
@@ -137,6 +140,10 @@ defmodule CamelotWeb.BoardComponents do
     </span>
     """
   end
+
+  # A plain map (as in the component tests) may carry no rule id.
+  defp recurring?(%{recurrence_rule_id: id}), do: not is_nil(id)
+  defp recurring?(_task), do: false
 
   # Only the board loads `:scheduled_wait`; elsewhere the card has no
   # badge rather than a crash.

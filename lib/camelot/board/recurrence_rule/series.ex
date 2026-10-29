@@ -55,6 +55,23 @@ defmodule Camelot.Board.RecurrenceRule.Series do
   end
 
   @doc """
+  The instant the card after `latest` must come strictly after: now,
+  or `latest`'s own slot while that is still ahead — a card finished
+  (or cancelled) before its start must not be recreated for the same
+  slot.
+  """
+  @spec spawn_after(Task.t(), DateTime.t()) :: DateTime.t()
+  def spawn_after(%Task{start_at: nil}, now), do: now
+
+  def spawn_after(%Task{start_at: start_at}, now) do
+    if DateTime.after?(start_at, now) do
+      start_at
+    else
+      now
+    end
+  end
+
+  @doc """
   `:ok` when `occurrence` is within the series' "repeat until".
   """
   @spec before_end(DateTime.t(), DateTime.t() | nil) :: :ok | {:error, :past_end}

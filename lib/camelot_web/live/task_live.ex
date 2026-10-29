@@ -12,6 +12,7 @@ defmodule CamelotWeb.TaskLive do
   alias Camelot.Agents.ModelLabel
   alias Camelot.Agents.Session
   alias Camelot.Board.PrApproval
+  alias Camelot.Board.RecurrenceRule
   alias Camelot.Board.Task
   alias Camelot.Board.TaskAttachment
   alias Camelot.Board.TaskLink
@@ -22,6 +23,7 @@ defmodule CamelotWeb.TaskLive do
   alias Camelot.Runtime.TaskRunnerSupervisor
   alias Camelot.Scheduling.Gate
   alias Camelot.Scheduling.Planner
+  alias Camelot.Scheduling.Recurrence
   alias Camelot.TimeZone
   alias CamelotWeb.Components.TaskPicker
   alias CamelotWeb.Scope
@@ -39,6 +41,7 @@ defmodule CamelotWeb.TaskLive do
     :messages,
     :attachments,
     :blocked?,
+    :recurrence_rule,
     parent_link: [source_task: [:project]],
     blocker_links: [source_task: [:project]],
     blocked_task_links: [target_task: [:project]],
@@ -73,7 +76,8 @@ defmodule CamelotWeb.TaskLive do
             now: DateTime.utc_now(),
             focused_column: :none,
             link_modal_open?: false,
-            link_task: nil
+            link_task: nil,
+            edit_form: nil
           )
           |> allow_upload(:attachment, accept: :any, max_entries: 5, max_file_size: 25_000_000)
           # Frontend autocapture — $exception above all — carries no
@@ -374,6 +378,62 @@ defmodule CamelotWeb.TaskLive do
     end
   end
 
+  def handle_event("save_repeat", %{"repeat" => params}, socket) do
+    %{task: task, current_user: user} = socket.assigns
+
+    case save_repeat(task, params, user) do
+      {:ok, _rule} ->
+        updated = Ash.load!(Ash.reload!(task), @task_load)
+        broadcast_update(updated)
+
+        {:noreply,
+         socket
+         |> assign(
+           task: updated,
+           schedule_inputs: Planner.inputs(updated, DateTime.utc_now())
+         )
+         |> put_flash(:info, "Repeat saved")}
+
+      {:error, _reason} ->
+        {:noreply, put_flash(socket, :error, "Failed to save repeat")}
+    end
+  end
+
+  def handle_event("edit_task", _params, socket) do
+    form =
+      socket.assigns.task
+      |> AshPhoenix.Form.for_update(:update, as: "task_edit", id: "task-edit-form")
+      |> to_form()
+
+    {:noreply, assign(socket, edit_form: form)}
+  end
+
+  def handle_event("cancel_edit", _params, socket) do
+    {:noreply, assign(socket, edit_form: nil)}
+  end
+
+  def handle_event("save_edit", %{"task_edit" => params}, socket) do
+    case AshPhoenix.Form.submit(socket.assigns.edit_form, params: params) do
+      {:ok, updated} ->
+        broadcast_update(updated)
+
+        {:noreply,
+         socket
+         |> assign(
+           task: Ash.load!(updated, @task_load),
+           page_title: updated.title,
+           edit_form: nil
+         )
+         |> put_flash(:info, "Task updated")}
+
+      {:error, form} ->
+        {:noreply,
+         socket
+         |> assign(edit_form: form)
+         |> put_flash(:error, "Failed to update task")}
+    end
+  end
+
   def handle_event("validate_attachment", _params, socket), do: {:noreply, socket}
 
   def handle_event("save_attachments", _params, socket) do
@@ -614,6 +674,110 @@ defmodule CamelotWeb.TaskLive do
 
   defp over_reserve?(task, {policy, snapshot}), do: Gate.over_cap?(task, policy, snapshot)
 
+  # "Don't repeat" turns an existing series off and is a no-op on a
+  # one-off card; anything else starts the series from this card or
+  # updates the one it belongs to. The card itself was loaded through
+  # `Scope`, so the user may act on its project — and with it on the
+  # series, which always lives in the card's project.
+  @spec save_repeat(Task.t(), map(), User.t()) ::
+          {:ok, RecurrenceRule.t() | nil} | {:error, Ash.Error.t() | atom()}
+  defp save_repeat(%Task{recurrence_rule: nil}, %{"frequency" => ""}, _user), do: {:ok, nil}
+
+  defp save_repeat(%Task{recurrence_rule: rule}, %{"frequency" => ""}, _user) do
+    Ash.update(rule, %{}, action: :disable)
+  end
+
+  defp save_repeat(task, params, user) do
+    with {:ok, attrs} <- repeat_attrs(params, user.time_zone) do
+      upsert_rule(task, attrs, user)
+    end
+  end
+
+  defp upsert_rule(%Task{recurrence_rule: nil} = task, attrs, user) do
+    Ash.create(RecurrenceRule, Map.merge(attrs, %{task_id: task.id, creator_id: user.id}))
+  end
+
+  defp upsert_rule(%Task{project_id: project_id, recurrence_rule: %{project_id: project_id} = rule}, attrs, _user) do
+    Ash.update(rule, attrs)
+  end
+
+  defp upsert_rule(_task, _attrs, _user), do: {:error, :forbidden}
+
+  # The repeat form posts a local time and "repeat until"; the zone is
+  # the user's, stored on the rule so it keeps meaning the same thing.
+  @spec repeat_attrs(map(), String.t()) :: {:ok, map()} | {:error, :invalid_datetime}
+  defp repeat_attrs(params, zone) do
+    with {:ok, ends_at} <- TimeZone.local_input_to_utc(params["ends_at"], zone) do
+      {:ok,
+       %{
+         frequency: params["frequency"],
+         interval: UsageScheduling.parse_integer(params["interval"]) || 1,
+         weekdays: UsageScheduling.days_from_params(params["weekdays"]),
+         day_of_month: UsageScheduling.parse_integer(params["day_of_month"]),
+         time_of_day: pad_seconds(params["time_of_day"]),
+         time_zone: zone,
+         ends_at: ends_at,
+         skip_planning: params["skip_planning"] == "true"
+       }}
+    end
+  end
+
+  # `<input type="time">` omits the seconds `Time` parsing wants.
+  defp pad_seconds(<<_hh::binary-size(2), ":", _mm::binary-size(2)>> = clock), do: clock <> ":00"
+  defp pad_seconds(clock), do: clock
+
+  defp repeat_form(task, zone) do
+    to_form(repeat_values(task.recurrence_rule, task, zone), as: "repeat", id: "task-repeat-form")
+  end
+
+  defp repeat_values(%RecurrenceRule{enabled: true} = rule, _task, zone) do
+    %{
+      "frequency" => Atom.to_string(rule.frequency),
+      "interval" => rule.interval,
+      "weekdays" => rule.weekdays,
+      "day_of_month" => rule.day_of_month,
+      "time_of_day" => Calendar.strftime(rule.time_of_day, "%H:%M"),
+      "ends_at" => TimeZone.to_local_input(rule.ends_at, zone),
+      "skip_planning" => rule.skip_planning
+    }
+  end
+
+  defp repeat_values(_off, task, zone) do
+    %{
+      "frequency" => "",
+      "interval" => 1,
+      "weekdays" => [],
+      "day_of_month" => nil,
+      "time_of_day" => default_repeat_time(task.start_at, zone),
+      "ends_at" => "",
+      "skip_planning" => planning_skipped?(task)
+    }
+  end
+
+  defp default_repeat_time(nil, _zone), do: "09:00"
+
+  defp default_repeat_time(start_at, zone) do
+    start_at |> DateTime.shift_zone!(zone) |> Calendar.strftime("%H:%M")
+  end
+
+  # A card created with "skip planning" carries its description as the
+  # plan (`Task.Changes.ApplySkipPlanning`) — offer the same for its
+  # repeats.
+  defp planning_skipped?(%Task{plan: nil}), do: false
+  defp planning_skipped?(%Task{plan: plan, description: plan}), do: true
+  defp planning_skipped?(_task), do: false
+
+  defp repeat_summary(%RecurrenceRule{enabled: true} = rule, zone) do
+    "#{Recurrence.describe(rule)} · next run #{TimeZone.format(rule.next_run_at, zone)}"
+  end
+
+  defp repeat_summary(_off, _zone), do: nil
+
+  # Mirrors `Task.Validations.NotStarted` on the loaded sessions, so the
+  # Edit button and the server agree without another query.
+  defp editable?(%Task{state: :queued, sessions: []}), do: true
+  defp editable?(_task), do: false
+
   # Read-only summary of the effective model, shown once a task reaches a
   # terminal stage (the picker itself is hidden — no further runs will
   # use it).
@@ -649,6 +813,7 @@ defmodule CamelotWeb.TaskLive do
       |> assign(:transitions, available_transitions(assigns.task))
       |> assign(:link_view, link_view(assigns.task, assigns.current_user))
       |> assign(:schedule_form, schedule_form(assigns.task, assigns.current_user.time_zone))
+      |> assign(:repeat_form, repeat_form(assigns.task, assigns.current_user.time_zone))
       |> assign(:over_reserve?, over_reserve?(assigns.task, assigns.schedule_inputs))
 
     ~H"""
@@ -658,7 +823,17 @@ defmodule CamelotWeb.TaskLive do
           <.link navigate={~p"/"} class="text-sm text-base-content/60">
             &larr; Back to board
           </.link>
-          <h1 class="text-2xl font-bold">{@task.title}</h1>
+          <h1 class="text-2xl font-bold flex items-center gap-2">
+            {@task.title}
+            <button
+              :if={editable?(@task) and is_nil(@edit_form)}
+              id="task-edit-button"
+              phx-click="edit_task"
+              class="btn btn-xs btn-ghost"
+            >
+              <.icon name="hero-pencil-square" class="size-4" /> Edit
+            </button>
+          </h1>
         </div>
         <div class="flex items-center gap-2">
           <form
@@ -686,81 +861,146 @@ defmodule CamelotWeb.TaskLive do
               </option>
             </select>
           </form>
-          <details
-            :if={@task.stage not in [:done, :cancelled]}
-            id="task-schedule"
-            class="dropdown dropdown-end"
-          >
+          <details id="task-schedule" class="dropdown dropdown-end">
             <summary class="btn btn-sm btn-ghost">
               <.icon name="hero-clock" class="size-4" /> Schedule
             </summary>
             <div class="dropdown-content z-10 mt-1 w-[34rem] rounded-box bg-base-100 p-4 shadow space-y-2">
-              <p
-                :if={@over_reserve?}
-                id="schedule-reserve-warning"
-                class="text-sm text-warning"
-              >
-                Weekly usage is already at {UsageScheduling.format_percent(
-                  elem(@schedule_inputs, 1).used_percent
-                )}, over
-                this card's cap — running it anyway cuts into the quota you kept for
-                manual use.
-              </p>
-              <.simple_form for={@schedule_form} phx-submit="save_schedule" id="task-schedule-form">
-                <div class="grid grid-cols-2 gap-x-4">
+              <div :if={@task.stage not in [:done, :cancelled]} class="space-y-2">
+                <p
+                  :if={@over_reserve?}
+                  id="schedule-reserve-warning"
+                  class="text-sm text-warning"
+                >
+                  Weekly usage is already at {UsageScheduling.format_percent(
+                    elem(@schedule_inputs, 1).used_percent
+                  )}, over
+                  this card's cap — running it anyway cuts into the quota you kept for
+                  manual use.
+                </p>
+                <.simple_form for={@schedule_form} phx-submit="save_schedule" id="task-schedule-form">
+                  <div class="grid grid-cols-2 gap-x-4">
+                    <.input
+                      field={@schedule_form[:start_at]}
+                      type="datetime-local"
+                      label={"Start at (#{@current_user.time_zone})"}
+                    />
+                    <.input
+                      field={@schedule_form[:deadline_at]}
+                      type="datetime-local"
+                      label="Finish by (best effort)"
+                    />
+                    <.input
+                      field={@schedule_form[:weekly_cap_override]}
+                      type="number"
+                      min="1"
+                      max="100"
+                      label="Weekly cap % (blank = your default)"
+                    />
+                    <.input
+                      field={@schedule_form[:ignore_limits]}
+                      type="select"
+                      label="Run even if over limits"
+                      options={[
+                        {"Automatic — yes when pinned", ""},
+                        {"Yes", "true"},
+                        {"No", "false"}
+                      ]}
+                    />
+                  </div>
                   <.input
-                    field={@schedule_form[:start_at]}
-                    type="datetime-local"
-                    label={"Start at (#{@current_user.time_zone})"}
-                  />
-                  <.input
-                    field={@schedule_form[:deadline_at]}
-                    type="datetime-local"
-                    label="Finish by (best effort)"
-                  />
-                  <.input
-                    field={@schedule_form[:weekly_cap_override]}
-                    type="number"
-                    min="1"
-                    max="100"
-                    label="Weekly cap % (blank = your default)"
-                  />
-                  <.input
-                    field={@schedule_form[:ignore_limits]}
+                    field={@schedule_form[:windows_mode]}
                     type="select"
-                    label="Run even if over limits"
+                    label="Run windows"
                     options={[
-                      {"Automatic — yes when pinned", ""},
-                      {"Yes", "true"},
-                      {"No", "false"}
+                      {"Your default windows", "inherit"},
+                      {"Any time", "any"},
+                      {"Only these windows", "custom"}
                     ]}
                   />
-                </div>
-                <.input
-                  field={@schedule_form[:windows_mode]}
-                  type="select"
-                  label="Run windows"
-                  options={[
-                    {"Your default windows", "inherit"},
-                    {"Any time", "any"},
-                    {"Only these windows", "custom"}
-                  ]}
-                />
-                <UsageScheduling.window_rows
-                  id="task-schedule-windows"
-                  name="schedule[windows]"
-                  rows={
-                    UsageScheduling.editor_rows(
-                      @task.windows_override,
-                      @current_user.time_zone,
-                      @now
-                    )
-                  }
-                />
-                <:actions>
-                  <.button>Save schedule</.button>
-                </:actions>
-              </.simple_form>
+                  <UsageScheduling.window_rows
+                    id="task-schedule-windows"
+                    name="schedule[windows]"
+                    rows={
+                      UsageScheduling.editor_rows(
+                        @task.windows_override,
+                        @current_user.time_zone,
+                        @now
+                      )
+                    }
+                  />
+                  <:actions>
+                    <.button>Save schedule</.button>
+                  </:actions>
+                </.simple_form>
+              </div>
+              <div id="task-repeat" class="space-y-2">
+                <h3 class="font-semibold text-sm">Repeat</h3>
+                <p
+                  :if={repeat_summary(@task.recurrence_rule, @current_user.time_zone)}
+                  id="task-repeat-summary"
+                  class="text-sm text-base-content/70"
+                >
+                  {repeat_summary(@task.recurrence_rule, @current_user.time_zone)}
+                </p>
+                <.simple_form for={@repeat_form} phx-submit="save_repeat" id="task-repeat-form">
+                  <div class="grid grid-cols-2 gap-x-4">
+                    <.input
+                      field={@repeat_form[:frequency]}
+                      type="select"
+                      label="Repeat"
+                      options={[
+                        {"Don't repeat", ""},
+                        {"Daily", "daily"},
+                        {"Weekly", "weekly"},
+                        {"Monthly", "monthly"}
+                      ]}
+                    />
+                    <.input
+                      field={@repeat_form[:interval]}
+                      type="number"
+                      min="1"
+                      max="99"
+                      label="Every N days / weeks / months"
+                    />
+                    <.input
+                      field={@repeat_form[:time_of_day]}
+                      type="time"
+                      label={"At (#{@current_user.time_zone})"}
+                    />
+                    <.input
+                      field={@repeat_form[:day_of_month]}
+                      type="number"
+                      min="1"
+                      max="31"
+                      label="Day of month (monthly)"
+                    />
+                  </div>
+                  <div id="task-repeat-weekdays" class="flex flex-wrap gap-x-2">
+                    <span class="text-sm">On (weekly):</span>
+                    <UsageScheduling.day_checkboxes
+                      id="task-repeat-weekdays"
+                      name="repeat[weekdays]"
+                      days={@repeat_form[:weekdays].value}
+                    />
+                  </div>
+                  <div class="grid grid-cols-2 gap-x-4">
+                    <.input
+                      field={@repeat_form[:ends_at]}
+                      type="datetime-local"
+                      label="Repeat until (optional)"
+                    />
+                    <.input
+                      field={@repeat_form[:skip_planning]}
+                      type="checkbox"
+                      label="Skip planning on each run"
+                    />
+                  </div>
+                  <:actions>
+                    <.button>Save repeat</.button>
+                  </:actions>
+                </.simple_form>
+              </div>
             </div>
           </details>
           <div
@@ -959,6 +1199,23 @@ defmodule CamelotWeb.TaskLive do
               No linked tasks
             </p>
           </div>
+
+          <.simple_form
+            :if={@edit_form}
+            for={@edit_form}
+            id="task-edit-form"
+            phx-submit="save_edit"
+          >
+            <.input field={@edit_form[:title]} type="text" label="Title" />
+            <.input field={@edit_form[:description]} type="textarea" label="Description" />
+            <.input field={@edit_form[:priority]} type="number" label="Priority" />
+            <:actions>
+              <.button>Save</.button>
+              <button type="button" phx-click="cancel_edit" class="btn btn-ghost">
+                Cancel
+              </button>
+            </:actions>
+          </.simple_form>
 
           <div :if={@task.description} class="prose max-w-none overflow-x-auto">
             <h3>Description</h3>

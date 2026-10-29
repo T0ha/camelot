@@ -5,7 +5,8 @@ defmodule Camelot.Board.RecurrenceRule.Changes.SpawnNext do
   The trigger only fires for an enabled rule with no open card, so
   this always creates at most one card — for the first occurrence
   **after now**, never for the slots missed while the previous card
-  was open. The card is an ordinary `Task` `:create` copied from the
+  was open (and after the previous card's own slot, so cancelling an
+  upcoming card skips that run rather than recreating it). The card is an ordinary `Task` `:create` copied from the
   latest card (`Camelot.Board.RecurrenceRule.Series.next_task_attrs/3`),
   so its validations, notifiers and telemetry all apply.
 
@@ -34,7 +35,7 @@ defmodule Camelot.Board.RecurrenceRule.Changes.SpawnNext do
   defp spawn_card(%Ash.Changeset{data: rule} = changeset) do
     with {:ok, latest} <- Series.latest_task(rule.id),
          :ok <- agent_exists(latest.agent_id),
-         {:ok, next} <- Recurrence.next_occurrence(rule, DateTime.utc_now()),
+         {:ok, next} <- Recurrence.next_occurrence(rule, Series.spawn_after(latest, DateTime.utc_now())),
          :ok <- Series.before_end(next, rule.ends_at),
          {:ok, notifications} <- create_card(Series.next_task_attrs(latest, rule, next)) do
       {Ash.Changeset.force_change_attribute(changeset, :next_run_at, next), %{notifications: notifications}}

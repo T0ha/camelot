@@ -785,7 +785,7 @@ defmodule CamelotWeb.TaskLiveTest do
         submit_repeat(view, %{
           "frequency" => "weekly",
           "interval" => "1",
-          "weekdays" => ["1", "4"],
+          "weekdays" => %{"d1" => "true", "d4" => "true"},
           "time_of_day" => "09:00"
         })
 

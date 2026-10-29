@@ -176,7 +176,8 @@ defmodule Camelot.Board.RecurrenceRuleTest do
         })
 
       rule = rule!(task, ctx)
-      finish!(Ash.get!(Task, task.id))
+      first = Ash.get!(Task, task.id)
+      finish!(first)
 
       rule = Ash.update!(rule, %{}, action: :spawn_next)
 
@@ -191,8 +192,20 @@ defmodule Camelot.Board.RecurrenceRuleTest do
       assert next.creator_id == ctx.user.id
       assert next.stage == :todo
       assert next.state == :queued
-      assert within_a_day?(next.start_at)
+      assert DateTime.diff(next.start_at, first.start_at) == 86_400
       assert DateTime.compare(next.start_at, rule.next_run_at) == :eq
+    end
+
+    test "cancelling the upcoming card skips its slot, not repeats it", ctx do
+      task = task!(ctx)
+      rule = rule!(task, ctx)
+      first = Ash.get!(Task, task.id)
+      finish!(first)
+
+      Ash.update!(rule, %{}, action: :spawn_next)
+
+      assert [_first, next] = series(rule)
+      assert DateTime.diff(next.start_at, first.start_at) == 86_400
     end
 
     test "carries edits made to the latest card forward", ctx do
@@ -245,13 +258,14 @@ defmodule Camelot.Board.RecurrenceRuleTest do
       task = task!(ctx)
       rule = rule!(task, ctx)
 
-      task |> Ash.reload!() |> finish!()
-
       # As though the series had been idle for weeks: one card for the
       # next slot after now, never a backlog.
-      rule
-      |> Ash.Seed.update!(%{next_run_at: ~U[2020-01-01 09:00:00Z]})
-      |> Ash.update!(%{}, action: :spawn_next)
+      task
+      |> Ash.reload!()
+      |> Ash.Seed.update!(%{start_at: ~U[2020-01-01 08:00:00Z]})
+      |> finish!()
+
+      Ash.update!(rule, %{}, action: :spawn_next)
 
       assert [_first, next] = series(rule)
       assert within_a_day?(next.start_at)
