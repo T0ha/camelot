@@ -23,7 +23,7 @@ defmodule Camelot.Board.Task.Validations.NotStarted do
   Whether `task` has not started yet: `:queued` with no session. A
   card in `:done` or `:cancelled` carries no state and so has started.
   """
-  @spec not_started?(%{state: atom() | nil, id: Ecto.UUID.t()}) :: boolean()
+  @spec not_started?(Camelot.Board.Task.t()) :: boolean()
   def not_started?(%{state: :queued, id: id}) do
     not (Session
          |> Ash.Query.filter(task_id == ^id)
