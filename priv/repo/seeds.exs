@@ -13,6 +13,7 @@
 alias Camelot.Agents.Agent
 alias Camelot.Agents.ClaudeCodeDefaults
 alias Camelot.Agents.CodexDefaults
+alias Camelot.Agents.KimiDefaults
 alias Camelot.Prompts.PromptTemplate
 
 pr_url_pattern = "https://github\\.com/[^\\s]+/pull/(\\d+)"
@@ -116,7 +117,56 @@ case Enum.find(existing_templates, &(&1.slug == "codex")) do
     Ash.update!(template, codex_attrs)
 end
 
+# Kimi Code runs headless under `-p --output-format stream-json`, with a
+# read-only agent file for planning and the stage system prompt
+# prepended to the prompt — see `Camelot.Agents.KimiDefaults`.
+kimi_attrs = %{
+  name: "Kimi Code",
+  executable: KimiDefaults.executable(),
+  base_args: KimiDefaults.base_args(),
+  prompt_flag: KimiDefaults.prompt_flag(),
+  model_flag: KimiDefaults.model_flag(),
+  available_models: KimiDefaults.available_models(),
+  models_probe: KimiDefaults.models_probe(),
+  tools_separator: ",",
+  permission_args_by_stage: KimiDefaults.permission_args_by_stage(),
+  system_prompt_by_stage: KimiDefaults.system_prompt_by_stage(),
+  output_schema_by_stage: KimiDefaults.output_schema_by_stage(),
+  env_vars: KimiDefaults.env_vars(),
+  parser: KimiDefaults.parser(),
+  pr_url_pattern: pr_url_pattern,
+  question_phrases: KimiDefaults.question_phrases(),
+  runner_image: KimiDefaults.runner_image(),
+  required_credential_kinds: KimiDefaults.required_credential_kinds(),
+  base_retry_delay_ms: 5_000,
+  max_retries: 3
+}
+
+case Enum.find(existing_templates, &(&1.slug == "kimi")) do
+  nil ->
+    Ash.create!(Agent, Map.put(kimi_attrs, :slug, "kimi"))
+
+  template ->
+    Ash.update!(template, kimi_attrs)
+end
+
 existing = Ash.read!(PromptTemplate)
+
+kimi_system_prompts = [
+  {KimiDefaults.planning_system_prompt_slug(), "Kimi Planning System Prompt", KimiDefaults.planning_system_prompt()},
+  {KimiDefaults.execution_system_prompt_slug(), "Kimi Execution System Prompt", KimiDefaults.execution_system_prompt()},
+  {KimiDefaults.pr_system_prompt_slug(), "Kimi PR Review System Prompt", KimiDefaults.pr_system_prompt()}
+]
+
+for {slug, name, body} <- kimi_system_prompts,
+    !Enum.any?(existing, &(&1.slug == slug and is_nil(&1.project_id) and is_nil(&1.user_id))) do
+  Ash.create!(PromptTemplate, %{
+    slug: slug,
+    name: name,
+    body: body,
+    description: "Prepended to the prompt — Kimi Code has no --append-system-prompt flag."
+  })
+end
 
 if !Enum.any?(existing, &(&1.slug == "planning" and is_nil(&1.project_id))) do
   Ash.create!(PromptTemplate, %{

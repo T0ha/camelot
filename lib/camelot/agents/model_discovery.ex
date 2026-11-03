@@ -19,6 +19,17 @@ defmodule Camelot.Agents.ModelDiscovery do
   that filtered down to nothing — so this module can only ever add
   options the user is entitled to, never take the pinned ones away.
 
+  ## Candidate endpoints
+
+  A probe names either one `"url"` or an ordered `"candidates"` list
+  of them, for a credential that may belong to any of several
+  endpoints (a Kimi key is a Code Console or an Open Platform key,
+  global or China). Candidates are asked in order and the first that
+  answers wins; any failure — a 401 from the wrong endpoint, a network
+  error — moves on to the next, and only the last failure is reported.
+  An optional `"id_prefix"` is prepended to every returned id, turning
+  a provider id into the alias the CLI's model flag takes.
+
   ## Caching
 
   Answers are memoised in `Camelot.Cache` under
@@ -56,12 +67,13 @@ defmodule Camelot.Agents.ModelDiscovery do
   atom `Camelot.Accounts.Credential` stores.
   """
   @type probe :: %{
-          url: String.t(),
+          urls: [String.t(), ...],
           auth: String.t(),
           kind: atom(),
           list_key: String.t(),
           id_key: String.t(),
-          include: String.t() | nil
+          include: String.t() | nil,
+          id_prefix: String.t()
         }
 
   @typedoc "Why a probe produced no list of its own."
@@ -119,33 +131,45 @@ defmodule Camelot.Agents.ModelDiscovery do
   defp pinned(_agent), do: []
 
   # An admin edits `models_probe` as free-form JSON, so every field is
-  # validated here rather than trusted: a map missing `url`/`auth`/
-  # `credential_kind`, or naming a kind/auth strategy this app doesn't
-  # implement, is a probe that cannot run — reported as "not
-  # configured" so the dropdown degrades to the pinned list instead of
-  # raising mid-render.
+  # validated here rather than trusted: a map missing `url`/
+  # `candidates`, `auth` or `credential_kind`, or naming a kind/auth
+  # strategy this app doesn't implement, is a probe that cannot run —
+  # reported as "not configured" so the dropdown degrades to the pinned
+  # list instead of raising mid-render.
   @spec probe_config(map()) :: {:ok, probe()} | {:error, :no_probe}
-  defp probe_config(%{"url" => url, "auth" => auth, "credential_kind" => kind} = config) when auth in @auth_strategies do
+  defp probe_config(%{"auth" => auth, "credential_kind" => kind} = config) when auth in @auth_strategies do
     kind
     |> credential_kind()
-    |> build_probe(url, auth, config)
+    |> build_probe(probe_urls(config), auth, config)
   end
 
   defp probe_config(_config), do: {:error, :no_probe}
 
-  @spec build_probe(atom() | nil, String.t(), String.t(), map()) ::
-          {:ok, probe()} | {:error, :no_probe}
-  defp build_probe(nil, _url, _auth, _config), do: {:error, :no_probe}
+  # `"candidates"` wins over `"url"`; entries that aren't strings are
+  # dropped, and a list left empty is no probe at all.
+  @spec probe_urls(map()) :: [String.t()]
+  defp probe_urls(%{"candidates" => [_ | _] = candidates}) do
+    Enum.filter(candidates, &binary_id?/1)
+  end
 
-  defp build_probe(kind, url, auth, config) do
+  defp probe_urls(%{"url" => "" <> url}), do: [url]
+  defp probe_urls(_config), do: []
+
+  @spec build_probe(atom() | nil, [String.t()], String.t(), map()) ::
+          {:ok, probe()} | {:error, :no_probe}
+  defp build_probe(nil, _urls, _auth, _config), do: {:error, :no_probe}
+  defp build_probe(_kind, [], _auth, _config), do: {:error, :no_probe}
+
+  defp build_probe(kind, urls, auth, config) do
     {:ok,
      %{
-       url: url,
+       urls: urls,
        auth: auth,
        kind: kind,
        list_key: Map.get(config, "list_key", "data"),
        id_key: Map.get(config, "id_key", "id"),
-       include: pattern(Map.get(config, "include"))
+       include: pattern(Map.get(config, "include")),
+       id_prefix: pattern(Map.get(config, "id_prefix")) || ""
      }}
   end
 
@@ -240,9 +264,22 @@ defmodule Camelot.Agents.ModelDiscovery do
   @spec probe_models(probe(), String.t(), String.t()) ::
           {:ok, [String.t()]} | {:error, Reason.reason()}
   defp probe_models(probe, user_id, value) do
-    probe.url
-    |> ModelApi.impl().list_models(headers(probe.auth, value))
+    probe.urls
+    |> first_listing(headers(probe.auth, value))
     |> handle_listing(probe, user_id)
+  end
+
+  # The first candidate to answer wins; every failure moves on, and
+  # the last one is what gets classified when none answers.
+  @spec first_listing([String.t(), ...], ModelApi.headers()) ::
+          {:ok, map()} | {:error, term()}
+  defp first_listing(urls, headers) do
+    Enum.reduce_while(urls, nil, fn url, _last_error ->
+      case ModelApi.impl().list_models(url, headers) do
+        {:ok, _body} = listing -> {:halt, listing}
+        {:error, _reason} = error -> {:cont, error}
+      end
+    end)
   end
 
   @spec handle_listing({:ok, map()} | {:error, term()}, probe(), String.t()) ::
@@ -278,6 +315,7 @@ defmodule Camelot.Agents.ModelDiscovery do
     |> Map.get(probe.list_key, [])
     |> model_ids(probe.id_key)
     |> included(probe.include)
+    |> Enum.map(&(probe.id_prefix <> &1))
     |> Enum.sort(:desc)
   end
 

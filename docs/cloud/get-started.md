@@ -77,8 +77,9 @@ personal setup. Each item is its own screen:
   above for git/GitHub access instead. Right now, **Claude Code is the
   only Agent CLI that's fully integrated and tested** — start with a
   Claude API key unless you know you need another provider. See
-  [Setting up Claude Code](../agents/claude-code.md) or
-  [Setting up Codex](../agents/codex.md) for a full walkthrough.
+  [Setting up Claude Code](../agents/claude-code.md),
+  [Setting up Codex](../agents/codex.md) or
+  [Setting up Kimi Code](../agents/kimi-code.md) for a full walkthrough.
 
 ## 3. Create a project
 

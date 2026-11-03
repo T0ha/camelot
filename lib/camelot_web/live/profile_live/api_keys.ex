@@ -133,8 +133,17 @@ defmodule CamelotWeb.ProfileLive.ApiKeys do
 
   defp kind_label(:claude_api_key), do: "Claude API key — Claude Code"
   defp kind_label(:openai_api_key), do: "OpenAI API key — Codex"
+  defp kind_label(:kimi_api_key), do: "Kimi API key — Kimi Code"
   defp kind_label(:generic), do: "Generic"
   defp kind_label(kind), do: Atom.to_string(kind)
+
+  # A Kimi key may come from either of two consoles; the runner works
+  # out which endpoint it belongs to, so the user needn't say.
+  defp kind_hint(:kimi_api_key) do
+    "Paste a Kimi Code Console key or a Kimi Open Platform key — we detect which."
+  end
+
+  defp kind_hint(_kind), do: nil
 
   defp save_label(nil), do: "Save"
   defp save_label(_credential), do: "Replace"
@@ -173,7 +182,16 @@ defmodule CamelotWeb.ProfileLive.ApiKeys do
               class="border-t align-middle"
               id={"api-key-row-#{row.kind}"}
             >
-              <td class="py-2">{kind_label(row.kind)}</td>
+              <td class="py-2">
+                {kind_label(row.kind)}
+                <p
+                  :if={kind_hint(row.kind)}
+                  id={"api-key-hint-#{row.kind}"}
+                  class="text-xs text-base-content/60"
+                >
+                  {kind_hint(row.kind)}
+                </p>
+              </td>
               <td class="py-2">
                 <span :if={is_nil(row.credential)}>Not set</span>
                 <span :if={row.credential}>
