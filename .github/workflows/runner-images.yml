@@ -61,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [claude, codex, polyglot]
+        variant: [claude, codex, kimi, polyglot]
     steps:
       - uses: actions/checkout@v4
 
