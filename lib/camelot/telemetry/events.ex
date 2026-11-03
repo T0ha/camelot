@@ -106,11 +106,11 @@ defmodule Camelot.Telemetry.Events do
   end
 
   defp build("credential_added", _action, %Credential{} = credential, _actor) do
-    credential_event(credential, "claude_token_added", "credential_added")
+    credential_event(credential, "added")
   end
 
   defp build("credential_removed", _action, %Credential{} = credential, _actor) do
-    credential_event(credential, "claude_token_removed", "credential_removed")
+    credential_event(credential, "removed")
   end
 
   defp build("project_created", _action, %Project{} = project, actor) do
@@ -169,18 +169,22 @@ defmodule Camelot.Telemetry.Events do
   # `Camelot.Accounts.User.Changes.EnsureDefaultSshKey` on every
   # signup, so counting it as a credential the user added would put a
   # 100% conversion step in the middle of the funnel.
-  @spec credential_event(Credential.t(), String.t(), String.t()) :: resolved() | :skip
-  defp credential_event(%Credential{metadata: %{"source" => "server_generated"}}, _claude, _other) do
+  @spec credential_event(Credential.t(), String.t()) :: resolved() | :skip
+  defp credential_event(%Credential{metadata: %{"source" => "server_generated"}}, _verb) do
     :skip
   end
 
-  defp credential_event(%Credential{kind: :claude_api_key} = credential, claude_event, _other) do
-    {:ok, claude_event, %{data_id: credential.id, kind: to_string(credential.kind)}}
+  defp credential_event(%Credential{} = credential, verb) do
+    {:ok, credential_event_name(credential.kind, verb), %{data_id: credential.id, kind: to_string(credential.kind)}}
   end
 
-  defp credential_event(%Credential{} = credential, _claude_event, other_event) do
-    {:ok, other_event, %{data_id: credential.id, kind: to_string(credential.kind)}}
-  end
+  # Each agent's own token is a funnel step with its own name; every
+  # other kind gets the generic event, so an OpenAI key never arrives
+  # under a Claude-shaped name.
+  @spec credential_event_name(atom(), String.t()) :: String.t()
+  defp credential_event_name(:claude_api_key, verb), do: "claude_token_" <> verb
+  defp credential_event_name(:kimi_api_key, verb), do: "kimi_token_" <> verb
+  defp credential_event_name(_kind, verb), do: "credential_" <> verb
 
   @spec new_user?(User.t()) :: boolean()
   defp new_user?(%User{inserted_at: %DateTime{} = inserted_at}) do
