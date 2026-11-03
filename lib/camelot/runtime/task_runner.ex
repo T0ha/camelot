@@ -1536,6 +1536,7 @@ defmodule Camelot.Runtime.TaskRunner do
       :ok
   end
 
+  # Codex and Kimi streams carry no usage or quota events to record.
   defp record_usage(_state), do: :ok
 
   defp write_usage(%__MODULE__{user_id: nil}, _windows), do: :ok

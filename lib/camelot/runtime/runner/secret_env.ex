@@ -39,6 +39,12 @@ defmodule Camelot.Runtime.Runner.SecretEnv do
     ["GEMINI_API_KEY=#{v}", "GOOGLE_API_KEY=#{v}"]
   end
 
+  # Kimi Code reads no API-key env var of its own: the entrypoint's
+  # `kimi_configure` probes which endpoint the key belongs to and
+  # writes `$KIMI_CODE_HOME/config.toml`. Same pair the generic
+  # fallback would build, spelled out so the mapping is documented.
+  def to_env(%{kind: :kimi_api_key, value: v}), do: ["CAMELOT_SECRET_KIMI_API_KEY=#{v}"]
+
   def to_env(%{kind: :github_app_token, value: v}) do
     ["GH_TOKEN=#{v}", "GITHUB_TOKEN=#{v}"]
   end

@@ -22,6 +22,7 @@ defmodule CamelotWeb.AgentLive.Index do
     {"Claude Code JSON", "claude_code_json"},
     {"Codex JSONL", "codex_jsonl"},
     {"Antigravity JSON", "antigravity_json"},
+    {"Kimi JSONL", "kimi_jsonl"},
     {"Raw Text", "raw_text"}
   ]
 
@@ -36,7 +37,7 @@ defmodule CamelotWeb.AgentLive.Index do
   @integer_fields ~w(base_retry_delay_ms max_retries)
 
   @credential_kinds ~w(claude_api_key openai_api_key gemini_api_key
-                       ssh_private_key generic)
+                       kimi_api_key ssh_private_key generic)
 
   @impl true
   def mount(_params, _session, socket) do

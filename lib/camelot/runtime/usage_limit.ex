@@ -14,6 +14,12 @@ defmodule Camelot.Runtime.UsageLimit do
   over-limit; free-text wording in the error message is a fallback
   for whenever that event is absent. `:codex_jsonl` has no structured
   signal at all yet, so it reads the error message only.
+
+  `:kimi_jsonl` emits no usage or rate-limit events either; it reads
+  the CLI's `provider.<code>: <status> <text>` error. The CLI already
+  retries a 429 internally (and never retries quota exhaustion), so a
+  `provider.rate_limit` reaching Camelot means the retries ran out.
+  `provider.auth_error` is a bad key, not a limit.
   """
 
   alias Camelot.Runtime.OutputParser
@@ -33,6 +39,11 @@ defmodule Camelot.Runtime.UsageLimit do
   @default_fallback_minutes 60
 
   @limit_wording ~r/(hit your .*? limit|usage limit|limit reached)/i
+
+  # `provider.rate_limit` plus the quota-exhausted wording kimi-code
+  # 2.3.0 itself recognises (and its `exceeded_current_quota_error`
+  # code).
+  @kimi_limit_wording ~r/(^provider\.rate_limit|exceeded_current_quota_error|exceeded your current (token )?quota|check your account balance|insufficient balance|recharge your account|please recharge|account (is )?in arrears)/i
   @relative_wait ~r/try again in\s*(?:(\d+)\s*h(?:ours?)?)?\s*(?:(\d+)\s*m(?:in(?:ute)?s?)?)?/i
 
   @doc """
@@ -62,20 +73,24 @@ defmodule Camelot.Runtime.UsageLimit do
         {:limited, limited_info(reset_at, window, now)}
 
       :none ->
-        detect_from_message(strip_prefix(message, "claude error: "), now)
+        detect_from_message(strip_prefix(message, "claude error: "), @limit_wording, now)
     end
   end
 
   def detect(:codex_jsonl, {:error, message}, _output_buffer, now) do
-    detect_from_message(strip_prefix(message, "codex error: "), now)
+    detect_from_message(strip_prefix(message, "codex error: "), @limit_wording, now)
+  end
+
+  def detect(:kimi_jsonl, {:error, "kimi error: " <> message}, _output_buffer, now) do
+    detect_from_message(message, @kimi_limit_wording, now)
   end
 
   def detect(_parser, _parsed, _output_buffer, _now), do: :none
 
   defp strip_prefix(message, prefix), do: String.replace_prefix(message, prefix, "")
 
-  defp detect_from_message(message, now) do
-    if Regex.match?(@limit_wording, message) do
+  defp detect_from_message(message, wording, now) do
+    if Regex.match?(wording, message) do
       {:limited, limited_info(parse_relative_wait(message, now), nil, now)}
     else
       :none

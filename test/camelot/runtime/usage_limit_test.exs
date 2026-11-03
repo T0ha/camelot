@@ -113,6 +113,43 @@ defmodule Camelot.Runtime.UsageLimitTest do
     end
   end
 
+  describe "kimi_jsonl" do
+    # The CLI already retried the 429 internally, so one reaching
+    # Camelot means the retries are exhausted.
+    test "a provider.rate_limit error is a pause" do
+      parsed = {:error, "kimi error: provider.rate_limit: 429 Too Many Requests"}
+
+      assert {:limited, %{reset_at: reset_at, window: nil}} =
+               UsageLimit.detect(:kimi_jsonl, parsed, "", @now)
+
+      assert DateTime.diff(reset_at, @now) == UsageLimit.fallback_minutes() * 60
+    end
+
+    test "quota exhaustion is a pause" do
+      parsed =
+        {:error,
+         "kimi error: provider.api_error: 429 You exceeded your current " <>
+           "token quota, please check your account balance"}
+
+      assert {:limited, _info} = UsageLimit.detect(:kimi_jsonl, parsed, "", @now)
+    end
+
+    test "an account in arrears is a pause" do
+      parsed = {:error, "kimi error: provider.api_error: 403 Your account is in arrears"}
+
+      assert {:limited, _info} = UsageLimit.detect(:kimi_jsonl, parsed, "", @now)
+    end
+
+    test "an auth error is not a pause" do
+      parsed =
+        {:error,
+         "kimi error: provider.auth_error: 401 The API Key appears to be " <>
+           "invalid or may have expired."}
+
+      assert UsageLimit.detect(:kimi_jsonl, parsed, "", @now) == :none
+    end
+  end
+
   test "an unrecognised parser is never a pause" do
     assert UsageLimit.detect(:raw_text, {:error, "boom"}, "", @now) == :none
   end

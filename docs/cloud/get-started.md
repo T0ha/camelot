@@ -78,8 +78,9 @@ personal setup. Each item is its own screen:
   only Agent CLI that's fully integrated and tested** — start with a
   Claude API key unless you know you need another provider. See
   [Setting up Claude Code](../agents/claude-code.md),
-  [Setting up Codex](../agents/codex.md) or
-  [Setting up Antigravity](../agents/antigravity.md) for a full walkthrough.
+  [Setting up Codex](../agents/codex.md),
+  [Setting up Antigravity](../agents/antigravity.md) or
+  [Setting up Kimi Code](../agents/kimi-code.md) for a full walkthrough.
 
 ## 3. Create a project
 
