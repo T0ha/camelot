@@ -106,6 +106,24 @@ defmodule CamelotWeb.BoardComponentsTest do
       assert html =~ "🔃"
     end
 
+    test "marks a card that belongs to a recurring series" do
+      rule_id = "22222222-2222-2222-2222-222222222222"
+
+      html =
+        render_component(&BoardComponents.task_card/1,
+          task: task(%{recurrence_rule_id: rule_id})
+        )
+
+      assert html =~ "hero-arrow-path-rounded-square"
+      assert html =~ ~s(title="Recurring")
+    end
+
+    test "shows no repeat icon on a one-off card" do
+      html = render_component(&BoardComponents.task_card/1, task: task(%{}))
+
+      refute html =~ ~s(title="Recurring")
+    end
+
     test "does not render the state emoji inside a badge" do
       html = render_component(&BoardComponents.task_card/1, task: task(%{}))
 

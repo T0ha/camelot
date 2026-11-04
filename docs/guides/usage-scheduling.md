@@ -1,3 +1,10 @@
+%{
+  title: "Usage-aware scheduling",
+  description: "Keep part of your weekly quota free, run cards in chosen windows, and pin start times or deadlines.",
+  order: 2,
+  published: true
+}
+---
 # Usage-aware scheduling
 
 Camelot can keep part of a provider's weekly quota free for your own,
@@ -20,6 +27,7 @@ on the same credential (`Camelot.Runtime.UsageLimit` →
 | Profile → Usage limits (`/profile/usage`), per agent | Manual "current weekly usage %" | a `:manual` `Camelot.Agents.UsageSnapshot` |
 | Task page → Schedule | Cap override, windows override, start at, finish by, "run even if over limits" | `Task.weekly_cap_override`, `windows_override`, `start_at`, `deadline_at`, `ignore_limits` |
 | New Task form | Start at, finish by | `Task.start_at`, `deadline_at` |
+| Task page → Schedule → Repeat | Daily / weekly / monthly at a local time, every N, repeat until — see [recurring-tasks.md](recurring-tasks.md) | `Camelot.Board.RecurrenceRule`, `Task.recurrence_rule_id` |
 
 No policy row means no restriction. On a card, `windows_override: nil`
 inherits the policy's windows while `[]` lifts the restriction for that
