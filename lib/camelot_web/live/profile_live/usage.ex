@@ -2,7 +2,7 @@ defmodule CamelotWeb.ProfileLive.Usage do
   @moduledoc """
   Profile screen for the usage limits cards are scheduled under: the
   user's time zone and, per agent, a weekly cap, run windows and a
-  manual usage reading — see `docs/usage-scheduling.md`.
+  manual usage reading — see `docs/guides/usage-scheduling.md`.
   """
   use CamelotWeb, :live_view
 

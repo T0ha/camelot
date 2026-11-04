@@ -1,3 +1,10 @@
+%{
+  title: "Usage-aware scheduling",
+  description: "Keep part of your weekly quota free, run cards in chosen windows, and pin start times or deadlines.",
+  order: 2,
+  published: true
+}
+---
 # Usage-aware scheduling
 
 Camelot can keep part of a provider's weekly quota free for your own,

@@ -1,3 +1,10 @@
+%{
+  title: "Recurring tasks",
+  description: "Repeat a card daily, weekly or monthly at a local time; each run is a new card.",
+  order: 3,
+  published: true
+}
+---
 # Recurring tasks
 
 A card can repeat — daily, weekly on chosen weekdays, or monthly on a

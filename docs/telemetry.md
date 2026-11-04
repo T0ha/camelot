@@ -295,7 +295,7 @@ every signup is skipped — it is not something the user did.
 | `recurrence_created`, `recurrence_updated`, `recurrence_disabled`, `recurrence_spawned` | `data_id`, `frequency` (`daily \| weekly \| monthly`), `interval`, `enabled` |
 
 `task_gated` is captured by `Camelot.Board.Changes.DispatchTasks` when
-usage-aware scheduling (`docs/usage-scheduling.md`) changes what it does
+usage-aware scheduling (`docs/guides/usage-scheduling.md`) changes what it does
 with a queued card: held back (`start_at`, `cap`, `window`) or pushed
 through out of the ordinary (`promoted`/`at_risk` for a deadline,
 `reserve_risk` for a card running over its weekly cap). The dispatcher
