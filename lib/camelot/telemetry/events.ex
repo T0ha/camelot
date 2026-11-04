@@ -19,6 +19,7 @@ defmodule Camelot.Telemetry.Events do
   alias Camelot.Accounts.User
   alias Camelot.Agents.Agent
   alias Camelot.Agents.UsageSnapshot
+  alias Camelot.Board.RecurrenceRule
   alias Camelot.Board.Task
   alias Camelot.Github.Installation
   alias Camelot.Projects.Project
@@ -44,6 +45,10 @@ defmodule Camelot.Telemetry.Events do
     {Task, :mark_runner_lost} => "task_runner_lost",
     {Task, :pause_for_usage_limit} => "task_paused",
     {Task, :resume_paused} => "task_resumed",
+    {RecurrenceRule, :create} => "recurrence_created",
+    {RecurrenceRule, :update} => "recurrence_updated",
+    {RecurrenceRule, :disable} => "recurrence_disabled",
+    {RecurrenceRule, :spawn_next} => "recurrence_spawned",
     {Project, :create} => "project_created",
     {User, :create_user} => "user_signed_up",
     {User, :register_with_github} => "user_signed_up",
@@ -149,6 +154,12 @@ defmodule Camelot.Telemetry.Events do
        credential_kind: snapshot.credential_kind,
        used_percent: round(snapshot.used_percent)
      }}
+  end
+
+  # `enabled` tells a `recurrence_spawned` that created the next card
+  # from one that ended the series instead.
+  defp build(event, _action, %RecurrenceRule{} = rule, _actor) do
+    {:ok, event, %{data_id: rule.id, frequency: rule.frequency, interval: rule.interval, enabled: rule.enabled}}
   end
 
   defp build(event, _action, %Agent{} = agent, _actor) do
