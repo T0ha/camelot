@@ -4,6 +4,7 @@ defmodule Camelot.Agents.AgentTest do
   alias Camelot.Agents.Agent
   alias Camelot.Agents.ClaudeCodeDefaults
   alias Camelot.Agents.CodexDefaults
+  alias Camelot.Agents.KimiDefaults
   alias Ecto.Adapters.SQL
 
   describe "seeded data" do
@@ -95,6 +96,42 @@ defmodule Camelot.Agents.AgentTest do
       # :codex_api_key meant a user who stored the obvious
       # :openai_api_key got no key mounted and a bare 401.
       assert agent.required_credential_kinds == [:openai_api_key]
+    end
+
+    test "kimi agent is seeded from KimiDefaults" do
+      agent = agent!("kimi")
+
+      assert agent.name == "Kimi Code"
+      assert agent.executable == KimiDefaults.executable()
+      assert agent.base_args == KimiDefaults.base_args()
+      assert agent.prompt_flag == KimiDefaults.prompt_flag()
+      assert agent.model_flag == KimiDefaults.model_flag()
+      assert agent.parser == :kimi_jsonl
+      assert agent.available_models == KimiDefaults.available_models()
+      assert is_nil(agent.default_model)
+      assert agent.models_probe == KimiDefaults.models_probe()
+      assert agent.permission_args_by_stage == KimiDefaults.permission_args_by_stage()
+      assert agent.system_prompt_by_stage == KimiDefaults.system_prompt_by_stage()
+      assert agent.output_schema_by_stage == %{}
+      assert agent.env_vars == KimiDefaults.env_vars()
+      assert agent.question_phrases == KimiDefaults.question_phrases()
+      assert agent.runner_image == KimiDefaults.runner_image()
+      assert agent.required_credential_kinds == [:kimi_api_key]
+    end
+
+    test "kimi system prompt templates are seeded" do
+      for slug <- [
+            KimiDefaults.planning_system_prompt_slug(),
+            KimiDefaults.execution_system_prompt_slug(),
+            KimiDefaults.pr_system_prompt_slug()
+          ] do
+        assert %{num_rows: 1} =
+                 SQL.query!(
+                   Camelot.Repo,
+                   "SELECT 1 FROM prompt_templates WHERE slug = $1 AND project_id IS NULL AND user_id IS NULL",
+                   [slug]
+                 )
+      end
     end
   end
 

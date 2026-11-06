@@ -29,7 +29,8 @@ defmodule CamelotWeb.OnboardingComponents do
     """,
     claude_token: """
     The API key your runners use to talk to Claude. It's encrypted at
-    rest and only ever shipped to the cluster as a secret.
+    rest and only ever shipped to the cluster as a secret. Codex and
+    Kimi Code keys live on the same screen.
     """,
     project: """
     Point Camelot at a GitHub repository. Name and repository are all

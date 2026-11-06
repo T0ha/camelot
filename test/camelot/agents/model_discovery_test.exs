@@ -91,6 +91,99 @@ defmodule Camelot.Agents.ModelDiscoveryTest do
     end
   end
 
+  describe "for_user/2 against Kimi's candidate endpoints" do
+    @kimi_console "https://api.kimi.ai/coding/v1/models"
+    @kimi_platform "https://api.moonshot.ai/v1/models"
+    @kimi_console_cn "https://api.kimi.com/coding/v1/models"
+    @kimi_platform_cn "https://api.moonshot.cn/v1/models"
+
+    test "a 401 moves on to the next candidate" do
+      user = credentialed_user(:kimi_api_key, "sk-kimi-platform")
+
+      StubModelApi.install(
+        replies: %{
+          @kimi_console => {:error, {:http_error, 401, %{"error" => "x"}}},
+          @kimi_platform => listing(["k3", "moonshot-v1-8k", "kimi-for-coding"])
+        }
+      )
+
+      assert {:ok, ["kimi-code/kimi-for-coding", "kimi-code/k3"]} =
+               ModelDiscovery.for_user(agent!("kimi"), user.id)
+
+      assert_received {:list_models, @kimi_console, _headers}
+      assert_received {:list_models, @kimi_platform, headers}
+      assert {"authorization", "Bearer sk-kimi-platform"} in headers
+      refute_received {:list_models, @kimi_console_cn, _headers}
+    end
+
+    test "the first candidate that answers wins" do
+      user = credentialed_user(:kimi_api_key, "sk-kimi-console")
+
+      StubModelApi.install(replies: %{@kimi_console => listing(["k3"])})
+
+      assert {:ok, ["kimi-code/k3"]} =
+               ModelDiscovery.for_user(agent!("kimi"), user.id)
+
+      assert_received {:list_models, @kimi_console, _headers}
+      refute_received {:list_models, @kimi_platform, _headers}
+    end
+
+    test "a network error moves on to the next candidate" do
+      user = credentialed_user(:kimi_api_key, "sk-kimi-cn")
+
+      StubModelApi.install(
+        reply: {:error, %Req.TransportError{reason: :nxdomain}},
+        replies: %{@kimi_platform_cn => listing(["k3"])}
+      )
+
+      assert {:ok, ["kimi-code/k3"]} =
+               ModelDiscovery.for_user(agent!("kimi"), user.id)
+    end
+
+    test "every candidate failing is a failed probe" do
+      user = credentialed_user(:kimi_api_key, "sk-kimi-dead")
+
+      StubModelApi.install(reply: {:error, {:http_error, 401, %{"error" => "x"}}})
+
+      assert {:error, :forbidden} =
+               ModelDiscovery.for_user(agent!("kimi"), user.id)
+
+      assert ModelDiscovery.models_for(agent!("kimi"), user.id) ==
+               agent!("kimi").available_models
+    end
+
+    test "a cached answer never re-walks the candidates" do
+      user = credentialed_user(:kimi_api_key, "sk-kimi-cached")
+
+      StubModelApi.install(replies: %{@kimi_console => listing(["k3"])})
+
+      assert {:ok, models} = ModelDiscovery.for_user(agent!("kimi"), user.id)
+      assert_received {:list_models, _url, _headers}
+
+      assert {:ok, ^models} = ModelDiscovery.for_user(agent!("kimi"), user.id)
+      refute_received {:list_models, _url, _headers}
+    end
+
+    test "a single-url probe is unchanged by candidates support" do
+      user = credentialed_user(:claude_api_key, "sk-ant-api03-legacy")
+
+      agent = probed_agent(%{"id_prefix" => "x/"})
+
+      StubModelApi.install(reply: listing(["claude-opus-5-5"]))
+
+      assert {:ok, ["x/claude-opus-5-5"]} = ModelDiscovery.for_user(agent, user.id)
+      assert_received {:list_models, @anthropic_url, _headers}
+    end
+
+    test "an empty candidates list is no probe" do
+      user = credentialed_user(:claude_api_key, "sk-ant-api03-nocands")
+
+      agent = probed_agent(%{"candidates" => []}, drop: ["url"])
+
+      assert {:error, :no_probe} = ModelDiscovery.for_user(agent, user.id)
+    end
+  end
+
   describe "for_user/2 degraded cases" do
     test "no probe configured" do
       user = credentialed_user(:claude_api_key, "sk-ant-api03-noprobe")

@@ -12,6 +12,7 @@ defmodule Camelot.Runtime.AgentConfigTest do
   alias Camelot.Accounts.User
   alias Camelot.Agents.ClaudeCodeDefaults
   alias Camelot.Agents.CodexDefaults
+  alias Camelot.Agents.KimiDefaults
   alias Camelot.Projects.Project
   alias Camelot.Prompts.PromptTemplate
   alias Camelot.Runtime.AgentConfig
@@ -210,6 +211,47 @@ defmodule Camelot.Runtime.AgentConfigTest do
       config = %{ctx.codex | output_schema_by_stage: %{"planning" => "   "}}
 
       assert is_nil(AgentConfig.output_schema(config, :planning))
+    end
+  end
+
+  describe "build_cli_args/5 — kimi" do
+    setup do
+      %{kimi: build_config("kimi")}
+    end
+
+    test "planning runs headless under the read-only agent file", ctx do
+      args = AgentConfig.build_cli_args(ctx.kimi, "p", [], :planning, "kimi-code/k3")
+
+      assert Enum.take(args, 2) == KimiDefaults.base_args()
+
+      assert ["--agent-file", "/opt/agent-cli/kimi/planning-agent.md"] ==
+               Enum.filter(args, &(&1 in ["--agent-file", "/opt/agent-cli/kimi/planning-agent.md"]))
+
+      assert ["-m", "kimi-code/k3"] ==
+               Enum.filter(args, &(&1 in ["-m", "kimi-code/k3"]))
+
+      assert Enum.at(args, -2) == "-p"
+      refute "--plan" in args
+    end
+
+    test "no stage writes a schema file", ctx do
+      assert is_nil(AgentConfig.output_schema(ctx.kimi, :planning))
+    end
+
+    test "system prompts render to the kimi defaults", ctx do
+      rendered = AgentConfig.render_system_prompts(ctx.kimi, nil, nil)
+
+      assert rendered.system_prompt_by_stage["planning"] ==
+               KimiDefaults.planning_system_prompt()
+
+      assert rendered.system_prompt_by_stage["executing"] ==
+               KimiDefaults.execution_system_prompt()
+
+      assert rendered.system_prompt_by_stage["pr"] == KimiDefaults.pr_system_prompt()
+    end
+
+    test "the agent env reaches the port", ctx do
+      assert {~c"KIMI_CODE_TRUST_WORKSPACE", ~c"1"} in AgentConfig.env_for_port(ctx.kimi)
     end
   end
 

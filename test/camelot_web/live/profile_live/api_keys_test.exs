@@ -7,7 +7,7 @@ defmodule CamelotWeb.ProfileLive.ApiKeysTest do
 
   require Ash.Query
 
-  @kinds [:claude_api_key, :openai_api_key, :generic]
+  @kinds [:claude_api_key, :openai_api_key, :kimi_api_key, :generic]
 
   setup :register_and_log_in_user
 
@@ -39,6 +39,14 @@ defmodule CamelotWeb.ProfileLive.ApiKeysTest do
     refute html =~ "Kind"
     assert html =~ "Claude API key — Claude Code"
     assert html =~ "OpenAI API key — Codex"
+    assert html =~ "Kimi API key — Kimi Code"
+  end
+
+  test "the Kimi row explains that either key source works", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/profile/api-keys")
+
+    assert has_element?(view, "#api-key-hint-kimi_api_key", "Kimi Open Platform key")
+    refute has_element?(view, "#api-key-hint-claude_api_key")
   end
 
   test "rows start as not set with a Save button and no Remove", %{conn: conn} do

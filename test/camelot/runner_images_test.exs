@@ -7,18 +7,18 @@ defmodule Camelot.RunnerImagesTest do
     test "returns a map per stack with :stack and :image keys" do
       images = RunnerImages.list()
 
-      assert length(images) == 6
+      assert length(images) == 7
 
       assert Enum.all?(images, fn entry ->
                match?(%{stack: stack, image: image} when is_binary(stack) and is_binary(image), entry)
              end)
     end
 
-    test "includes the six stacks built by the runner-images workflow" do
+    test "includes the seven stacks built by the runner-images workflow" do
       stacks = Enum.map(RunnerImages.list(), & &1.stack)
 
       assert Enum.sort(stacks) ==
-               Enum.sort(~w(base claude codex polyglot elixir python))
+               Enum.sort(~w(base claude codex kimi polyglot elixir python))
     end
 
     test "images point at the ghcr.io/t0ha/camelot-runner-<stack>:latest tag" do

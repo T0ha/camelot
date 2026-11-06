@@ -19,7 +19,7 @@ defmodule Camelot.RunnerImages do
   """
 
   @registry "ghcr.io/t0ha/camelot-runner"
-  @stacks ~w(base claude codex polyglot elixir python)
+  @stacks ~w(base claude codex kimi polyglot elixir python)
 
   @type entry :: %{stack: String.t(), image: String.t()}
 
