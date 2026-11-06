@@ -2,6 +2,7 @@ defmodule Camelot.Board.UsageLimitPauseTest do
   use Camelot.DataCase, async: false
 
   alias Camelot.Accounts.Credential
+  alias Camelot.Agents.UsageSnapshots
   alias Camelot.Board.Task
   alias Camelot.Board.UsageLimitPause
   alias Camelot.Board.Workers.SendUsageLimitEmail
@@ -38,7 +39,7 @@ defmodule Camelot.Board.UsageLimitPauseTest do
   end
 
   defp info(reset_at, window \\ "5h") do
-    %{reset_at: reset_at, window: window}
+    %{reset_at: reset_at, window: window, estimated?: false}
   end
 
   describe "pause/3" do
@@ -59,6 +60,58 @@ defmodule Camelot.Board.UsageLimitPauseTest do
       credential = Ash.get!(Credential, Credential.for_user_and_kind(ctx.user.id, :claude_api_key).id)
       assert credential.usage_limited_until
       assert credential.usage_limit_window == "5h"
+    end
+
+    test "an estimated quota-window reset defers to the known reset date", ctx do
+      credential!(ctx.user, :kimi_api_key)
+      task = create_task(ctx, %{agent_id: agent!("kimi").id})
+      known = ~U[2030-02-01 00:00:00.000000Z]
+
+      {:ok, _} =
+        UsageSnapshots.record(
+          ctx.user.id,
+          :kimi_api_key,
+          [%{window: :monthly, used_percent: 90.0, resets_at: known}],
+          :manual
+        )
+
+      guess = DateTime.add(DateTime.utc_now(), 86_400, :second)
+
+      assert :ok =
+               UsageLimitPause.pause(
+                 task.id,
+                 :kimi_api_key,
+                 %{reset_at: guess, window: "monthly", estimated?: true}
+               )
+
+      assert DateTime.compare(Ash.get!(Task, task.id).paused_until, known) == :eq
+
+      credential = Credential.for_user_and_kind(ctx.user.id, :kimi_api_key)
+      assert DateTime.compare(credential.usage_limited_until, known) == :eq
+    end
+
+    test "a 5-hour hit keeps its own estimate even when a monthly reset is known", ctx do
+      credential!(ctx.user, :kimi_api_key)
+      task = create_task(ctx, %{agent_id: agent!("kimi").id})
+
+      {:ok, _} =
+        UsageSnapshots.record(
+          ctx.user.id,
+          :kimi_api_key,
+          [%{window: :monthly, used_percent: 90.0, resets_at: ~U[2030-02-01 00:00:00Z]}],
+          :manual
+        )
+
+      guess = DateTime.add(DateTime.utc_now(), 3600, :second)
+
+      assert :ok =
+               UsageLimitPause.pause(
+                 task.id,
+                 :kimi_api_key,
+                 %{reset_at: guess, window: "5-hour", estimated?: true}
+               )
+
+      assert DateTime.compare(Ash.get!(Task, task.id).paused_until, guess) == :eq
     end
 
     test "leaves a sibling needing a different credential kind alone", ctx do
