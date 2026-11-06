@@ -23,8 +23,8 @@ on the same credential (`Camelot.Runtime.UsageLimit` →
 | Where | What | Stored as |
 |---|---|---|
 | Profile → Usage limits (`/profile/usage`) | Time zone | `User.time_zone` (IANA, default `Etc/UTC`) |
-| Profile → Usage limits (`/profile/usage`), per agent | Weekly cap %, run windows | `Camelot.Agents.UsagePolicy` (one row per user + agent) |
-| Profile → Usage limits (`/profile/usage`), per agent | Manual "current weekly usage %" | a `:manual` `Camelot.Agents.UsageSnapshot` |
+| Profile → Usage limits (`/profile/usage`), per agent | Weekly (Kimi: monthly) cap %, run windows | `Camelot.Agents.UsagePolicy` (one row per user + agent) |
+| Profile → Usage limits (`/profile/usage`), per agent | Manual "current weekly/monthly usage %" and an optional "quota resets on" date | a `:manual` `Camelot.Agents.UsageSnapshot` |
 | Task page → Schedule | Cap override, windows override, start at, finish by, "run even if over limits" | `Task.weekly_cap_override`, `windows_override`, `start_at`, `deadline_at`, `ignore_limits` |
 | New Task form | Start at, finish by | `Task.start_at`, `deadline_at` |
 | Task page → Schedule → Repeat | Daily / weekly / monthly at a local time, every N, repeat until — see [recurring-tasks.md](recurring-tasks.md) | `Camelot.Board.RecurrenceRule`, `Task.recurrence_rule_id` |
@@ -62,8 +62,29 @@ kind. The latest unexpired row is authoritative; a row whose
 | Source | How |
 |---|---|
 | `:cli` (Claude Code) | `Camelot.Runtime.TaskRunner.finish_session/5` parses the **last** `rate_limit_event` of every run (success or failure) with `Camelot.Runtime.RateLimitEvents`: `rate_limit_info.unifiedWindows.seven_day` → `:weekly`, `five_hour` → `:session`, `utilization` × 100, `resetsAt` epoch seconds. Older CLIs that send only the top-level `rateLimitType`/`resetsAt` record nothing. |
-| `:manual` | Typed on the Usage limits profile screen. Keeps the provider's last known reset, or assumes a fresh week. |
+| `:manual` | Typed on the Usage limits profile screen. Resets at the entered "quota resets on" date (local midnight), else keeps the last known reset, else assumes a fresh week (monthly: a fresh month). |
 | `:estimated` | Computed, never stored: a manual reading plus Camelot's own session time on that account since the reading (`duration_ms` of the user's finished sessions whose agent mounts the same credential kind), at `config :camelot, :scheduling, minutes_per_percent`. It cannot see use outside Camelot. |
+
+### Quota window per provider
+
+Each credential kind is capped on one window,
+`Camelot.Agents.UsageSnapshots.quota_window/1`: Claude Code and Codex
+on `:weekly`, Kimi Code on `:monthly`. Kimi's current plans (Go, Plus,
+Pro, Max, Ultra) have a rolling 5-hour window plus a monthly quota per
+billing cycle; the weekly quota exists only on legacy plans. The cap
+%, the manual reading, the gate and the profile labels all use that
+window.
+
+Kimi Code reports no usage on its stream, so it is manual entry plus
+the estimate. When a run hits a Kimi quota (`provider.api_error: 429
+You've reached your 5-hour / weekly (7-day) / monthly usage limit…`,
+or an empty credit / Extra Usage balance), `Camelot.Runtime.UsageLimit`
+pauses the credential. The message has no reset time: the 5-hour
+window falls back to `usage_limit_fallback_minutes`, the rest to 24
+hours. A monthly (or weekly) hit uses the reset of the current
+reading for that window instead, so entering the billing-cycle date
+on the profile screen pauses Kimi cards until the real reset. An
+active pause is shown on the profile screen per agent.
 
 Codex keeps its limit data in its rollout file
 (`$CODEX_HOME/sessions/…/rollout-*-<thread_id>.jsonl`, `token_count`
