@@ -26,7 +26,9 @@ defmodule Camelot.Board.Changes.CheckIssuePlan do
   for a stranger's comment after it was first seen would otherwise
   never be noticed. `issue_comments_seen_at` is instead applied
   client-side — to a member comment's `created_at`, and to the owner
-  👍's `created_at` for a stranger comment.
+  👍's `created_at` for a stranger comment. The reaction fetch and the
+  seen check are shared with `CheckPrStatus` via
+  `Camelot.Board.IssueComments`.
 
   Like `Camelot.Board.Changes.CheckPrStatus`, this never raises: it
   runs unattended in Oban, and a GitHub failure just waits for the next
@@ -35,6 +37,7 @@ defmodule Camelot.Board.Changes.CheckIssuePlan do
   use Ash.Resource.Change
 
   alias Camelot.Board.Changes.CheckPrStatus
+  alias Camelot.Board.IssueComments
   alias Camelot.Board.Task
   alias Camelot.Board.TaskMessage
   alias Camelot.Github.Client
@@ -90,7 +93,7 @@ defmodule Camelot.Board.Changes.CheckIssuePlan do
       apply_activity(task, %{
         comments: comments,
         plan_reactions: plan_reactions,
-        comment_reactions: stranger_reactions(owner, repo, pending_stranger_comment_ids(task, comments), opts),
+        comment_reactions: IssueComments.reactions(owner, repo, pending_stranger_comment_ids(task, comments), opts),
         approved_label_actor: label_actor
       })
     else
@@ -124,27 +127,13 @@ defmodule Camelot.Board.Changes.CheckIssuePlan do
   defp event_actor(nil), do: {:ok, nil}
   defp event_actor(event), do: {:ok, IssueTrust.actor_id(event)}
 
-  # Best effort: a failed reaction fetch just means that stranger's
-  # comment stays unvouched-for until the next poll.
-  defp stranger_reactions(owner, repo, comment_ids, opts) do
-    Map.new(comment_ids, fn id ->
-      case Client.list_comment_reactions(owner, repo, id, opts) do
-        {:ok, reactions} -> {id, reactions}
-        {:error, _reason} -> {id, []}
-      end
-    end)
-  end
-
   @doc """
   Ids of comments posted after the plan comment by someone who is not
   a project member — the only comments whose reactions need fetching.
   """
   @spec pending_stranger_comment_ids(Task.t(), [map()]) :: [integer()]
   def pending_stranger_comment_ids(task, comments) do
-    task
-    |> reviewable_comments(comments)
-    |> Enum.reject(&IssueTrust.trusted?(IssueTrust.actor_id(&1), task.project_id))
-    |> Enum.map(& &1["id"])
+    IssueComments.stranger_comment_ids(task, reviewable_comments(task, comments))
   end
 
   @doc """
@@ -185,7 +174,7 @@ defmodule Camelot.Board.Changes.CheckIssuePlan do
 
   defp trusted_signal(true, comment, task, _comment_reactions) do
     comment["created_at"]
-    |> unseen?(task.issue_comments_seen_at)
+    |> IssueComments.unseen?(task.issue_comments_seen_at)
     |> member_signals(comment["body"] || "")
   end
 
@@ -201,7 +190,7 @@ defmodule Camelot.Board.Changes.CheckIssuePlan do
 
   defp vouched_signal(approval, comment, task) do
     approval["created_at"]
-    |> unseen?(task.issue_comments_seen_at)
+    |> IssueComments.unseen?(task.issue_comments_seen_at)
     |> vouched_signals(comment["body"] || "")
   end
 
@@ -224,16 +213,6 @@ defmodule Camelot.Board.Changes.CheckIssuePlan do
 
   defp label_approval?(task, activity) do
     IssueTrust.trusted?(activity.approved_label_actor, task.project_id)
-  end
-
-  defp unseen?(_created_at, nil), do: true
-  defp unseen?(nil, _seen_at), do: false
-
-  defp unseen?(created_at, seen_at) do
-    case DateTime.from_iso8601(created_at) do
-      {:ok, created, _offset} -> DateTime.after?(created, seen_at)
-      {:error, _reason} -> false
-    end
   end
 
   defp record_message(task, body) do

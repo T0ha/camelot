@@ -3,9 +3,11 @@ defmodule Camelot.Board.Changes.CheckPrStatusTest do
 
   alias Camelot.Accounts.User
   alias Camelot.Board.Changes.CheckPrStatus
+  alias Camelot.Board.IssueComments
   alias Camelot.Board.Task
   alias Camelot.Board.TaskLink
   alias Camelot.Github.Installation
+  alias Camelot.Projects.Membership
   alias Camelot.Projects.Project
 
   @commit "2026-07-09T13:42:09Z"
@@ -649,6 +651,165 @@ defmodule Camelot.Board.Changes.CheckPrStatusTest do
 
       assert messages(dependent) == []
       assert Ash.get!(TaskLink, link.id).base_synced_sha == nil
+    end
+  end
+
+  describe "apply_waiting_for_input/2 — issue comments" do
+    @member_gh 2002
+    @stranger_gh 2003
+    @owner_gh 2001
+
+    setup do
+      owner = user!(%{github_user_id: "#{@owner_gh}"})
+      member = user!(%{github_user_id: "#{@member_gh}"})
+
+      project =
+        Ash.create!(
+          Project,
+          %{
+            name: "pr-issue-#{System.unique_integer([:positive])}",
+            path: "/tmp/pr-issue",
+            github_owner: "acme",
+            github_repo: "landing"
+          },
+          actor: owner
+        )
+
+      Ash.Seed.seed!(Membership, %{
+        project_id: project.id,
+        user_id: member.id,
+        role: :member
+      })
+
+      task =
+        Ash.Seed.seed!(Task, %{
+          title: "GH#1: Branding",
+          project_id: project.id,
+          creator_id: owner.id,
+          agent_id: agent!("claude_code").id,
+          stage: :pr,
+          state: :waiting_for_input,
+          issue_number: 1,
+          pr_number: 2,
+          plan_comment_id: 500,
+          inserted_at: ~U[2026-09-30 00:00:00.000000Z]
+        })
+
+      %{task: task}
+    end
+
+    defp issue_comment(id, author, created \\ "2026-10-01T10:00:00Z") do
+      %{
+        "id" => id,
+        "body" => "Branding is wrong",
+        "user" => %{"id" => author, "login" => "user-#{author}"},
+        "created_at" => created,
+        "updated_at" => created
+      }
+    end
+
+    defp waiting(attrs) do
+      Map.merge(
+        %{
+          pr: %{"mergeable" => true, "mergeable_state" => "clean"},
+          reviews: [],
+          comments: [],
+          commits: [],
+          check_runs: [],
+          issue_comments: []
+        },
+        attrs
+      )
+    end
+
+    defp annotate(task, comments, reactions \\ %{}) do
+      IssueComments.annotate(task, comments, reactions)
+    end
+
+    test "a member's issue comment requests changes and is marked seen", %{task: task} do
+      issue = annotate(task, [issue_comment(501, @member_gh)])
+
+      CheckPrStatus.apply_waiting_for_input(task, waiting(%{issue_comments: issue}))
+
+      reloaded = Ash.get!(Task, task.id)
+      assert reloaded.state == :queued
+      assert reloaded.issue_comments_seen_at == ~U[2026-10-01 10:00:00.000000Z]
+      assert reloaded.pr_auto_fix_attempts == 0
+    end
+
+    test "a stranger's issue comment is ignored", %{task: task} do
+      issue = annotate(task, [issue_comment(501, @stranger_gh)])
+
+      CheckPrStatus.apply_waiting_for_input(task, waiting(%{issue_comments: issue}))
+
+      assert Ash.get!(Task, task.id).state == :waiting_for_input
+    end
+
+    test "an owner's 👍 lets a stranger's issue comment through", %{task: task} do
+      thumbs = %{"content" => "+1", "user" => %{"id" => @owner_gh}, "created_at" => "2026-10-01T11:00:00Z"}
+      issue = annotate(task, [issue_comment(501, @stranger_gh)], %{501 => [thumbs]})
+
+      CheckPrStatus.apply_waiting_for_input(task, waiting(%{issue_comments: issue}))
+
+      reloaded = Ash.get!(Task, task.id)
+      assert reloaded.state == :queued
+      assert reloaded.issue_comments_seen_at == ~U[2026-10-01 11:00:00.000000Z]
+    end
+
+    test "an already-seen issue comment does not re-dispatch", %{task: task} do
+      task = Ash.Seed.update!(task, %{issue_comments_seen_at: ~U[2026-10-01 10:00:00.000000Z]})
+      issue = annotate(task, [issue_comment(501, @member_gh)])
+
+      CheckPrStatus.apply_waiting_for_input(task, waiting(%{issue_comments: issue}))
+
+      assert Ash.get!(Task, task.id).state == :waiting_for_input
+    end
+
+    test "a PR comment alone leaves the issue marker untouched", %{task: task} do
+      seen = ~U[2026-09-30 12:00:00.000000Z]
+      task = Ash.Seed.update!(task, %{issue_comments_seen_at: seen})
+
+      CheckPrStatus.apply_waiting_for_input(
+        task,
+        waiting(%{comments: [comment("2026-10-01T10:00:00Z")]})
+      )
+
+      reloaded = Ash.get!(Task, task.id)
+      assert reloaded.state == :queued
+      assert reloaded.issue_comments_seen_at == seen
+    end
+
+    test "a merge-conflict auto-fix also marks surfaced issue comments seen", %{task: task} do
+      issue = annotate(task, [issue_comment(501, @member_gh)])
+      pr = %{"mergeable" => false, "mergeable_state" => "dirty"}
+
+      CheckPrStatus.apply_waiting_for_input(task, waiting(%{pr: pr, issue_comments: issue}))
+
+      reloaded = Ash.get!(Task, task.id)
+      assert reloaded.state == :queued
+      assert reloaded.pr_auto_fix_attempts == 1
+      assert reloaded.issue_comments_seen_at == ~U[2026-10-01 10:00:00.000000Z]
+    end
+
+    test "nothing new leaves the task waiting", %{task: task} do
+      CheckPrStatus.apply_waiting_for_input(task, waiting(%{}))
+
+      assert Ash.get!(Task, task.id).state == :waiting_for_input
+    end
+  end
+
+  describe "issue_feedback/2" do
+    test "passes fetched comments through" do
+      assert CheckPrStatus.issue_feedback({:ok, [%{"id" => 1}]}, "t") == [%{"id" => 1}]
+    end
+
+    test "degrades a failed fetch to no issue feedback" do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert CheckPrStatus.issue_feedback({:error, :boom}, "t") == []
+        end)
+
+      assert log =~ "Failed to read issue comments"
     end
   end
 end
