@@ -12,6 +12,7 @@ defmodule Camelot.Runtime.AgentConfig do
   """
 
   alias Camelot.Agents.Agent
+  alias Camelot.Agents.AntigravityDefaults
   alias Camelot.Agents.ClaudeCodeDefaults
   alias Camelot.Agents.CodexDefaults
   alias Camelot.Agents.KimiDefaults
@@ -282,6 +283,21 @@ defmodule Camelot.Runtime.AgentConfig do
   defp fallback_for("codex_pr_system_prompt") do
     Logger.warning("Missing PromptTemplate codex_pr_system_prompt; using built-in default")
     CodexDefaults.pr_system_prompt()
+  end
+
+  defp fallback_for("agy_planning_system_prompt") do
+    Logger.warning("Missing PromptTemplate agy_planning_system_prompt; using built-in default")
+    AntigravityDefaults.planning_system_prompt()
+  end
+
+  defp fallback_for("agy_execution_system_prompt") do
+    Logger.warning("Missing PromptTemplate agy_execution_system_prompt; using built-in default")
+    AntigravityDefaults.execution_system_prompt()
+  end
+
+  defp fallback_for("agy_pr_system_prompt") do
+    Logger.warning("Missing PromptTemplate agy_pr_system_prompt; using built-in default")
+    AntigravityDefaults.pr_system_prompt()
   end
 
   defp fallback_for("kimi_planning_system_prompt") do

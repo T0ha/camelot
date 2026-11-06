@@ -125,4 +125,5 @@ rewrites `available_models` automatically.
 ---
 
 See also: [Setting up Codex](codex.md) ·
+[Setting up Antigravity](antigravity.md) ·
 [Get Started with Camelot Cloud](../cloud/get-started.md)
