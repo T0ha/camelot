@@ -139,6 +139,79 @@ defmodule CamelotWeb.UsageSchedulingLiveTest do
     end
   end
 
+  describe "profile usage limits for a monthly quota (Kimi)" do
+    setup %{user: user} do
+      Ash.create!(Credential, %{kind: :kimi_api_key, value: "sk-kimi", user_id: user.id})
+      %{kimi: agent!("kimi")}
+    end
+
+    test "labels the cap and the reading as monthly", ctx do
+      {:ok, view, _html} = live(ctx.conn, ~p"/profile/usage")
+      html = view |> element("#usage-policy-#{ctx.kimi.slug}") |> render()
+
+      assert html =~ "Monthly cap %"
+      assert html =~ "Current monthly usage %"
+      refute html =~ "Weekly cap %"
+
+      assert view |> element("#usage-policy-#{ctx.kimi.slug}-snapshot") |> render() =~
+               "No monthly usage reading yet."
+    end
+
+    test "a manual reading with a reset date writes a :monthly snapshot", ctx do
+      {:ok, view, _html} = live(ctx.conn, ~p"/profile/usage")
+
+      view
+      |> form("#usage-policy-#{ctx.kimi.slug}", %{
+        "policy" => %{"current_percent" => "35", "resets_on" => "2030-03-15"}
+      })
+      |> render_submit()
+
+      assert [%UsageSnapshot{window: :monthly, used_percent: 35.0, resets_at: resets_at}] =
+               UsageSnapshot
+               |> Ash.Query.filter(user_id == ^ctx.user.id and credential_kind == :kimi_api_key)
+               |> Ash.read!()
+
+      # Midnight in Berlin (CET, UTC+1) on the given day.
+      assert DateTime.compare(resets_at, ~U[2030-03-14 23:00:00Z]) == :eq
+
+      assert view |> element("#usage-policy-#{ctx.kimi.slug}-snapshot") |> render() =~
+               "35% of the monthly quota used"
+    end
+
+    test "a manual reading without a reset date assumes a month", ctx do
+      {:ok, view, _html} = live(ctx.conn, ~p"/profile/usage")
+
+      view
+      |> form("#usage-policy-#{ctx.kimi.slug}", %{"policy" => %{"current_percent" => "10"}})
+      |> render_submit()
+
+      assert [%UsageSnapshot{window: :monthly, resets_at: resets_at}] =
+               UsageSnapshot
+               |> Ash.Query.filter(user_id == ^ctx.user.id and credential_kind == :kimi_api_key)
+               |> Ash.read!()
+
+      days = DateTime.diff(resets_at, DateTime.utc_now(), :day)
+      assert days in 27..31
+    end
+
+    test "shows an active usage-limit pause on the credential", ctx do
+      ctx.user.id
+      |> Credential.for_user_and_kind(:kimi_api_key)
+      |> Ash.update!(
+        %{usage_limited_until: ~U[2030-01-07 08:00:00Z], usage_limit_window: "5-hour"},
+        action: :mark_usage_limited,
+        authorize?: false
+      )
+
+      {:ok, view, _html} = live(ctx.conn, ~p"/profile/usage")
+      html = view |> element("#usage-policy-#{ctx.kimi.slug}-limited") |> render()
+
+      assert html =~ "5-hour usage limit reached"
+      assert html =~ "09:00 CET"
+      refute has_element?(view, "#usage-policy-#{ctx.agent.slug}-limited")
+    end
+  end
+
   describe "task schedule" do
     test "saving the schedule converts local times and pins the card", ctx do
       task = task!(ctx)

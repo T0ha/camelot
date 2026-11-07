@@ -12,6 +12,15 @@ config :ash,
   default_page_type: :keyset,
   policies: [no_filter_static_forbidden_reads?: false]
 
+# Magic links sign the user in on GET of the magic-link URL, with no
+# intermediate "Sign In" button page (`require_interaction?` is unset on
+# the strategy). This opts out of ash_authentication's warning about
+# email clients pre-fetching GET links; the magic-link emails carry a
+# single-use token so a pre-fetch consumes it, which is the accepted
+# trade-off for removing the extra click.
+config :ash_authentication,
+  bypass_require_interaction_for_magic_link?: true
+
 # Shared application cache (`Camelot.Cache`), node-local ETS.
 #
 # `gc_interval` is the generational rotation period: an entry can be
@@ -181,7 +190,16 @@ config :esbuild,
 # Configure Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id, :user_id, :project_id, :task_id, :installation_id, :reason, :http_status]
+  metadata: [
+    :request_id,
+    :user_id,
+    :project_id,
+    :task_id,
+    :recurrence_rule_id,
+    :installation_id,
+    :reason,
+    :http_status
+  ]
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason

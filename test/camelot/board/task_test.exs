@@ -501,6 +501,33 @@ defmodule Camelot.Board.TaskTest do
     end
   end
 
+  describe "update (edit until started)" do
+    test "edits a queued card that has not run yet", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      assert {:ok, edited} =
+               Ash.update(task, %{title: "Renamed", description: "More", priority: 2})
+
+      assert {edited.title, edited.description, edited.priority} == {"Renamed", "More", 2}
+    end
+
+    test "is refused once a run has started", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+
+      {:ok, _session} =
+        Ash.create(Camelot.Agents.Session, %{agent_id: ctx.agent.id, task_id: task.id})
+
+      assert {:error, _} = Ash.update(task, %{title: "Too late"})
+    end
+
+    test "is refused once the card left the queue", ctx do
+      {:ok, task} = create_task(ctx.project, ctx.user)
+      {:ok, task} = Ash.update(task, %{}, action: :begin_work)
+
+      assert {:error, _} = Ash.update(task, %{title: "Too late"})
+    end
+  end
+
   describe "cancel" do
     test "cancel from any state", ctx do
       {:ok, task} = create_task(ctx.project, ctx.user)

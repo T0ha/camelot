@@ -403,22 +403,85 @@ defmodule Camelot.Board.PromptBuilder do
   # silently ship a dead link into an agent's prompt.
   defp task_url(task), do: url(~p"/tasks/#{task.id}")
 
-  defp append_conversation(prompt, messages) when is_list(messages) and messages != [] do
-    sorted = Enum.sort_by(messages, & &1.inserted_at)
+  defp append_conversation(prompt, messages) do
+    prompt <> conversation_block(messages)
+  end
 
+  # The prompt reaches the agent CLI as a single argv string, and Linux
+  # refuses any one argument over 128 KiB (`E2BIG`): the `docker exec`
+  # then dies with code 255 before the agent even starts. A stored reply
+  # can be a whole raw output log, so cap each message and the history.
+  @history_message_max_bytes 8_000
+  @history_max_bytes 64_000
+
+  @doc """
+  Renders the task's conversation history block appended to a prompt,
+  or `""` when there are no messages.
+
+  Messages render oldest first. Each is cut to its last
+  #{@history_message_max_bytes} bytes (an agent's summary comes last),
+  and the oldest messages are dropped once the history passes
+  #{@history_max_bytes} bytes, so the prompt stays a valid argv string.
+  """
+  @spec conversation_block([map()] | nil) :: String.t()
+  def conversation_block([_ | _] = messages) do
     history =
-      Enum.map_join(sorted, "\n", fn msg ->
-        label = if msg.role == :assistant, do: "Assistant", else: "User"
-        "#{label}: #{msg.content}"
-      end)
+      messages
+      |> Enum.sort_by(& &1.inserted_at, NaiveDateTime)
+      |> Enum.map(&render_message/1)
+      |> keep_recent(@history_max_bytes)
+      |> Enum.join("\n")
 
-    prompt <>
-      "\n\n--- Conversation History ---\n" <>
+    "\n\n--- Conversation History ---\n" <>
       history <>
       "\n\nPlease continue based on the conversation above."
   end
 
-  defp append_conversation(prompt, _messages), do: prompt
+  def conversation_block(_messages), do: ""
+
+  defp render_message(%{role: role, content: content}) do
+    "#{message_label(role)}: #{keep_tail(content, @history_message_max_bytes)}"
+  end
+
+  defp message_label(:assistant), do: "Assistant"
+  defp message_label(_role), do: "User"
+
+  defp keep_tail(text, max) when byte_size(text) <= max, do: text
+
+  defp keep_tail(text, max) do
+    skipped = byte_size(text) - max
+
+    kept =
+      text
+      |> binary_part(skipped, max)
+      |> drop_partial_char()
+
+    "[... #{skipped} earlier bytes truncated ...]\n" <> kept
+  end
+
+  # A byte cut can land inside a multi-byte character; skip its
+  # continuation bytes (0b10xxxxxx) so the result stays valid UTF-8.
+  defp drop_partial_char(<<0b10::2, _::6, rest::binary>>), do: drop_partial_char(rest)
+  defp drop_partial_char(text), do: text
+
+  # Newest messages win: walk back from the latest and stop before the
+  # budget is exceeded, always keeping at least the latest message.
+  defp keep_recent(rendered, budget) do
+    {kept, _used} =
+      rendered
+      |> Enum.reverse()
+      |> Enum.reduce_while({[], 0}, fn line, {acc, used} ->
+        size = byte_size(line) + 1
+
+        if acc == [] or used + size <= budget do
+          {:cont, {[line | acc], used + size}}
+        else
+          {:halt, {acc, used}}
+        end
+      end)
+
+    kept
+  end
 
   defp fallback_prompt(task) do
     parts = ["Task: #{task.title}"]

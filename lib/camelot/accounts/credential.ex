@@ -29,10 +29,14 @@ defmodule Camelot.Accounts.Credential do
   # when it wasn't (see
   # `20260925110000_retire_codex_api_key_credential_kind.exs`). Kinds
   # name the provider, not the agent CLI that happens to read them —
-  # `:claude_api_key`, not `:claude_code_api_key`.
+  # `:claude_api_key`, not `:claude_code_api_key`. `:kimi_api_key`
+  # covers both Kimi key sources (Code Console membership and Open
+  # Platform pay-as-you-go): the runner probes which endpoint it
+  # belongs to.
   @kinds [
     :claude_api_key,
     :openai_api_key,
+    :kimi_api_key,
     :ssh_private_key,
     :generic
   ]

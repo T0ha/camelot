@@ -21,6 +21,7 @@ defmodule CamelotWeb.AgentLive.Index do
   @parser_options [
     {"Claude Code JSON", "claude_code_json"},
     {"Codex JSONL", "codex_jsonl"},
+    {"Kimi JSONL", "kimi_jsonl"},
     {"Raw Text", "raw_text"}
   ]
 
@@ -34,7 +35,7 @@ defmodule CamelotWeb.AgentLive.Index do
                  models_probe)
   @integer_fields ~w(base_retry_delay_ms max_retries)
 
-  @credential_kinds ~w(claude_api_key openai_api_key ssh_private_key generic)
+  @credential_kinds ~w(claude_api_key openai_api_key kimi_api_key ssh_private_key generic)
 
   @impl true
   def mount(_params, _session, socket) do
@@ -352,8 +353,13 @@ defmodule CamelotWeb.AgentLive.Index do
     end
   end
 
-  defp parse_atom("claude_code_json"), do: :claude_code_json
-  defp parse_atom(_), do: :raw_text
+  # Every option the select offers must map back to its parser, or
+  # saving an agent silently resets it to `:raw_text`.
+  @parsers Map.new(@parser_options, fn {_label, value} ->
+             {value, String.to_atom(value)}
+           end)
+
+  defp parse_atom(value), do: Map.get(@parsers, value, :raw_text)
 
   defp nilify(""), do: nil
   defp nilify(nil), do: nil

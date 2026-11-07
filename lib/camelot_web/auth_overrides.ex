@@ -6,14 +6,9 @@ defmodule CamelotWeb.AuthOverrides do
   use AshAuthentication.Phoenix.Overrides
 
   alias AshAuthentication.Phoenix.Components
-  alias AshAuthentication.Phoenix.MagicSignInLive
   alias AshAuthentication.Phoenix.SignInLive
 
   override SignInLive do
-    set(:root_class, "grid h-screen place-items-center bg-base-200")
-  end
-
-  override MagicSignInLive do
     set(:root_class, "grid h-screen place-items-center bg-base-200")
   end
 

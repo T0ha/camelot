@@ -27,7 +27,7 @@ defmodule Camelot.Agents.UsageSnapshot do
 
   alias Camelot.Accounts.Credential
 
-  @windows [:weekly, :session]
+  @windows [:weekly, :monthly, :session]
   @sources [:cli, :manual, :estimated]
 
   postgres do
@@ -57,7 +57,11 @@ defmodule Camelot.Agents.UsageSnapshot do
       allow_nil?(false)
       public?(true)
       constraints(one_of: @windows)
-      description(":weekly (seven-day) or :session (five-hour) quota window")
+
+      description(
+        ":weekly (seven-day), :monthly (billing cycle) or :session " <>
+          "(five-hour) quota window"
+      )
     end
 
     attribute :used_percent, :float do

@@ -311,4 +311,60 @@ defmodule Camelot.Board.PromptBuilderTest do
       assert PromptBuilder.format_feedback([], issue, 1) == ""
     end
   end
+
+  describe "conversation_block/1" do
+    defp message(role, content, seconds) do
+      %{
+        role: role,
+        content: content,
+        inserted_at: NaiveDateTime.add(~N[2026-11-07 12:00:00], seconds)
+      }
+    end
+
+    test "is blank without messages" do
+      assert PromptBuilder.conversation_block([]) == ""
+      assert PromptBuilder.conversation_block(nil) == ""
+    end
+
+    test "renders messages oldest first with role labels" do
+      block =
+        PromptBuilder.conversation_block([
+          message(:assistant, "second", 2),
+          message(:user, "first", 1)
+        ])
+
+      assert block =~ "--- Conversation History ---"
+      assert block =~ ~r/User: first\nAssistant: second/
+      assert block =~ "Please continue based on the conversation above."
+    end
+
+    test "keeps the tail of an oversized message" do
+      huge = String.duplicate("x", 200_000) <> "FINAL SUMMARY"
+      block = PromptBuilder.conversation_block([message(:assistant, huge, 1)])
+
+      assert byte_size(block) < 20_000
+      assert block =~ "FINAL SUMMARY"
+      assert block =~ "truncated"
+    end
+
+    test "stays under the kernel's single-argument limit for long histories" do
+      messages =
+        for n <- 1..100 do
+          message(:user, String.duplicate("y", 10_000) <> " msg-#{n}.", n)
+        end
+
+      block = PromptBuilder.conversation_block(messages)
+
+      assert byte_size(block) < 80_000
+      assert block =~ "msg-100."
+      refute block =~ "msg-1."
+    end
+
+    test "never splits a multi-byte character" do
+      huge = String.duplicate("ж", 100_000)
+      block = PromptBuilder.conversation_block([message(:user, huge, 1)])
+
+      assert String.valid?(block)
+    end
+  end
 end

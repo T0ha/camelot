@@ -268,6 +268,7 @@ failures are worth logging.
 | Event | Properties |
 |---|---|
 | `claude_token_added` / `claude_token_removed` | `kind` |
+| `kimi_token_added` / `kimi_token_removed` | `kind` |
 | `credential_added` / `credential_removed` | `kind` |
 
 `claude_token_*` is the funnel step; other kinds get the generic event
@@ -291,9 +292,10 @@ every signup is skipped — it is not something the user did.
 | `usage_snapshot_recorded` | `window` (`weekly \| session`), `source` (`cli \| manual`), `credential_kind`, `used_percent` (rounded, 0–100) |
 | `issue_attached` | `data_id`, `has_model_label`, `skip_planning` |
 | `plan_posted`, `plan_approved_via_github`, `merge_summary_posted` | `data_id` |
+| `recurrence_created`, `recurrence_updated`, `recurrence_disabled`, `recurrence_spawned` | `data_id`, `frequency` (`daily \| weekly \| monthly`), `interval`, `enabled` |
 
 `task_gated` is captured by `Camelot.Board.Changes.DispatchTasks` when
-usage-aware scheduling (`docs/usage-scheduling.md`) changes what it does
+usage-aware scheduling (`docs/guides/usage-scheduling.md`) changes what it does
 with a queued card: held back (`start_at`, `cap`, `window`) or pushed
 through out of the ordinary (`promoted`/`at_risk` for a deadline,
 `reserve_risk` for a card running over its weekly cap). The dispatcher

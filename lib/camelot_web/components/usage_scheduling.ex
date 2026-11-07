@@ -31,8 +31,6 @@ defmodule CamelotWeb.UsageScheduling do
   """
   @spec window_rows(map()) :: Rendered.t()
   def window_rows(assigns) do
-    assigns = assign(assigns, :days, @days)
-
     ~H"""
     <div id={@id} class="space-y-1">
       <div
@@ -40,14 +38,7 @@ defmodule CamelotWeb.UsageScheduling do
         id={"#{@id}-#{index}"}
         class="flex flex-wrap items-end gap-x-2"
       >
-        <.input
-          :for={{day, label} <- @days}
-          type="checkbox"
-          id={"#{@id}-#{index}-d#{day}"}
-          name={"#{@name}[#{index}][d#{day}]"}
-          value={day in row.days}
-          label={label}
-        />
+        <.day_checkboxes id={"#{@id}-#{index}"} name={"#{@name}[#{index}]"} days={row.days} />
         <.input
           type="time"
           id={"#{@id}-#{index}-from"}
@@ -67,6 +58,38 @@ defmodule CamelotWeb.UsageScheduling do
       </div>
     </div>
     """
+  end
+
+  attr :id, :string, required: true
+  attr :name, :string, required: true, doc: ~s|param prefix, e.g. "repeat[weekdays]"|
+  attr :days, :list, required: true, doc: "ticked weekdays, 1 = Monday"
+
+  @doc """
+  One checkbox per weekday, posted as `<name>[d1]` … `<name>[d7]`; read
+  them back with `days_from_params/1`.
+  """
+  @spec day_checkboxes(map()) :: Rendered.t()
+  def day_checkboxes(assigns) do
+    assigns = assign(assigns, :all_days, @days)
+
+    ~H"""
+    <.input
+      :for={{day, label} <- @all_days}
+      type="checkbox"
+      id={"#{@id}-d#{day}"}
+      name={"#{@name}[d#{day}]"}
+      value={day in @days}
+      label={label}
+    />
+    """
+  end
+
+  @doc "The weekdays `day_checkboxes/1` posted as ticked, 1 = Monday."
+  @spec days_from_params(map() | nil) :: [1..7]
+  def days_from_params(nil), do: []
+
+  def days_from_params(params) do
+    for {day, _label} <- @days, params["d#{day}"] == "true", do: day
   end
 
   @doc "Editor rows for `windows` in `zone`, plus a blank row to add one."
@@ -154,7 +177,7 @@ defmodule CamelotWeb.UsageScheduling do
 
   defp row_from_params(row) do
     %{
-      days: for({day, _label} <- @days, row["d#{day}"] == "true", do: day),
+      days: days_from_params(row),
       from: row["from"] || "",
       to: row["to"] || ""
     }

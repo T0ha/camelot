@@ -113,6 +113,106 @@ defmodule Camelot.Runtime.UsageLimitTest do
     end
   end
 
+  describe "kimi_jsonl" do
+    # The CLI already retried the 429 internally, so one reaching
+    # Camelot means the retries are exhausted.
+    test "a provider.rate_limit error is a pause" do
+      parsed = {:error, "kimi error: provider.rate_limit: 429 Too Many Requests"}
+
+      assert {:limited, %{reset_at: reset_at, window: nil}} =
+               UsageLimit.detect(:kimi_jsonl, parsed, "", @now)
+
+      assert DateTime.diff(reset_at, @now) == UsageLimit.fallback_minutes() * 60
+    end
+
+    test "quota exhaustion is a pause" do
+      parsed =
+        {:error,
+         "kimi error: provider.api_error: 429 You exceeded your current " <>
+           "token quota, please check your account balance"}
+
+      assert {:limited, _info} = UsageLimit.detect(:kimi_jsonl, parsed, "", @now)
+    end
+
+    test "an account in arrears is a pause" do
+      parsed = {:error, "kimi error: provider.api_error: 403 Your account is in arrears"}
+
+      assert {:limited, _info} = UsageLimit.detect(:kimi_jsonl, parsed, "", @now)
+    end
+
+    # Verbatim kimi-code output for a Kimi Code plan quota rejection.
+    @subscription "https://www.kimi.com/settings/subscription?tab=quota"
+
+    defp kimi_429(text) do
+      {:error, "kimi error: provider.api_error: 429 " <> text <> " " <> @subscription}
+    end
+
+    test "the 5-hour limit pauses for the default fallback" do
+      parsed =
+        kimi_429(
+          "You've reached your 5-hour usage limit. Your quota will reset " <>
+            "when the current 5-hour window ends. To continue now, purchase " <>
+            "extra usage or upgrade your plan:"
+        )
+
+      assert {:limited, %{reset_at: reset_at, window: "5-hour", estimated?: true}} =
+               UsageLimit.detect(:kimi_jsonl, parsed, "", @now)
+
+      assert DateTime.diff(reset_at, @now) == UsageLimit.fallback_minutes() * 60
+    end
+
+    test "the monthly limit pauses for a day" do
+      parsed =
+        kimi_429(
+          "You've reached your monthly usage limit for this billing cycle. " <>
+            "Your quota will be refreshed in the next cycle."
+        )
+
+      assert {:limited, %{reset_at: reset_at, window: "monthly", estimated?: true}} =
+               UsageLimit.detect(:kimi_jsonl, parsed, "", @now)
+
+      assert DateTime.diff(reset_at, @now) == 24 * 3600
+    end
+
+    test "the legacy weekly limit pauses for a day" do
+      parsed = kimi_429("You've reached your weekly (7-day) usage limit.")
+
+      assert {:limited, %{reset_at: reset_at, window: "weekly"}} =
+               UsageLimit.detect(:kimi_jsonl, parsed, "", @now)
+
+      assert DateTime.diff(reset_at, @now) == 24 * 3600
+    end
+
+    test "an empty credit or Extra Usage balance pauses for a day" do
+      for text <- [
+            "Your credit balance is insufficient.",
+            "Your organization's Extra Usage balance has run out.",
+            "You've reached the Extra Usage limit set for your account by your organization."
+          ] do
+        assert {:limited, %{reset_at: reset_at, window: nil}} =
+                 UsageLimit.detect(:kimi_jsonl, kimi_429(text), "", @now)
+
+        assert DateTime.diff(reset_at, @now) == 24 * 3600
+      end
+    end
+
+    # A risk-control limit, not a quota: the normal retry path handles it.
+    test "the concurrent request limit is not a pause" do
+      parsed = kimi_429("You've reached your concurrent request limit.")
+
+      assert UsageLimit.detect(:kimi_jsonl, parsed, "", @now) == :none
+    end
+
+    test "an auth error is not a pause" do
+      parsed =
+        {:error,
+         "kimi error: provider.auth_error: 401 The API Key appears to be " <>
+           "invalid or may have expired."}
+
+      assert UsageLimit.detect(:kimi_jsonl, parsed, "", @now) == :none
+    end
+  end
+
   test "an unrecognised parser is never a pause" do
     assert UsageLimit.detect(:raw_text, {:error, "boom"}, "", @now) == :none
   end
