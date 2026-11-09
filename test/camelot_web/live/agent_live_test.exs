@@ -27,6 +27,20 @@ defmodule CamelotWeb.AgentLiveTest do
       assert html =~ to_string(claude.max_retries)
     end
 
+    for slug <- ["kimi", "codex", "claude_code"] do
+      test "saving the #{slug} agent unchanged keeps its parser", %{conn: conn} do
+        agent = agent!(unquote(slug))
+
+        {:ok, view, _html} = live(conn, ~p"/agents/#{agent.id}/edit")
+
+        view
+        |> form("#agent-form")
+        |> render_submit()
+
+        assert agent!(unquote(slug)).parser == agent.parser
+      end
+    end
+
     test "runner image picker suggests Camelot's built images and fills the field", %{
       conn: conn
     } do

@@ -16,6 +16,7 @@ defmodule Camelot.DocsTest do
       assert "guides/camelot-folder" in slugs
       assert "guides/usage-scheduling" in slugs
       assert "guides/recurring-tasks" in slugs
+      assert "guides/github-issues-workflow" in slugs
 
       # Internal docs live flat under docs/ (not in a category folder), so
       # they are never globbed or published.
@@ -41,6 +42,16 @@ defmodule Camelot.DocsTest do
       assert title == "The .camelot folder"
       assert body =~ ".camelot/rules"
       assert body =~ "@.camelot/rules/feature-workflow.md"
+    end
+
+    test "the GitHub issues guide is published with resolved links" do
+      assert {:ok, %Page{title: title, order: order, body: body}} =
+               Docs.get_page("guides/github-issues-workflow")
+
+      assert title == "GitHub issues workflow"
+      assert order == 4
+      assert body =~ ~s(href="/self-hosting/github-app")
+      refute body =~ "docs/github-issues-workflow"
     end
 
     test "get_page!/1 raises Camelot.Docs.NotFound for unknown slug" do

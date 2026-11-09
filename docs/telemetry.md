@@ -309,7 +309,7 @@ reading saved on the profile.
 
 `issue_attached`, `plan_posted`, `plan_approved_via_github` and
 `merge_summary_posted` belong to the GitHub issue workflow
-(`docs/github-issues-workflow.md`). `issue_attached` is captured by
+(`docs/guides/github-issues-workflow.md`). `issue_attached` is captured by
 `Camelot.Projects.Changes.SyncGithubIssues` when an issue becomes a
 task, alongside the usual `task_created`; `skip_planning` is whether
 the task started straight in execution. `plan_posted` is

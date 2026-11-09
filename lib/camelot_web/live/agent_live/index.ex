@@ -353,8 +353,13 @@ defmodule CamelotWeb.AgentLive.Index do
     end
   end
 
-  defp parse_atom("claude_code_json"), do: :claude_code_json
-  defp parse_atom(_), do: :raw_text
+  # Every option the select offers must map back to its parser, or
+  # saving an agent silently resets it to `:raw_text`.
+  @parsers Map.new(@parser_options, fn {_label, value} ->
+             {value, String.to_atom(value)}
+           end)
+
+  defp parse_atom(value), do: Map.get(@parsers, value, :raw_text)
 
   defp nilify(""), do: nil
   defp nilify(nil), do: nil
