@@ -64,7 +64,7 @@ developers who never sleep, managed through a clean visual interface.
 - An SSH key is auto-provisioned per user; a GitHub App is optional and
   admin-configured for PR/issue polling — see
   [`docs/self-hosting/github-app.md`](docs/self-hosting/github-app.md)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and/or [Codex](https://github.com/openai/codex) CLI installed
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex) and/or [Google Antigravity](docs/agents/antigravity.md) (`agy`) CLI installed
 
 ### Installation
 
