@@ -11,12 +11,23 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   - failing CI checks → queued for agent fix (via request_pr_changes)
   - changes_requested → queued for agent fix (via request_pr_changes)
   - new comments after last commit → queued for agent fix
+  - new accepted comments on the task's issue → queued for agent fix
   - approved → PR merged on GitHub, then done (via complete)
 
   "Comments" covers three GitHub surfaces: top-level issue comments,
   inline review comments on the diff (`pulls/{n}/comments`), and the
   body of a `COMMENTED` review — a reviewer who leaves inline notes or
   a plain "Comment" review (not "Request changes") is acted on too.
+
+  The task's GitHub issue (`issue_number`, when it is not the PR
+  itself) is read too, but only while the task is waiting for input, so
+  nothing is marked seen while the agent is still running. A project
+  member's comment, or a stranger's comment a project owner 👍'd, that
+  is newer than `issue_comments_seen_at` requests changes like a new PR
+  comment (`/approve` does nothing at this stage). Camelot's own bot
+  comments and anything up to the plan comment are skipped; see
+  `Camelot.Board.IssueComments`. An approval on the PR still wins, and a
+  failed issue read is logged and treated as no issue feedback.
 
   Merge-conflict and CI-failure auto-fixes fire whenever the PR is in
   that state, regardless of who authored the latest commit. (A previous
@@ -50,6 +61,7 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   use Ash.Resource.Change
 
   alias Camelot.Board.Changes.PostMergeSummary
+  alias Camelot.Board.IssueComments
   alias Camelot.Board.PrApproval
   alias Camelot.Board.Task
   alias Camelot.Board.TaskLink
@@ -236,7 +248,14 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
         transition(task, :cancel)
 
       task.state == :waiting_for_input ->
-        apply_waiting_for_input(task, pr, reviews, comments, commits, check_runs)
+        apply_waiting_for_input(task, %{
+          pr: pr,
+          reviews: reviews,
+          comments: comments,
+          commits: commits,
+          check_runs: check_runs,
+          issue_comments: task |> IssueComments.fetch() |> issue_feedback(task.id)
+        })
 
       true ->
         :ok
@@ -401,28 +420,75 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
     end
   end
 
-  defp apply_waiting_for_input(task, pr, reviews, comments, commits, check_runs) do
-    auto_fixable? = merge_conflict?(pr) or ci_failing?(check_runs)
+  @typedoc """
+  What one poll read for a task whose PR awaits review:
+
+    * `pr`, `reviews`, `commits`, `check_runs` — the PR as GitHub
+      reports it.
+    * `comments` — the PR's reviewer feedback
+      (`merge_review_feedback/3`), bot comments already dropped.
+    * `issue_comments` — the task issue's PR-phase window, annotated
+      with `"acted_at"` (`Camelot.Board.IssueComments.fetch/1`).
+  """
+  @type waiting_state :: %{
+          pr: map(),
+          reviews: [map()],
+          comments: [map()],
+          commits: [map()],
+          check_runs: [map()],
+          issue_comments: [map()]
+        }
+
+  @doc """
+  Acts on one poll of a PR awaiting review: queues an auto-fix,
+  requests changes, or merges an approved PR.
+
+  An unseen, accepted comment on the task's issue requests changes just
+  like a new PR comment, ranked after an approval. Whichever branch
+  re-dispatches the agent also marks the issue comments it surfaced as
+  seen; PR and issue feedback keep separate seen markers.
+  """
+  @spec apply_waiting_for_input(Task.t(), waiting_state()) :: :ok
+  def apply_waiting_for_input(task, state) do
+    auto_fixable? = merge_conflict?(state.pr) or ci_failing?(state.check_runs)
     maybe_log_auto_fix_cap(task, auto_fixable?)
-    commit_date = last_commit_date(commits)
+    commit_date = last_commit_date(state.commits)
     seen_at = task.pr_comments_seen_at
+    issue_comments = IssueComments.new_since(state.issue_comments, task.issue_comments_seen_at)
+    feedback = %{comments: state.comments, reviews: state.reviews, issue_comments: issue_comments}
 
     cond do
       auto_fixable? and auto_fix_available?(task) ->
-        request_changes(task, comments, reviews, task.pr_auto_fix_attempts + 1)
+        request_changes(task, feedback, task.pr_auto_fix_attempts + 1)
 
-      changes_requested?(reviews, commit_date, seen_at) ->
-        request_changes(task, comments, reviews, 0)
+      changes_requested?(state.reviews, commit_date, seen_at) ->
+        request_changes(task, feedback, 0)
 
-      approved?(reviews) ->
+      approved?(state.reviews) ->
         merge_approved(task)
 
-      new_comments?(comments, commit_date, seen_at) ->
-        request_changes(task, comments, reviews, 0)
+      new_comments?(state.comments, commit_date, seen_at) or issue_comments != [] ->
+        request_changes(task, feedback, 0)
 
       true ->
         :ok
     end
+
+    :ok
+  end
+
+  @doc """
+  Coerces an issue-comments fetch into a list. Issue comments only add
+  feedback, so a failed fetch is logged and treated as none: the PR
+  checks still run and the issue seen marker is left alone.
+  """
+  @spec issue_feedback({:ok, [map()]} | {:error, term()}, Ash.UUID.t()) :: [map()]
+  def issue_feedback({:ok, comments}, _task_id), do: comments
+
+  def issue_feedback({:error, reason}, task_id) do
+    Logger.warning("Failed to read issue comments for task #{task_id}: #{inspect(reason)}")
+
+    []
   end
 
   @doc """
@@ -657,14 +723,17 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   defp parse_seen_at(nil), do: DateTime.utc_now()
   defp parse_seen_at(iso), do: parse_github_datetime(iso)
 
-  defp request_changes(task, comments, reviews, attempts) do
-    seen_at = feedback_seen_at(comments, reviews)
+  defp request_changes(task, feedback, attempts) do
+    attrs =
+      put_issue_comments_seen(
+        %{
+          pr_comments_seen_at: feedback_seen_at(feedback.comments, feedback.reviews),
+          pr_auto_fix_attempts: attempts
+        },
+        feedback.issue_comments
+      )
 
-    case Ash.update(
-           task,
-           %{pr_comments_seen_at: seen_at, pr_auto_fix_attempts: attempts},
-           action: :request_pr_changes
-         ) do
+    case Ash.update(task, attrs, action: :request_pr_changes) do
       {:ok, updated} ->
         broadcast(updated)
         Logger.info("Task #{task.id} → request_pr_changes")
@@ -675,6 +744,14 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
             "task #{task.id}: #{inspect(error)}"
         )
     end
+  end
+
+  # Only issue comments this dispatch surfaces move the issue marker,
+  # so an empty list (or a failed fetch) never skips any.
+  defp put_issue_comments_seen(attrs, []), do: attrs
+
+  defp put_issue_comments_seen(attrs, issue_comments) do
+    Map.put(attrs, :issue_comments_seen_at, IssueComments.seen_marker(issue_comments))
   end
 
   defp parse_github_datetime(iso_string) do
