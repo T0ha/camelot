@@ -28,7 +28,9 @@ Open a card, then **Schedule → Repeat**:
 Saving on a one-off card creates a `Camelot.Board.RecurrenceRule` and
 makes the card the first of the series. If the card has not started yet
 it is pinned (`start_at`) to the first occurrence and waits on the board
-with the usual "Starts …" badge; a card that already ran keeps its own
+in **To Do** with the usual "Starts …" badge (whatever stage it will run
+in next, see `Camelot.Board.Column`; it moves to its real column once the
+start time passes and work begins); a card that already ran keeps its own
 schedule. Saving again updates the rule — and re-pins an upcoming card
 that has not started. **Don't repeat** turns the series off
 (`:disable`): the rule and its cards are kept, the current card stays as

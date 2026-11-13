@@ -678,4 +678,67 @@ defmodule CamelotWeb.BoardLiveTest do
       assert Task |> Ash.Query.filter(title == ^title) |> Ash.read_one!()
     end
   end
+
+  describe "cards waiting for their start time" do
+    setup %{user: user, home_project: project} do
+      %{user: user, project: project}
+    end
+
+    defp waiting_card!(ctx, attrs) do
+      Ash.Seed.seed!(
+        Task,
+        Map.merge(
+          %{
+            title: "waiting-#{System.unique_integer([:positive])}",
+            project_id: ctx.project.id,
+            creator_id: ctx.user.id,
+            stage: :executing,
+            state: :queued,
+            start_at: DateTime.add(DateTime.utc_now(), 3600)
+          },
+          attrs
+        )
+      )
+    end
+
+    test "a queued executing card with a future start renders in To Do", ctx do
+      task = waiting_card!(ctx, %{})
+      {:ok, view, _html} = live(ctx.conn, ~p"/")
+
+      assert has_element?(view, "#column-todo #task-#{task.id}-schedule")
+      refute has_element?(view, "#column-executing #task-#{task.id}-schedule")
+    end
+
+    test "a queued planning card with a future start renders in To Do", ctx do
+      task = waiting_card!(ctx, %{stage: :planning})
+      {:ok, view, _html} = live(ctx.conn, ~p"/")
+
+      assert has_element?(view, "#column-todo #task-#{task.id}-schedule")
+      refute has_element?(view, "#column-planning #task-#{task.id}-schedule")
+    end
+
+    test "returns to its real column once the start has passed", ctx do
+      task = waiting_card!(ctx, %{})
+      {:ok, view, _html} = live(ctx.conn, ~p"/")
+      assert has_element?(view, "#column-todo", task.title)
+
+      Ash.Seed.update!(task, %{start_at: DateTime.add(DateTime.utc_now(), -60)})
+      send(view.pid, {:task_updated, task})
+
+      assert has_element?(view, "#column-executing", task.title)
+      refute has_element?(view, "#column-todo", task.title)
+    end
+
+    test "re-reads the board when the nearest start time arrives", ctx do
+      task =
+        waiting_card!(ctx, %{start_at: DateTime.add(DateTime.utc_now(), 1, :second)})
+
+      {:ok, view, _html} = live(ctx.conn, ~p"/")
+      assert has_element?(view, "#column-todo", task.title)
+
+      Process.sleep(1_300)
+
+      assert has_element?(view, "#column-executing", task.title)
+    end
+  end
 end
