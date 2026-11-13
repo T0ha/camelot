@@ -351,7 +351,7 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
   defp env_pairs(%Spec{} = spec) do
     base = Enum.map(spec.env, fn {k, v} -> "#{k}=#{v}" end)
     secret_env = Enum.flat_map(spec.secrets, &SecretEnv.to_env/1)
-    extras = bootstrap_env(spec) ++ repo_env(spec) ++ mcp_env(spec) ++ attachments_env(spec)
+    extras = bootstrap_env(spec) ++ repo_env(spec) ++ mcp_env(spec) ++ Spec.attachments_env(spec)
 
     base ++ secret_env ++ extras
   end
@@ -367,9 +367,6 @@ defmodule Camelot.Runtime.Runner.DockerEngine.TaskContainer do
 
   defp mcp_env(%Spec{mcp_config_json: nil}), do: []
   defp mcp_env(%Spec{mcp_config_json: json}), do: ["PROJECT_MCP_CONFIG_JSON=#{json}"]
-
-  defp attachments_env(%Spec{attachments_json: nil}), do: []
-  defp attachments_env(%Spec{attachments_json: json}), do: ["ATTACHMENTS_JSON=#{json}"]
 
   defp binds(%Spec{profile_volume: nil}), do: []
   defp binds(%Spec{profile_volume: vol}), do: ["#{vol}:/home/agent:rw"]

@@ -8,6 +8,10 @@ defmodule Camelot.Board.TaskAttachment do
   tracks the metadata and `storage_key` needed to fetch/delete it.
   Attachments are purged (blob + row) when the task's container or
   service is torn down — see `Camelot.Board.purge_task_attachments!/1`.
+
+  Files imported from GitHub (`:github_issue`, `:github_comment`) keep
+  the URL they came from in `source_url`, so a repeated poll never
+  imports the same file twice for one task.
   """
   use Ash.Resource,
     domain: Camelot.Board,
@@ -16,7 +20,7 @@ defmodule Camelot.Board.TaskAttachment do
 
   alias Camelot.Board.Changes.DeleteAttachmentFile
 
-  @sources [:upload, :github_issue]
+  @sources [:upload, :github_issue, :github_comment]
 
   postgres do
     table("task_attachments")
@@ -53,7 +57,16 @@ defmodule Camelot.Board.TaskAttachment do
       constraints(one_of: @sources)
     end
 
+    attribute :source_url, :string do
+      allow_nil?(true)
+      public?(true)
+    end
+
     timestamps()
+  end
+
+  identities do
+    identity(:unique_source_url, [:task_id, :source_url])
   end
 
   relationships do
@@ -67,7 +80,15 @@ defmodule Camelot.Board.TaskAttachment do
 
     create :create do
       primary?(true)
-      accept([:filename, :content_type, :byte_size, :storage_key, :source])
+
+      accept([
+        :filename,
+        :content_type,
+        :byte_size,
+        :storage_key,
+        :source,
+        :source_url
+      ])
 
       argument :task_id, :uuid do
         allow_nil?(false)

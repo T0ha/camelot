@@ -112,7 +112,42 @@ ordinary change request. A stranger's `/approve` never counts as an
 approval, even with an owner's 👍. If a comment is edited after the
 👍, the 👍 no longer counts.
 
+## Attachments
+
+Camelot copies files attached on GitHub into the task, and the agent
+finds them under `.camelot/attachments/` in its workspace. This covers
+files in:
+
+- the **issue body**, when the task is imported,
+- **plan-review comments** that count as change requests (see
+  [Who counts](#who-counts)),
+- new **PR comments, inline review comments and review bodies** from
+  project members.
+
+Images (`![…](…)`) and any other upload (xlsx, pdf, zip, csv, …),
+inserted as a link or pasted as a bare URL, are imported. For non-image
+links, only GitHub's own attachment links (`github.com/user-attachments/…`
+and `*user-images.githubusercontent.com/…`) count. Other links stay
+plain text. In the prompt, the agent sees each imported link replaced
+by the path of its local copy.
+
+Each file is imported once per task, even though comments are polled
+again and again. A name that is already taken gets a suffix, such as
+`report-2.xlsx`. Files are capped at 25 MB, the same limit as uploads
+in the UI. Files a stranger attaches are never downloaded unless an
+owner 👍s that comment.
+
+If a file can't be imported, Camelot adds a task message such as
+*"Couldn't import attachment report.xlsx … (HTTP 404)"*, so you and the
+agent know it is missing. Upload it on the task page instead.
+
 ## Caveats
+
+- **Private repositories**: GitHub serves `user-attachments` files on
+  private repositories only to requests made as a *user*, and a GitHub
+  App installation token is not enough. Camelot doesn't store a user
+  token yet, so these attachments fail with the HTTP 404 message above.
+  Attachments on public repositories work.
 
 - **Latency**: imports run about every 5 minutes, so a new issue can
   take a few minutes to appear as a task. Plan approval, change

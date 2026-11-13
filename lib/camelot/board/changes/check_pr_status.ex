@@ -55,6 +55,8 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   alias Camelot.Board.TaskLink
   alias Camelot.Board.TaskMessage
   alias Camelot.Github.Client
+  alias Camelot.Github.IssueAttachments
+  alias Camelot.Github.IssueTrust
   alias Camelot.Github.Resolver
 
   require Ash.Query
@@ -635,6 +637,28 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   end
 
   @doc """
+  Imports the files attached to new PR feedback, before
+  `:request_pr_changes` starts the session that reads them.
+
+  Only feedback past `pr_comments_seen_at` counts, and only from
+  project members (`Camelot.Github.IssueTrust`). The text of any
+  comment reaches the agent, but nothing is downloaded on a
+  stranger's say-so. Callers have already dropped Camelot's own
+  comments with `bot_authored?/1`.
+  """
+  @spec import_feedback_attachments(Task.t(), [map()]) :: :ok
+  def import_feedback_attachments(task, comments) do
+    comments
+    |> Enum.filter(&new_member_feedback?(&1, task))
+    |> Enum.each(&IssueAttachments.import_from_body(task, &1["body"]))
+  end
+
+  defp new_member_feedback?(comment, task) do
+    unseen?(comment["created_at"], task.pr_comments_seen_at) and
+      IssueTrust.trusted?(IssueTrust.actor_id(comment), task.project_id)
+  end
+
+  @doc """
   The marker to record as "feedback seen up to here".
 
   Spans both feedback surfaces — comments and review verdicts — so a
@@ -658,6 +682,7 @@ defmodule Camelot.Board.Changes.CheckPrStatus do
   defp parse_seen_at(iso), do: parse_github_datetime(iso)
 
   defp request_changes(task, comments, reviews, attempts) do
+    import_feedback_attachments(task, comments)
     seen_at = feedback_seen_at(comments, reviews)
 
     case Ash.update(

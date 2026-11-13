@@ -15,6 +15,7 @@ defmodule Camelot.Board.PromptBuilder do
   alias Camelot.Board.Changes.CheckPrStatus
   alias Camelot.Board.Task
   alias Camelot.Github.Client
+  alias Camelot.Github.IssueAttachments
   alias Camelot.Github.Resolver
   alias Camelot.Prompts.Renderer
 
@@ -237,17 +238,23 @@ defmodule Camelot.Board.PromptBuilder do
 
     (issue ++ review)
     |> Enum.sort_by(& &1["created_at"])
-    |> Enum.map_join("\n\n---\n\n", &format_pr_comment/1)
+    |> Enum.map_join("\n\n---\n\n", &format_pr_comment(&1, attachments(task)))
   end
 
   defp list_or_empty({:ok, comments}), do: comments
   defp list_or_empty({:error, _reason}), do: []
 
+  defp attachments(%{attachments: %Ash.NotLoaded{}}), do: []
+  defp attachments(%{attachments: attachments}), do: attachments
+  defp attachments(_task), do: []
+
   # Inline review comments carry path/line; surface them so the agent
-  # knows which code each note refers to.
-  defp format_pr_comment(comment) do
+  # knows which code each note refers to. Links to files imported from
+  # GitHub point at their local copies.
+  defp format_pr_comment(comment, attachments) do
     login = get_in(comment, ["user", "login"])
-    "@#{login}#{comment_location(comment)}: " <> (comment["body"] || "")
+    body = IssueAttachments.localize_links(comment["body"], attachments)
+    "@#{login}#{comment_location(comment)}: " <> body
   end
 
   @doc """
