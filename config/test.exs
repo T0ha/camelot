@@ -1,5 +1,7 @@
 import Config
 
+alias Camelot.Github.IssueAttachments
+
 # Faster bcrypt for tests
 config :bcrypt_elixir, log_rounds: 1
 
@@ -34,6 +36,10 @@ config :camelot, CamelotWeb.Endpoint,
   http: [ip: {127, 0, 0, 1}, port: 4002],
   secret_key_base: "TPCuyoJrndnkht+K1E840sCK+Xh1BldDo/sOD3MezPFCmmY9/ypz0AjJ6RUEvy/u",
   server: false
+
+# GitHub attachment downloads go through a Req.Test stub, never the
+# network; tests stub `Camelot.Github.IssueAttachments`.
+config :camelot, IssueAttachments, req_options: [plug: {Req.Test, IssueAttachments}]
 
 # Disable Oban job execution in tests
 config :camelot, Oban, testing: :manual
