@@ -970,4 +970,73 @@ defmodule Camelot.Runtime.TaskRunnerTest do
       assert snapshots_for(user) == []
     end
   end
+
+  describe "handle_info({:runner_slot, ...}) attachments" do
+    defmodule RecordingBackend do
+      @moduledoc false
+
+      # Hands every spec back to the process that started the runner
+      # (the test, since it drives `handle_info/2` directly).
+      def start(spec) do
+        send(spec.owner_pid, {:recorded_spec, spec})
+        {:ok, spawn(fn -> Process.sleep(:infinity) end)}
+      end
+    end
+
+    setup do
+      previous = Application.fetch_env!(:camelot, :runner)
+
+      Application.put_env(
+        :camelot,
+        :runner,
+        Keyword.put(previous, :backend, RecordingBackend)
+      )
+
+      on_exit(fn -> Application.put_env(:camelot, :runner, previous) end)
+      :ok
+    end
+
+    defp run_slot(task, user) do
+      {:ok, session} =
+        Ash.create(Session, %{
+          agent_id: task.agent_id,
+          task_id: task.id,
+          user_id: user.id
+        })
+
+      state = %TaskRunner{
+        task_id: task.id,
+        current_session_id: session.id,
+        current_prompt: "go",
+        allowed_tools: []
+      }
+
+      {:noreply, _state} =
+        TaskRunner.handle_info({:runner_slot, session.id}, state)
+
+      assert_received {:recorded_spec, spec}
+      spec
+    end
+
+    # A task keeps one long-lived runner container, so an attachment
+    # uploaded after it booted only reaches the agent through the
+    # next session's spec.
+    test "a file uploaded after the first session reaches the next one",
+         %{task: task, user: user} do
+      assert run_slot(task, user).attachments_json == nil
+
+      {:ok, attachment} =
+        Ash.create(TaskAttachment, %{
+          filename: "late report.xlsx",
+          byte_size: 5,
+          storage_key: "key-1",
+          task_id: task.id
+        })
+
+      assert [%{"filename" => "late report.xlsx", "url" => url}] =
+               Jason.decode!(run_slot(task, user).attachments_json)
+
+      assert url =~ "/attachments/#{attachment.id}/download?token="
+    end
+  end
 end
