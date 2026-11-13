@@ -11,6 +11,10 @@ defmodule Camelot.Board.Changes.CheckIssuePlan do
       (read by `Camelot.Board.PromptBuilder` on the next agent turn),
       then `:request_plan_changes`.
 
+  Files attached to a comment that becomes a message are imported
+  first (`Camelot.Github.IssueAttachments.import_from_body/3`), and
+  the message links to their local copies.
+
   Comments left alongside an approval are still recorded as messages,
   so last-minute notes reach the executing agent.
 
@@ -38,6 +42,7 @@ defmodule Camelot.Board.Changes.CheckIssuePlan do
   alias Camelot.Board.Task
   alias Camelot.Board.TaskMessage
   alias Camelot.Github.Client
+  alias Camelot.Github.IssueAttachments
   alias Camelot.Github.IssueTrust
 
   require Logger
@@ -236,8 +241,17 @@ defmodule Camelot.Board.Changes.CheckIssuePlan do
     end
   end
 
+  # Files go in before the transition, so the next session's
+  # `ATTACHMENTS_JSON` already lists them, and the message points the
+  # agent at the local copy instead of the GitHub link.
   defp record_message(task, body) do
-    Ash.create!(TaskMessage, %{role: :user, content: body, task_id: task.id})
+    attachments =
+      for {status, _url, attachment} <- IssueAttachments.import_from_body(task, body),
+          status in [:imported, :existing],
+          do: attachment
+
+    content = IssueAttachments.localize_links(body, attachments)
+    Ash.create!(TaskMessage, %{role: :user, content: content, task_id: task.id})
   end
 
   defp outcome(true, _messages), do: {:approved, :approve_plan_from_github}

@@ -33,6 +33,21 @@ fi
 
 cd /workspace 2>/dev/null || true
 
+# A per-task container outlives its sessions, but entrypoint.sh fetches
+# attachments only at boot. Files imported later (e.g. from a GitHub
+# comment) arrive in this exec's ATTACHMENTS_JSON; fetch the ones not on
+# disk yet. Best-effort: a failed download never blocks the session.
+if [ -n "${ATTACHMENTS_JSON:-}" ] && command -v jq >/dev/null 2>&1; then
+  attachments_dir="/workspace/.camelot/attachments"
+  mkdir -p "$attachments_dir" 2>/dev/null || true
+  printf '%s' "$ATTACHMENTS_JSON" | jq -r '.[] | [.filename, .url] | @tsv' 2>/dev/null \
+    | while IFS=$'\t' read -r filename url; do
+        [ -n "$filename" ] && [ ! -e "$attachments_dir/$filename" ] || continue
+        curl -fsSL "$url" -o "$attachments_dir/$filename" \
+          || echo "[exec-wrapper] failed to fetch attachment $filename" >&2
+      done || true
+fi
+
 # Task sessions arrive as `docker exec` with the credentials in the
 # exec-time environment, which the container's entrypoint never saw —
 # so authenticate Codex here too. It reads $CODEX_HOME/auth.json and

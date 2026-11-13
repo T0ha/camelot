@@ -455,6 +455,54 @@ defmodule Camelot.Board.Changes.CheckPrStatusTest do
     end
   end
 
+  describe "import_feedback_attachments/2" do
+    @file_url "https://github.com/user-attachments/files/7/spec.pdf"
+
+    setup do
+      owner = user!(%{github_user_id: "2001"})
+
+      project =
+        Ash.create!(Project, %{name: "pr-attach-#{System.unique_integer([:positive])}", path: "/tmp/pa"}, actor: owner)
+
+      task =
+        Ash.Seed.seed!(Task, %{
+          title: "PR task",
+          project_id: project.id,
+          creator_id: owner.id,
+          agent_id: agent!("claude_code").id,
+          pr_comments_seen_at: ~U[2026-07-09 12:00:00Z]
+        })
+
+      Req.Test.stub(Camelot.Github.IssueAttachments, &Plug.Conn.send_resp(&1, 200, "pdf"))
+      %{task: task}
+    end
+
+    defp feedback(id, created, body),
+      do: %{"created_at" => created, "user" => %{"id" => id, "login" => "u#{id}"}, "body" => body}
+
+    defp attachment_names(task) do
+      task |> Ash.load!(:attachments) |> Map.fetch!(:attachments) |> Enum.map(& &1.filename)
+    end
+
+    test "imports attachments from a member's new feedback", %{task: task} do
+      CheckPrStatus.import_feedback_attachments(task, [feedback(2001, @commit, "[spec.pdf](#{@file_url})")])
+
+      assert attachment_names(task) == ["spec.pdf"]
+    end
+
+    test "skips feedback already seen", %{task: task} do
+      CheckPrStatus.import_feedback_attachments(task, [feedback(2001, "2026-07-09T11:00:00Z", @file_url)])
+
+      assert attachment_names(task) == []
+    end
+
+    test "never downloads a non-member's attachment", %{task: task} do
+      CheckPrStatus.import_feedback_attachments(task, [feedback(9999, @commit, @file_url)])
+
+      assert attachment_names(task) == []
+    end
+  end
+
   describe "propagate_to_dependents/2" do
     setup do
       {:ok, project} =
