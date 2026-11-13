@@ -9,6 +9,7 @@ release image — they ship separately and are referenced by name from
 
 ```
 base/                    debian + asdf + nodejs (default) + git + gh + tini + entrypoint.sh
+                         + exec-wrapper.sh + fetch-attachments.sh
  ├─ claude/              + claude-code CLI
  ├─ codex/               + codex CLI
  ├─ kimi/                + kimi-code CLI (on its own node, see below)
@@ -27,13 +28,51 @@ base/                    debian + asdf + nodejs (default) + git + gh + tini + en
    resolving `${credential:<kind>}` placeholders against
    `/run/secrets/<kind>`.
 3. If `$BOOTSTRAP=1` — runs the command 🏰 Camelot AI supplied and exits.
-4. Otherwise — clones `$REPO_URL` into `/workspace`, runs `asdf install`
-   (which picks up the repo's `.tool-versions`), then execs the
-   command.
+4. Otherwise — clones `$REPO_URL` into `/workspace`, fetches the
+   card's attachments (`/fetch-attachments.sh`, see below), runs
+   `asdf install` (which picks up the repo's `.tool-versions`), then
+   execs the command.
 
 The cache volume mounted at `/home/agent` is treated as exactly that —
 a cache. Every step above is idempotent; if the volume disappears, the
 next session rebuilds it.
+
+## Per-session exec contract
+
+A task keeps **one long-lived container**; every session `docker exec`s
+into it through `/exec-wrapper.sh`. The container's create-time env is
+never updated, so the BEAM passes everything that can change between
+sessions in the exec env (`Camelot.Runtime.Runner.SessionEnv`):
+secrets, `PROJECT_MCP_CONFIG_JSON`, `CAMELOT_OUTPUT_SCHEMA_JSON` and
+`ATTACHMENTS_JSON`. Exec-time values win over `/tmp/camelot.env`
+(written at boot).
+
+### Attachments
+
+`/fetch-attachments.sh` downloads `$ATTACHMENTS_JSON`
+(`[{"filename": …, "url": …}]`, links signed fresh every session) into
+`/workspace/.camelot/attachments/`. It runs at boot **and** in the
+exec-wrapper before every session, so a file uploaded to the card
+after the container started reaches the next session. It:
+
+- keeps only the basename of each filename and skips empty, `.`, `..`;
+- skips files that already exist with a non-zero size;
+- downloads to a temp file and `mv`s it into place
+  (`curl -fsSL --retry 2 --max-time 120`);
+- removes files no longer listed (deleted in the UI);
+- adds `.camelot/attachments/` to `.git/info/exclude`, so an agent's
+  `git add -A` can't commit the user's files;
+- logs `[camelot] failed to fetch attachment <name>` to the session
+  output and the container log, and never fails the session.
+
+Containers built from an image older than this script keep the old
+wrapper and only fetch at boot. On Swarm, services on a floating tag
+(`:latest`) are rolled to the newest digest by the Reconciler's boot
+sweep (`Swarm.TaskService.autoupdate_image/1`) on the next Camelot
+restart. Pinned images, and Docker Engine containers, need recreating
+by hand: `docker service rm camelot-task-<id>` (Swarm) or
+`docker rm -f camelot-task-<id>` (Docker Engine); the next session
+provisions a fresh one.
 
 ### Kimi credentials
 
