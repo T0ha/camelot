@@ -2,6 +2,7 @@ defmodule CamelotWeb.AuthControllerTest do
   use CamelotWeb.ConnCase, async: false
 
   alias AshAuthentication.Errors.AuthenticationFailed
+  alias AshAuthentication.Strategy.MagicLink
   alias Camelot.Accounts.Errors.RegistrationDisabled
   alias Camelot.Accounts.User
   alias Camelot.Github.Installation
@@ -157,6 +158,29 @@ defmodule CamelotWeb.AuthControllerTest do
       conn = AuthController.failure(conn, {:github, :callback}, :boom)
 
       assert Phoenix.Flash.get(conn.assigns.flash, :error) == "Authentication failed"
+    end
+  end
+
+  describe "magic-link sign-in" do
+    defp magic_link_token(user) do
+      strategy = AshAuthentication.Info.strategy!(User, :magic_link)
+      {:ok, token} = MagicLink.request_token_for(strategy, user)
+      token
+    end
+
+    test "GET /auth/user/magic_link signs in without an interstitial page",
+         %{conn: conn, user: user} do
+      conn = get(conn, ~p"/auth/user/magic_link?#{[token: magic_link_token(user)]}")
+
+      assert redirected_to(conn) == "/"
+      assert get_session(conn, "user_token")
+    end
+
+    test "GET /magic_link/:token redirects legacy links to the sign-in endpoint",
+         %{conn: conn} do
+      conn = get(conn, "/magic_link/tok-123")
+
+      assert redirected_to(conn) == "/auth/user/magic_link?token=tok-123"
     end
   end
 end
