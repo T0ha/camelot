@@ -55,8 +55,8 @@ as *verified*.
 importing issues labelled `camelot`, posting the plan as an issue
 comment and reading `/approve` / 👍 / change-request replies, adding
 and removing the `camelot:*` labels, and posting the merge summary and
-closing the issue when the PR lands (see
-`docs/github-issues-workflow.md`). With only read access, issues are
+closing the issue when the PR lands (see the
+[issues workflow guide](../guides/github-issues-workflow.md)). With only read access, issues are
 still imported but every write comes back `403`: no plan comment, so
 plans can only be reviewed in Camelot, and no invalid-config
 explanation or merge summary on the issue.

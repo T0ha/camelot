@@ -94,15 +94,8 @@ defmodule CamelotWeb.Router do
 
     sign_out_route(CamelotWeb.AuthController)
 
-    magic_sign_in_route(
-      User,
-      :magic_link,
-      auth_routes_prefix: "/auth",
-      overrides: [
-        CamelotWeb.AuthOverrides,
-        Default
-      ]
-    )
+    # Links mailed before sign-in went straight to the auth endpoint.
+    get "/magic_link/:token", CamelotWeb.AuthController, :magic_link
 
     auth_routes(
       CamelotWeb.AuthController,

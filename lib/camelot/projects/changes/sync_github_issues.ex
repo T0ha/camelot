@@ -11,7 +11,7 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
   skipped. An agent, model or credential problem is explained in an
   issue comment instead of creating a task, and the issue is labelled
   `camelot:invalid-config`; the next sync retries it. See
-  `docs/github-issues-workflow.md`.
+  `docs/guides/github-issues-workflow.md`.
   """
   use Ash.Resource.Actions.Implementation
 

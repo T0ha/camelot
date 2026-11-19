@@ -17,7 +17,7 @@ defmodule Camelot.Github.PullRequestApi do
   of this change.
 
   The issue writes used by the GitHub-issue workflow (plan comments,
-  labels, closing — see `docs/github-issues-workflow.md`) sit here for
+  labels, closing — see `docs/guides/github-issues-workflow.md`) sit here for
   the same reason; the issue reads stay plain `Client` functions.
   """
 

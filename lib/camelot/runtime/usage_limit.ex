@@ -19,13 +19,28 @@ defmodule Camelot.Runtime.UsageLimit do
   the CLI's `provider.<code>: <status> <text>` error. The CLI already
   retries a 429 internally (and never retries quota exhaustion), so a
   `provider.rate_limit` reaching Camelot means the retries ran out.
-  `provider.auth_error` is a bad key, not a limit.
+  `provider.auth_error` is a bad key, not a limit. Kimi Code plan
+  quotas come back as `provider.api_error: 429` with the wording from
+  Kimi's error reference (5-hour, weekly, monthly, credit and Extra
+  Usage balance) and never carry a reset time. The 5-hour window
+  falls back to `fallback_minutes/0`; the others to a day, since
+  checking back hourly would only re-pause (and re-email) for weeks.
+  The concurrent request limit is risk control, not a quota, so it
+  stays on the normal retry path.
+
+  `estimated?` is true when the reset time is a fallback rather than
+  read from the provider — `Camelot.Board.UsageLimitPause` then
+  prefers a reset date the user entered for that quota window.
   """
 
   alias Camelot.Runtime.OutputParser
   alias Camelot.Runtime.RateLimitEvents
 
-  @type info :: %{reset_at: DateTime.t(), window: String.t() | nil}
+  @type info :: %{
+          reset_at: DateTime.t(),
+          window: String.t() | nil,
+          estimated?: boolean()
+        }
 
   # Padding added to a reset time parsed from the provider, so a
   # dispatch tick landing right at the boundary doesn't re-trigger the
@@ -38,12 +53,26 @@ defmodule Camelot.Runtime.UsageLimit do
   # at runtime).
   @default_fallback_minutes 60
 
+  # Fallback for limits that won't clear within hours (monthly and
+  # weekly quotas, empty balances).
+  @long_fallback_minutes 24 * 60
+
   @limit_wording ~r/(hit your .*? limit|usage limit|limit reached)/i
+
+  # Kimi Code plan quotas, first match wins: `{wording, window,
+  # fallback}` where a `:default` fallback is `fallback_minutes/0`.
+  @kimi_quotas [
+    {~r/reached your 5-hour usage limit/i, "5-hour", :default},
+    {~r/reached your weekly \(7-day\) usage limit/i, "weekly", :long},
+    {~r/reached your monthly usage limit/i, "monthly", :long},
+    {~r/credit balance is insufficient|Extra Usage (balance has run out|limit set)/i, nil, :long}
+  ]
 
   # `provider.rate_limit` plus the quota-exhausted wording kimi-code
   # 2.3.0 itself recognises (and its `exceeded_current_quota_error`
   # code).
   @kimi_limit_wording ~r/(^provider\.rate_limit|exceeded_current_quota_error|exceeded your current (token )?quota|check your account balance|insufficient balance|recharge your account|please recharge|account (is )?in arrears)/i
+  @kimi_balance_wording ~r/(quota|balance|recharge|arrears)/i
   @relative_wait ~r/try again in\s*(?:(\d+)\s*h(?:ours?)?)?\s*(?:(\d+)\s*m(?:in(?:ute)?s?)?)?/i
 
   @doc """
@@ -82,10 +111,30 @@ defmodule Camelot.Runtime.UsageLimit do
   end
 
   def detect(:kimi_jsonl, {:error, "kimi error: " <> message}, _output_buffer, now) do
-    detect_from_message(message, @kimi_limit_wording, now)
+    case Enum.find(@kimi_quotas, fn {wording, _window, _fallback} -> Regex.match?(wording, message) end) do
+      {_wording, window, fallback} -> {:limited, estimated_info(window, fallback, now)}
+      nil -> detect_kimi_legacy(message, now)
+    end
   end
 
   def detect(_parser, _parsed, _output_buffer, _now), do: :none
+
+  # `provider.rate_limit` keeps the default fallback; balance and
+  # quota exhaustion won't clear within the hour.
+  defp detect_kimi_legacy(message, now) do
+    case {Regex.match?(@kimi_limit_wording, message), Regex.match?(@kimi_balance_wording, message)} do
+      {true, true} -> {:limited, estimated_info(nil, :long, now)}
+      {true, false} -> {:limited, estimated_info(nil, :default, now)}
+      {false, _balance} -> :none
+    end
+  end
+
+  defp estimated_info(window, fallback, now) do
+    %{reset_at: DateTime.add(now, fallback_seconds(fallback), :second), window: window, estimated?: true}
+  end
+
+  defp fallback_seconds(:default), do: fallback_minutes() * 60
+  defp fallback_seconds(:long), do: @long_fallback_minutes * 60
 
   defp strip_prefix(message, prefix), do: String.replace_prefix(message, prefix, "")
 
@@ -97,13 +146,11 @@ defmodule Camelot.Runtime.UsageLimit do
     end
   end
 
-  defp limited_info(nil, window, now), do: %{reset_at: fallback_reset_at(now), window: window}
+  defp limited_info(nil, window, now), do: estimated_info(window, :default, now)
 
   defp limited_info(%DateTime{} = reset_at, window, _now) do
-    %{reset_at: DateTime.add(reset_at, @margin_seconds, :second), window: window}
+    %{reset_at: DateTime.add(reset_at, @margin_seconds, :second), window: window, estimated?: false}
   end
-
-  defp fallback_reset_at(now), do: DateTime.add(now, fallback_minutes() * 60, :second)
 
   defp parse_relative_wait(message, now) do
     case Regex.run(@relative_wait, message) do

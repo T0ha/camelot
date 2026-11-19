@@ -87,7 +87,7 @@ defmodule Camelot.Scheduling.Planner do
     snapshot =
       case snapshot_key(task, credential_kinds([task])) do
         nil -> nil
-        {user_id, kind} -> UsageSnapshots.effective_weekly(user_id, kind, now)
+        {user_id, kind} -> UsageSnapshots.effective_quota(user_id, kind, now)
       end
 
     {policy, snapshot}

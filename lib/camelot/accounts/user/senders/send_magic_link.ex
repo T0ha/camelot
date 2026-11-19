@@ -56,8 +56,11 @@ defmodule Camelot.Accounts.User.Senders.SendMagicLink do
   defp extract_email(%{email: email}), do: to_string(email)
   defp extract_email(email) when is_binary(email), do: email
 
+  # Points straight at the strategy's GET sign-in endpoint so opening
+  # the link signs the user in, with no interstitial "Sign In" page.
   defp magic_link_url(token) do
-    CamelotWeb.Endpoint.url() <> "/magic_link/" <> token
+    CamelotWeb.Endpoint.url() <>
+      "/auth/user/magic_link?" <> URI.encode_query(token: token)
   end
 
   defp build_email(to, url) do

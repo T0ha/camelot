@@ -14,9 +14,15 @@ defmodule Camelot.Board.UsageLimitPause do
 
   Unlike `Camelot.Board.Interruption` there is no retry cap: a token
   that's still limited on the next attempt simply pauses again.
+
+  When the provider gave no reset time and the limit hit is the
+  credential's quota window (see `UsageSnapshots.quota_window/1`),
+  the reset of the current snapshot for that window — e.g. the date
+  entered with a manual monthly reading — wins over the fallback.
   """
 
   alias Camelot.Accounts.Credential
+  alias Camelot.Agents.UsageSnapshots
   alias Camelot.Board.Task
   alias Camelot.Board.Workers.SendUsageLimitEmail
   alias Camelot.Runtime.UsageLimit
@@ -33,8 +39,9 @@ defmodule Camelot.Board.UsageLimitPause do
   one task. Either way, one pause email is enqueued for the owner.
   """
   @spec pause(String.t(), atom(), UsageLimit.info()) :: :ok
-  def pause(task_id, kind, %{reset_at: reset_at, window: window}) do
+  def pause(task_id, kind, %{window: window} = info) do
     task = Ash.get!(Task, task_id, authorize?: false)
+    reset_at = reset_at(task.creator_id, kind, info)
     reason = pause_reason(window, reset_at)
 
     case Credential.for_user_and_kind(task.creator_id, kind) do
@@ -83,6 +90,17 @@ defmodule Camelot.Board.UsageLimitPause do
     resume_task(task)
     :ok
   end
+
+  defp reset_at(user_id, kind, %{estimated?: true, window: window, reset_at: fallback}) do
+    quota = to_string(UsageSnapshots.quota_window(kind))
+
+    case {quota == window, UsageSnapshots.latest_quota(user_id, kind, DateTime.utc_now())} do
+      {true, %{resets_at: known}} -> known
+      _unknown -> fallback
+    end
+  end
+
+  defp reset_at(_user_id, _kind, %{reset_at: reset_at}), do: reset_at
 
   defp mark_credential_limited(credential, reset_at, window) do
     case Ash.update(

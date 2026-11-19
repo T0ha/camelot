@@ -29,6 +29,18 @@ defmodule Camelot.Accounts.User.Senders.SendMagicLinkTest do
       assert_email_sent(to: [{"", "invited@example.com"}])
     end
 
+    test "links straight to the sign-in endpoint, not an interstitial page" do
+      user = Ash.Seed.seed!(User, %{email: "invited@example.com"})
+      :ok = SendMagicLink.send(user, "tok-123", [])
+
+      url = CamelotWeb.Endpoint.url() <> "/auth/user/magic_link?token=tok-123"
+
+      assert_email_sent(fn email ->
+        assert email.html_body =~ url
+        assert email.text_body =~ url
+      end)
+    end
+
     test "renders the shared branded layout" do
       user = Ash.Seed.seed!(User, %{email: "invited@example.com"})
       :ok = SendMagicLink.send(user, "tok-123", [])

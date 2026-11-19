@@ -1,6 +1,6 @@
 # 🏰 Camelot AI
 
-> Delegate coding tasks to AI agents. Manage them from a kanban board.
+> Agents work your backlog. You approve every plan.
 
 <p align="center">
   <a href="https://camelotai.tech?utm_source=github&utm_medium=readme&utm_campaign=hero">
@@ -13,10 +13,15 @@
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs Welcome">
 </p>
 
-🏰 Camelot AI gives development teams a way to safely scale their engineering output
-with AI — without giving up control. Create tasks on a board, let AI agents plan
-and implement them, review and approve before anything ships. Like having junior
-developers who never sleep, managed through a clean visual interface.
+🏰 Camelot AI runs Claude Code, Kimi Code, Codex and Antigravity on your GitHub issues, each in
+its own container. The agent posts a plan on the issue, and nothing is written until
+you approve it. Runs are scheduled around your usage limits, and nothing merges
+without your review.
+
+**Try it without installing anything:**
+[Camelot AI Cloud](https://app.camelotai.tech/sign-in?utm_source=github&utm_medium=readme&utm_campaign=cloud)
+is free during the public beta. Or self-host the open-source core below. It's the
+same code.
 
 <p align="center">
   <img src="priv/static/images/screenshot.png" alt="Camelot AI kanban board" width="800">
@@ -33,7 +38,7 @@ developers who never sleep, managed through a clean visual interface.
 ## Features
 
 - **Kanban board** — 6-stage workflow: todo, planning, executing, pr, done, cancelled. Set priorities, track state at a glance.
-- **Multi-agent coordination** — Run Claude Code and Codex agents in parallel across projects. Priority-based task dispatch.
+- **Multi-agent coordination** — Run Claude Code, Kimi Code, Codex and Antigravity agents in parallel across projects. Priority-based task dispatch.
 - **Human-in-the-loop** — Agents propose plans before writing code. You approve before anything ships. No surprise commits.
 - **GitHub-native** — Sync issues as tasks, track PRs, monitor CI checks. Tasks auto-complete when PRs merge.
 - **Customizable prompts** — Per-project prompt templates with `{{variable}}` interpolation. Tune agent behavior to match your conventions.
@@ -64,7 +69,7 @@ developers who never sleep, managed through a clean visual interface.
 - An SSH key is auto-provisioned per user; a GitHub App is optional and
   admin-configured for PR/issue polling — see
   [`docs/self-hosting/github-app.md`](docs/self-hosting/github-app.md)
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex) and/or [Google Antigravity](docs/agents/antigravity.md) (`agy`) CLI installed
+- At least one agent CLI installed: [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Kimi Code](https://docs.camelotai.tech/agents/kimi-code), [Codex](https://github.com/openai/codex) or [Google Antigravity](docs/agents/antigravity.md) (`agy`)
 
 ### Installation
 
@@ -90,7 +95,7 @@ Visit [`localhost:4000`](http://localhost:4000).
 
 1. Sign in with a magic link sent to your email
 2. Create a project pointing to a local git repository
-3. Create a task, pick a CLI Agent (Claude Code or Codex) from the
+3. Create a task, pick a CLI Agent (Claude Code, Kimi Code, Codex or Antigravity) from the
    dropdown, and watch it flow through the board
 
 See [Get Started](https://docs.camelotai.tech/cloud/get-started) (source:
@@ -113,7 +118,7 @@ Key environment variables (see `config/runtime.exs` for full details):
 
 ### Bootstrapping users
 
-When `REGISTRATION_ENABLED=false` (cloud beta mode), the sign-in screen rejects unknown emails. Use the mix task to add users — the first invocation creates an admin who can then add more users from `/admin/users`:
+When `REGISTRATION_ENABLED=false` (invite-only mode), the sign-in screen rejects unknown emails. Use the mix task to add users — the first invocation creates an admin who can then add more users from `/admin/users`:
 
 ```sh
 # First admin (bootstrap)
@@ -140,7 +145,7 @@ Projects ────────┤
 ```
 
 - **Projects** map to local git repositories with optional GitHub integration
-- **Agent CLI** configs wrap a CLI tool (Claude Code or Codex) — executable, args, parser, runner image — configured once (admin-only) and picked per task
+- **Agent CLI** configs wrap a CLI tool (Claude Code, Kimi Code, Codex or Antigravity) — executable, args, parser, runner image — configured once (admin-only) and picked per task
 - **Tasks** pick a fixed Agent CLI at creation and flow through a state machine: draft → todo → planning → executing → pr → done
 - **Sessions** record each execution of a task, driven by a `TaskRunner` process, with full output logs
 - **Prompt Templates** are customizable per-project with variable interpolation
@@ -174,6 +179,9 @@ Run `docker compose up` to deploy with the included `Dockerfile` and
 
 - [x] Kanban board with full task lifecycle
 - [x] Claude Code and Codex agent support
+- [x] Kimi Code agent support
+- [x] Google Antigravity agent support
+- [x] Usage-aware scheduling (weekly / monthly caps, run windows)
 - [x] GitHub issue sync and PR tracking
 - [x] Prompt template customization
 - [x] Real-time session streaming
@@ -182,7 +190,7 @@ Run `docker compose up` to deploy with the included `Dockerfile` and
 - [ ] Webhook-based GitHub integration
 - [ ] Additional agent types
 - [ ] Team / multi-user collaboration
-- [ ] 🏰 Camelot AI Cloud (hosted version)
+- [x] 🏰 Camelot AI Cloud (hosted version, public beta)
 
 ## Contributing
 

@@ -10,7 +10,7 @@ defmodule Camelot.Github.IssueDirectives do
   Pure string parsing, no I/O. Whether a label counts at all (who
   applied it, whether the base `camelot` label is present) is decided
   by the caller — see `Camelot.Projects.Changes.SyncGithubIssues` and
-  `Camelot.Github.IssueTrust`. See `docs/github-issues-workflow.md`.
+  `Camelot.Github.IssueTrust`. See `docs/guides/github-issues-workflow.md`.
   """
 
   @agent_prefix "camelot:agent:"
