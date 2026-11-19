@@ -10,14 +10,11 @@ defmodule Camelot.Board.Column do
   column. Nothing is persisted here: this is display only.
   """
 
+  alias Camelot.Board.Task
+
   @waiting_stages [:todo, :planning, :executing]
 
-  @type card :: %{
-          required(:stage) => atom(),
-          required(:state) => atom(),
-          required(:start_at) => DateTime.t() | nil,
-          optional(atom()) => any()
-        }
+  @type card :: %Task{}
 
   @doc """
   The stage whose column shows `task`.
@@ -28,15 +25,15 @@ defmodule Camelot.Board.Column do
   @spec stage_for(card(), DateTime.t()) :: atom()
   def stage_for(task, now \\ DateTime.utc_now())
 
-  def stage_for(%{state: :queued, stage: stage, start_at: %DateTime{} = start_at} = task, now)
+  def stage_for(%Task{state: :queued, stage: stage, start_at: %DateTime{} = start_at}, now)
       when stage in @waiting_stages do
     case DateTime.compare(start_at, now) do
       :gt -> :todo
-      _ -> task.stage
+      _ -> stage
     end
   end
 
-  def stage_for(task, _now), do: task.stage
+  def stage_for(%Task{stage: stage}, _now), do: stage
 
   @doc """
   The earliest future `start_at` among cards that wait for it, or `nil`.
@@ -50,11 +47,11 @@ defmodule Camelot.Board.Column do
   end
 
   @spec waiting?(card(), DateTime.t()) :: boolean()
-  defp waiting?(%{stage: stage} = task, now) do
+  defp waiting?(%Task{stage: stage} = task, now) do
     stage in @waiting_stages and future_todo?(task, now)
   end
 
-  defp future_todo?(%{state: :queued, start_at: %DateTime{} = start_at}, now) do
+  defp future_todo?(%Task{state: :queued, start_at: %DateTime{} = start_at}, now) do
     DateTime.after?(start_at, now)
   end
 

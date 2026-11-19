@@ -2,12 +2,15 @@ defmodule Camelot.Board.ColumnTest do
   use ExUnit.Case, async: true
 
   alias Camelot.Board.Column
+  alias Camelot.Board.Task
 
-  @now ~U[2030-01-01 12:00:00.000000Z]
-  @future ~U[2030-01-02 12:00:00.000000Z]
-  @past ~U[2029-12-31 12:00:00.000000Z]
+  @now DateTime.utc_now()
+  @future DateTime.add(@now, 86_400)
+  @past DateTime.add(@now, -86_400)
 
-  defp task(attrs), do: Map.merge(%{stage: :todo, state: :queued, start_at: nil}, attrs)
+  defp task(attrs) do
+    struct!(Task, Map.merge(%{stage: :todo, state: :queued, start_at: nil}, attrs))
+  end
 
   describe "stage_for/2 with a future start_at" do
     for stage <- [:todo, :planning, :executing] do
