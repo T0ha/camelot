@@ -35,7 +35,7 @@ defmodule Camelot.Accounts.User.MagicLinkConfirmationTest do
       {:email, email} = assert_email_sent()
 
       [token] =
-        Regex.run(~r{/magic_link/([^"\s]+)}, email.html_body, capture: :all_but_first)
+        Regex.run(~r{/auth/user/magic_link\?token=([^"\s&]+)}, email.html_body, capture: :all_but_first)
 
       assert {:ok, signed_in_user} =
                AshAuthentication.Strategy.action(strategy, :sign_in, %{"token" => token})
