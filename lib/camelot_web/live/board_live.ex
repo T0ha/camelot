@@ -13,6 +13,7 @@ defmodule CamelotWeb.BoardLive do
   alias Camelot.Agents.Agent
   alias Camelot.Agents.ModelDiscovery
   alias Camelot.Agents.ModelLabel
+  alias Camelot.Board.Column
   alias Camelot.Board.Task
   alias Camelot.Board.TaskLink
   alias Camelot.Projects.Project
@@ -94,6 +95,11 @@ defmodule CamelotWeb.BoardLive do
   @impl true
   def handle_info({:task_updated, _task}, socket) do
     {:noreply, load_board(socket)}
+  end
+
+  # A card waiting for its start time moves out of To Do when it passes.
+  def handle_info(:start_at_reached, socket) do
+    {:noreply, load_board(assign(socket, refresh_timer: nil))}
   end
 
   def handle_info({:task_created, _task}, socket) do
@@ -258,6 +264,32 @@ defmodule CamelotWeb.BoardLive do
     end
   end
 
+  # Re-read the board when the nearest waiting card is released, so it
+  # leaves To Do even if no PubSub update arrives (e.g. held by a cap).
+  @spec schedule_refresh(Socket.t(), DateTime.t() | nil, DateTime.t()) ::
+          Socket.t()
+  defp schedule_refresh(socket, nil, _now), do: cancel_refresh(socket)
+
+  defp schedule_refresh(socket, start_at, now) do
+    socket = cancel_refresh(socket)
+
+    if connected?(socket) do
+      # +50ms so the tick lands strictly after `start_at`.
+      delay = max(DateTime.diff(start_at, now, :millisecond), 0) + 50
+      timer = Process.send_after(self(), :start_at_reached, delay)
+      assign(socket, refresh_timer: timer)
+    else
+      socket
+    end
+  end
+
+  defp cancel_refresh(%{assigns: %{refresh_timer: timer}} = socket) when is_reference(timer) do
+    Process.cancel_timer(timer)
+    assign(socket, refresh_timer: nil)
+  end
+
+  defp cancel_refresh(socket), do: assign(socket, refresh_timer: nil)
+
   defp load_board(socket) do
     user = socket.assigns.current_user
     see_all = socket.assigns.see_all
@@ -275,12 +307,11 @@ defmodule CamelotWeb.BoardLive do
 
     agents = Agent |> Ash.read!() |> Enum.sort_by(& &1.name)
 
+    now = DateTime.utc_now()
+
     columns =
       Enum.map(Task.column_stages(), fn stage ->
-        {stage,
-         Enum.filter(tasks, fn task ->
-           task.stage == stage and task.stage != :cancelled
-         end)}
+        {stage, Enum.filter(tasks, &(Column.stage_for(&1, now) == stage))}
       end)
 
     socket
@@ -294,6 +325,7 @@ defmodule CamelotWeb.BoardLive do
     |> assign_new(:task_form, fn -> new_task_form(user) end)
     |> assign_new(:model_options, fn -> [] end)
     |> assign_new(:model_options_agent_id, fn -> nil end)
+    |> schedule_refresh(Column.next_start_at(tasks, now), now)
   end
 
   # The new-task form is only submittable by a user who has a project
