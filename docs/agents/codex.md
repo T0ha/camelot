@@ -114,4 +114,5 @@ CLI picks its own default.
 ---
 
 See also: [Setting up Claude Code](claude-code.md) ·
+[Setting up Antigravity](antigravity.md) ·
 [Get Started with Camelot Cloud](../cloud/get-started.md)

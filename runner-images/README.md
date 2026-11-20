@@ -11,6 +11,7 @@ release image — they ship separately and are referenced by name from
 base/                    debian + asdf + nodejs (default) + git + gh + tini + entrypoint.sh
  ├─ claude/              + claude-code CLI
  ├─ codex/               + codex CLI
+ ├─ agy/                 + Google Antigravity CLI (agy)
  ├─ kimi/                + kimi-code CLI (on its own node, see below)
  ├─ elixir/              FROM claude — adds elixir+erlang asdf plugins
  ├─ python/              FROM claude — adds python + uv
