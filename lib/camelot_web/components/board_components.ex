@@ -17,7 +17,10 @@ defmodule CamelotWeb.BoardComponents do
   @spec column(map()) :: Rendered.t()
   def column(assigns) do
     ~H"""
-    <div class="flex flex-col min-w-[220px] max-w-[280px] flex-1">
+    <div
+      id={"column-#{@stage}"}
+      class="flex flex-col min-w-[220px] max-w-[280px] flex-1"
+    >
       <div class="flex items-center gap-2 mb-3 px-2">
         <span class={[
           "badge badge-sm",
