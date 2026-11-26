@@ -8,6 +8,8 @@ defmodule Camelot.Accounts.User.Senders.SendMagicLink do
   dropped — no email is sent. Existing users always receive sign-in
   links so they can log in.
 
+  When `:magic_link_enabled` is `false`, nothing is sent at all.
+
   This is the canonical invite-only gate. It catches both the LiveView
   `phx-submit` path (which never hits HTTP) and the HTTP POST path.
   """
@@ -15,6 +17,7 @@ defmodule Camelot.Accounts.User.Senders.SendMagicLink do
 
   import Swoosh.Email
 
+  alias Camelot.Accounts.MagicLink
   alias Camelot.Mailer.Layout
 
   require Logger
@@ -26,14 +29,27 @@ defmodule Camelot.Accounts.User.Senders.SendMagicLink do
           keyword()
         ) :: :ok
   def send(user_or_email, token, opts) do
-    if blocked_registration?(user_or_email) do
-      Logger.info(fn ->
-        "Skipped magic link to #{user_or_email}: registration disabled"
-      end)
+    case skip_reason(user_or_email) do
+      nil ->
+        deliver(user_or_email, token, opts)
 
-      :ok
+      reason ->
+        Logger.info(fn -> "Skipped magic link: #{reason}" end)
+        :ok
+    end
+  end
+
+  defp skip_reason(identity) do
+    if MagicLink.enabled?() do
+      registration_skip_reason(identity)
     else
-      deliver(user_or_email, token, opts)
+      "magic link sign-in disabled"
+    end
+  end
+
+  defp registration_skip_reason(identity) do
+    if blocked_registration?(identity) do
+      "registration disabled"
     end
   end
 

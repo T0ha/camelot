@@ -219,3 +219,9 @@
   font-size: 0.85em;
   word-break: break-word;
 }
+
+/* Hide the magic-link card on /sign-in when MAGIC_LINK_ENABLED=false.
+   AshAuthentication overrides are compile-time, so toggle it at runtime. */
+html[data-magic-link="off"] .card:has(> .magic-link-strategy) {
+  display: none;
+}
