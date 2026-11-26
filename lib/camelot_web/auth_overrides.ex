@@ -31,6 +31,7 @@ defmodule CamelotWeb.AuthOverrides do
   end
 
   override Components.MagicLink do
+    set(:root_class, "magic-link-strategy")
     set(:label_class, "text-2xl tracking-tight font-bold text-base-content mb-4")
   end
 

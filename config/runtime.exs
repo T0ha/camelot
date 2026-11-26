@@ -86,7 +86,10 @@ config :camelot, :github_app,
 config :camelot,
   # Runner backend is overridable in every env via the RUNNER_BACKEND env
   # var. Default differs by env: prod = swarm, dev/test = local.
-  registration_enabled: System.get_env("REGISTRATION_ENABLED", "true") in ~w(true 1)
+  registration_enabled: System.get_env("REGISTRATION_ENABLED", "true") in ~w(true 1),
+  # Email magic-link sign-in. Set MAGIC_LINK_ENABLED=false to leave GitHub as
+  # the only sign-in method. Enforced at runtime (plug, sender, sign-in page).
+  magic_link_enabled: System.get_env("MAGIC_LINK_ENABLED", "true") in ~w(true 1)
 
 # Consecutive automatic PR fix re-dispatches before a task is left for
 # human review. Accepts a positive integer, or "infinity"/"unlimited"

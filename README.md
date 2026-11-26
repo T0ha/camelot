@@ -114,6 +114,7 @@ Key environment variables (see `config/runtime.exs` for full details):
 | `PORT` | HTTP port (default: 4000) | No |
 | `POOL_SIZE` | Database pool size (default: 10) | No |
 | `REGISTRATION_ENABLED` | When `false`, new sign-ups are blocked; existing users can still sign in (default: `true`) | No |
+| `MAGIC_LINK_ENABLED` | When `false`, email magic-link sign-in is disabled (requests, mailed links and the sign-in form); GitHub login remains. Make sure the GitHub App is configured first (default: `true`) | No |
 | `GITHUB_APP_*` | GitHub App integration (`GITHUB_APP_ID`, `_SLUG`, `_CLIENT_ID`, `_CLIENT_SECRET`, `_PRIVATE_KEY_B64`, `_WEBHOOK_SECRET`) — see [`docs/self-hosting/github-app.md`](docs/self-hosting/github-app.md) | No (opt-in per deployment) |
 
 ### Bootstrapping users
