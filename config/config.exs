@@ -153,6 +153,7 @@ config :camelot, :telemetry,
 config :camelot, :token_signing_secret, "dev-only-signing-secret-change-in-prod"
 
 config :camelot,
+  magic_link_enabled: true,
   ecto_repos: [Camelot.Repo],
   generators: [timestamp_type: :utc_datetime],
   ash_domains: [

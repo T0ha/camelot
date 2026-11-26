@@ -7,11 +7,20 @@ defmodule CamelotWeb.Layouts do
 
   import CamelotWeb.OnboardingComponents
 
+  alias Camelot.Accounts.MagicLink
+
   # Embed all files in layouts/* within this module.
   # The default root.html.heex file contains the HTML
   # skeleton of your application, namely HTML headers
   # and other static content.
   embed_templates "layouts/*"
+
+  @doc "Value for the root element's `data-magic-link` attribute."
+  @spec magic_link_flag() :: String.t()
+  def magic_link_flag, do: flag(MagicLink.enabled?())
+
+  defp flag(true), do: "on"
+  defp flag(false), do: "off"
 
   @doc """
   Shows the flash group with standard titles and content.

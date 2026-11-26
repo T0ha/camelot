@@ -28,6 +28,10 @@ defmodule CamelotWeb.Router do
     plug CamelotWeb.Plugs.GithubAuthGate
   end
 
+  pipeline :magic_link_gate do
+    plug CamelotWeb.Plugs.MagicLinkGate
+  end
+
   pipeline :github_webhook do
     plug :accepts, ["json"]
     plug CamelotWeb.Plugs.VerifyGithubSignature
@@ -82,7 +86,12 @@ defmodule CamelotWeb.Router do
   end
 
   scope "/" do
-    pipe_through [:browser, :registration_gate, :github_auth_gate]
+    pipe_through [
+      :browser,
+      :registration_gate,
+      :github_auth_gate,
+      :magic_link_gate
+    ]
 
     sign_in_route(
       auth_routes_prefix: "/auth",
