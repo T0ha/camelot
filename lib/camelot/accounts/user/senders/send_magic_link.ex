@@ -40,18 +40,18 @@ defmodule Camelot.Accounts.User.Senders.SendMagicLink do
   end
 
   defp skip_reason(identity) do
-    if MagicLink.enabled?() do
-      registration_skip_reason(identity)
-    else
-      "magic link sign-in disabled"
-    end
+    skip_reason(MagicLink.enabled?(), identity)
   end
 
+  defp skip_reason(false, _identity), do: "magic link sign-in disabled"
+  defp skip_reason(true, identity), do: registration_skip_reason(identity)
+
   defp registration_skip_reason(identity) do
-    if blocked_registration?(identity) do
-      "registration disabled"
-    end
+    identity |> blocked_registration?() |> registration_reason()
   end
+
+  defp registration_reason(true), do: "registration disabled"
+  defp registration_reason(false), do: nil
 
   defp blocked_registration?(identity) when is_binary(identity),
     do: not Application.get_env(:camelot, :registration_enabled, true)
