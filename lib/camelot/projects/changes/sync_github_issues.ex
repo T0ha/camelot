@@ -5,10 +5,10 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
 
   An issue is imported once, keyed on `project_id` + `issue_number`,
   and only when the `camelot` label was applied by a member of the
-  project (`Camelot.Github.IssueTrust`). Its directive labels
-  (`Camelot.Github.IssueDirectives`) — likewise only when a member
-  applied them — pick the agent, the model, and whether planning is
-  skipped. An agent, model or credential problem is explained in an
+  project (`Camelot.Github.IssueTrust`), or by anyone before a project
+  owner 👍-ed the issue. Its directive labels
+  (`Camelot.Github.IssueDirectives`) — under the same rule — pick the
+  agent, the model, and whether planning is skipped. An agent, model or credential problem is explained in an
   issue comment instead of creating a task, and the issue is labelled
   `camelot:invalid-config`; the next sync retries it. See
   `docs/guides/github-issues-workflow.md`.
@@ -32,7 +32,6 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
   require Logger
 
   @sync_label "camelot"
-  @skip_plan_label "camelot:skip-plan"
   @invalid_config_label "camelot:invalid-config"
 
   @typedoc "What happened to one issue."
@@ -117,19 +116,13 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
     end
   end
 
-  # The issue's reactions only matter for a stranger's issue asking to
-  # skip planning, so every other issue is spared the extra call.
+  # An owner's 👍 on the issue vouches for the labels applied before it
+  # (`IssueTrust.owner_vouched_label?/4`) — the `camelot` label itself
+  # included — and lets a stranger's issue skip planning, so every
+  # listed issue needs its reactions.
   defp fetch_issue_reactions(project, issue, opts) do
-    issue
-    |> label?(@skip_plan_label)
-    |> issue_reactions(project, issue, opts)
-  end
-
-  defp issue_reactions(true, project, issue, opts) do
     Client.list_issue_reactions(project.github_owner, project.github_repo, issue["number"], opts)
   end
-
-  defp issue_reactions(false, _project, _issue, _opts), do: {:ok, []}
 
   defp log_import(issue, {:ok, _task}), do: Logger.info("Created task from issue ##{issue["number"]}")
 
@@ -157,14 +150,14 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
   @spec import_issue(Project.t(), map(), [map()], [map()]) :: import_result()
   def import_issue(project, issue, events, reactions) do
     project
-    |> labeled_by_trusted?(@sync_label, events)
+    |> labeled_by_trusted?(@sync_label, events, reactions)
     |> import_attached(project, issue, events, reactions)
   end
 
   defp import_attached(false, _project, _issue, _events, _reactions), do: :untrusted
 
   defp import_attached(true, project, issue, events, reactions) do
-    directives = trusted_directives(project, issue, events)
+    directives = trusted_directives(project, issue, events, reactions)
     creator = project.owner_membership.user
 
     case resolve_config(directives, creator) do
@@ -177,18 +170,26 @@ defmodule Camelot.Projects.Changes.SyncGithubIssues do
     end
   end
 
-  # Only directive labels a member applied count; a stranger adding
-  # `camelot:agent:…` to someone else's issue changes nothing.
-  defp trusted_directives(project, issue, events) do
+  # Only directive labels a member applied (or an owner vouched for)
+  # count; a stranger adding `camelot:agent:…` to someone else's issue
+  # changes nothing.
+  defp trusted_directives(project, issue, events, reactions) do
     (issue["labels"] || [])
     |> IssueDirectives.label_names()
-    |> Enum.filter(&(IssueDirectives.directive?(&1) and labeled_by_trusted?(project, &1, events)))
+    |> Enum.filter(&(IssueDirectives.directive?(&1) and labeled_by_trusted?(project, &1, events, reactions)))
     |> IssueDirectives.parse()
   end
 
   # The latest `labeled` event for `label` decides, so re-applying a
-  # label after a stranger did is how a member takes it over.
-  defp labeled_by_trusted?(project, label, events) do
+  # label after a stranger did is how a member takes it over. A label
+  # a stranger (such as the GitHub App's own bot) applied also counts
+  # once an owner 👍-ed the issue after it was applied.
+  defp labeled_by_trusted?(project, label, events, reactions) do
+    labeled_by_member?(project, label, events) or
+      IssueTrust.owner_vouched_label?(label, events, reactions, project.id)
+  end
+
+  defp labeled_by_member?(project, label, events) do
     events
     |> Enum.filter(&(&1["event"] == "labeled" and get_in(&1, ["label", "name"]) == label))
     |> List.last()

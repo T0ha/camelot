@@ -135,4 +135,84 @@ defmodule Camelot.Github.IssueTrustTest do
       refute IssueTrust.owner_approved?(comment, [heart], project.id)
     end
   end
+
+  describe "owner_vouched_label?/4" do
+    defp labeled(label, created_at) do
+      %{
+        "event" => "labeled",
+        "label" => %{"name" => label},
+        "actor" => %{"id" => 2001},
+        "created_at" => created_at
+      }
+    end
+
+    defp vouch(user_id, created_at) do
+      %{"content" => "+1", "user" => %{"id" => user_id}, "created_at" => created_at}
+    end
+
+    test "a label added before the owner's 👍 counts", %{project: project} do
+      events = [labeled("camelot", "2026-10-01T10:00:00Z")]
+      reactions = [vouch(1001, "2026-10-01T11:00:00Z")]
+
+      assert IssueTrust.owner_vouched_label?("camelot", events, reactions, project.id)
+    end
+
+    test "a label added at the moment of the 👍 counts", %{project: project} do
+      events = [labeled("camelot", "2026-10-01T11:00:00Z")]
+      reactions = [vouch(1001, "2026-10-01T11:00:00Z")]
+
+      assert IssueTrust.owner_vouched_label?("camelot", events, reactions, project.id)
+    end
+
+    test "a label added after the owner's 👍 does not count", %{project: project} do
+      events = [labeled("camelot", "2026-10-01T12:00:00Z")]
+      reactions = [vouch(1001, "2026-10-01T11:00:00Z")]
+
+      refute IssueTrust.owner_vouched_label?("camelot", events, reactions, project.id)
+    end
+
+    test "a label re-added after the 👍 does not count", %{project: project} do
+      events = [
+        labeled("camelot", "2026-10-01T10:00:00Z"),
+        labeled("camelot", "2026-10-01T12:00:00Z")
+      ]
+
+      reactions = [vouch(1001, "2026-10-01T11:00:00Z")]
+
+      refute IssueTrust.owner_vouched_label?("camelot", events, reactions, project.id)
+    end
+
+    test "the latest of several owner 👍s decides", %{project: project} do
+      events = [labeled("camelot", "2026-10-01T12:00:00Z")]
+
+      reactions = [
+        vouch(1001, "2026-10-01T13:00:00Z"),
+        vouch(1001, "2026-10-01T11:00:00Z")
+      ]
+
+      assert IssueTrust.owner_vouched_label?("camelot", events, reactions, project.id)
+    end
+
+    test "a non-owner member's 👍 does not vouch", %{project: project} do
+      events = [labeled("camelot", "2026-10-01T10:00:00Z")]
+      reactions = [vouch(1002, "2026-10-01T11:00:00Z")]
+
+      refute IssueTrust.owner_vouched_label?("camelot", events, reactions, project.id)
+    end
+
+    test "without a 👍 nothing is vouched", %{project: project} do
+      events = [labeled("camelot", "2026-10-01T10:00:00Z")]
+      heart = %{"content" => "heart", "user" => %{"id" => 1001}, "created_at" => "2026-10-01T11:00:00Z"}
+
+      refute IssueTrust.owner_vouched_label?("camelot", events, [], project.id)
+      refute IssueTrust.owner_vouched_label?("camelot", events, [heart], project.id)
+    end
+
+    test "a label that was never added is not vouched", %{project: project} do
+      events = [labeled("camelot:skip-plan", "2026-10-01T10:00:00Z")]
+      reactions = [vouch(1001, "2026-10-01T11:00:00Z")]
+
+      refute IssueTrust.owner_vouched_label?("camelot", events, reactions, project.id)
+    end
+  end
 end
