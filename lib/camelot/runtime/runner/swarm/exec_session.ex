@@ -21,7 +21,7 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   alias Camelot.Runtime.Runner.AdoptPolicy
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.DockerStreamDemux
-  alias Camelot.Runtime.Runner.SecretEnv
+  alias Camelot.Runtime.Runner.SessionEnv
   alias Camelot.Runtime.Runner.Spec
   alias Camelot.Runtime.Runner.Swarm.ProvisionMonitor
   alias Camelot.Runtime.Runner.Swarm.ProxyRouter
@@ -449,7 +449,7 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
       "AttachStdin" => false,
       "Tty" => false,
       "WorkingDir" => spec.cwd,
-      "Env" => session_env(spec),
+      "Env" => SessionEnv.build(spec),
       "Cmd" => ["/exec-wrapper.sh"] ++ spec.argv
     }
 
@@ -514,35 +514,6 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
     ProxyRouter.invalidate(node_id)
     Process.sleep(@ready_poll_ms)
     retry_fn.(budget_ms - @ready_poll_ms)
-  end
-
-  # Build the per-exec `Env` array. Re-materialises secrets from
-  # the current Spec on every exec so a credential rotation in the
-  # UI takes effect on the next session without rebuilding the
-  # Swarm service. The exec-wrapper treats /tmp/camelot.env as a
-  # fallback only; these values override anything mounted from
-  # /run/secrets/ at container-start time.
-  defp session_env(%Spec{} = spec) do
-    session_id_env(spec) ++ secret_env(spec) ++ mcp_env(spec) ++ output_schema_env(spec)
-  end
-
-  # The exec-wrapper tees output to /tmp/camelot-output-<id>.log so we
-  # can fetch it after exit; it needs the session id to name the file.
-  defp session_id_env(%Spec{session_id: id}), do: ["CAMELOT_SESSION_ID=#{id}"]
-
-  defp secret_env(%Spec{secrets: secrets}) do
-    Enum.flat_map(secrets, &SecretEnv.to_env/1)
-  end
-
-  defp mcp_env(%Spec{mcp_config_json: nil}), do: []
-  defp mcp_env(%Spec{mcp_config_json: json}), do: ["PROJECT_MCP_CONFIG_JSON=#{json}"]
-
-  # `exec-wrapper.sh` writes this to `Spec.output_schema_path/1` before
-  # running the agent — the path the argv already names.
-  defp output_schema_env(%Spec{output_schema_json: nil}), do: []
-
-  defp output_schema_env(%Spec{output_schema_json: json}) do
-    ["CAMELOT_OUTPUT_SCHEMA_JSON=#{json}"]
   end
 
   defp kick_off_streams(%__MODULE__{} = state) do

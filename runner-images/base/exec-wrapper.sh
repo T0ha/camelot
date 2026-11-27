@@ -33,6 +33,16 @@ fi
 
 cd /workspace 2>/dev/null || true
 
+# A task keeps one long-lived container, so files uploaded to the card
+# after it booted never reached the boot-time fetch. The BEAM passes a
+# freshly signed ATTACHMENTS_JSON with every exec (it wins over the
+# stale create-time value); fetch whatever is missing before the agent
+# starts. Failures are logged (here and to the container log via PID
+# 1's stderr) and never fail the session.
+if [ -n "${ATTACHMENTS_JSON:-}" ] && [ -x /fetch-attachments.sh ]; then
+  CAMELOT_ATTACHMENTS_LOG=/proc/1/fd/2 /fetch-attachments.sh || true
+fi
+
 # Task sessions arrive as `docker exec` with the credentials in the
 # exec-time environment, which the container's entrypoint never saw —
 # so authenticate Codex here too. It reads $CODEX_HOME/auth.json and

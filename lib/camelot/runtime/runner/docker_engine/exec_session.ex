@@ -16,7 +16,7 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
   alias Camelot.Runtime.Runner.DockerApi
   alias Camelot.Runtime.Runner.DockerEngine.TaskContainer
   alias Camelot.Runtime.Runner.DockerStreamDemux
-  alias Camelot.Runtime.Runner.SecretEnv
+  alias Camelot.Runtime.Runner.SessionEnv
   alias Camelot.Runtime.Runner.Spec
 
   require Logger
@@ -271,7 +271,7 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
       "AttachStdin" => false,
       "Tty" => false,
       "WorkingDir" => spec.cwd,
-      "Env" => session_env(spec),
+      "Env" => SessionEnv.build(spec),
       "Cmd" => ["/exec-wrapper.sh"] ++ spec.argv
     }
 
@@ -288,34 +288,6 @@ defmodule Camelot.Runtime.Runner.DockerEngine.ExecSession do
       {:error, _} = err ->
         err
     end
-  end
-
-  # Build the per-exec `Env` array. Always re-materialises secrets
-  # from the current Spec so a credential rotation in the UI takes
-  # effect on the next session without rebuilding the container.
-  # The exec-wrapper treats /tmp/camelot.env as a fallback only;
-  # these values override anything baked in at container start.
-  defp session_env(%Spec{} = spec) do
-    session_id_env(spec) ++ secret_env(spec) ++ mcp_env(spec) ++ output_schema_env(spec)
-  end
-
-  # The exec-wrapper tees output to /tmp/camelot-output-<id>.log so we
-  # can fetch it after exit; it needs the session id to name the file.
-  defp session_id_env(%Spec{session_id: id}), do: ["CAMELOT_SESSION_ID=#{id}"]
-
-  defp secret_env(%Spec{secrets: secrets}) do
-    Enum.flat_map(secrets, &SecretEnv.to_env/1)
-  end
-
-  defp mcp_env(%Spec{mcp_config_json: nil}), do: []
-  defp mcp_env(%Spec{mcp_config_json: json}), do: ["PROJECT_MCP_CONFIG_JSON=#{json}"]
-
-  # `exec-wrapper.sh` writes this to `Spec.output_schema_path/1` before
-  # running the agent — the path the argv already names.
-  defp output_schema_env(%Spec{output_schema_json: nil}), do: []
-
-  defp output_schema_env(%Spec{output_schema_json: json}) do
-    ["CAMELOT_OUTPUT_SCHEMA_JSON=#{json}"]
   end
 
   defp kick_off_streams(%__MODULE__{} = state) do

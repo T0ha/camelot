@@ -83,10 +83,12 @@ RUN bash -c "echo 'nodejs ${NODEJS_VERSION}' > /opt/asdf/default-tool-versions \
 RUN mkdir -p /home/agent/.config/camelot
 COPY --chown=agent:agent mcp.defaults.json /etc/camelot/mcp.defaults.json
 
-# Entrypoint + per-exec wrapper. --chmod=0755 because the git-tracked
-# mode is 100644 and `tini` exec's these directly.
+# Entrypoint, per-exec wrapper and the attachment fetcher (run by
+# both). --chmod=0755 because the git-tracked mode is 100644 and
+# `tini` exec's these directly.
 COPY --chmod=0755 --chown=agent:agent entrypoint.sh /entrypoint.sh
 COPY --chmod=0755 --chown=agent:agent exec-wrapper.sh /exec-wrapper.sh
+COPY --chmod=0755 --chown=agent:agent fetch-attachments.sh /fetch-attachments.sh
 
 WORKDIR /workspace
 

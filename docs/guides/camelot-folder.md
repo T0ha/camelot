@@ -139,3 +139,9 @@ Besides `rules/`, `.camelot/` may contain subfolders that Camelot creates
 and fills in automatically inside the runner — task attachments, for
 instance. They are not user content: don't hand-edit them, don't commit
 them, and don't depend on their layout, which can change between releases.
+
+Task attachments land in `.camelot/attachments/`. Camelot downloads them
+when the runner container boots and again before every session, so a
+file uploaded to the card while the task's container is already running
+is there for the next session. The folder is added to the workspace's
+`.git/info/exclude`, so `git status` and `git add -A` ignore it.

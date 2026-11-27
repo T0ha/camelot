@@ -313,19 +313,13 @@ clone_workspace() {
   fi
 }
 
+# Delegates to the standalone script that exec-wrapper.sh also runs
+# before every session (attachments uploaded after boot arrive then).
+# Never fails the boot.
 fetch_attachments() {
   [ -n "${ATTACHMENTS_JSON:-}" ] || return 0
-
-  local dir="/workspace/.camelot/attachments"
-  mkdir -p "$dir"
-
-  printf '%s' "$ATTACHMENTS_JSON" | jq -c '.[]' | while IFS= read -r entry; do
-    local filename url
-    filename="$(printf '%s' "$entry" | jq -r '.filename')"
-    url="$(printf '%s' "$entry" | jq -r '.url')"
-    log "fetching attachment $filename"
-    curl -fsSL "$url" -o "$dir/$filename" || log "failed to fetch attachment $filename"
-  done
+  log "fetching attachments"
+  /fetch-attachments.sh || true
 }
 
 install_repo_languages() {
