@@ -52,6 +52,15 @@ defmodule CamelotWeb.AuthController do
     |> redirect(to: ~p"/sign-in")
   end
 
+  @doc """
+  Redirects a legacy `/magic_link/:token` link to the magic-link
+  strategy's GET sign-in endpoint, which signs the user in directly.
+  """
+  @spec magic_link(Plug.Conn.t(), map()) :: Plug.Conn.t()
+  def magic_link(conn, %{"token" => token}) do
+    redirect(conn, to: ~p"/auth/user/magic_link?#{[token: token]}")
+  end
+
   @spec sign_out(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def sign_out(conn, _params) do
     conn

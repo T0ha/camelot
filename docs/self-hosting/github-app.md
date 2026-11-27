@@ -123,6 +123,14 @@ auth, exactly as if the App didn't exist. "Log in with GitHub" is switched
 off the same way: the button still renders, but pressing it explains the
 instance isn't configured and sends you back to the magic-link form.
 
+## GitHub-only login
+
+Set `MAGIC_LINK_ENABLED=false` to turn off email magic-link sign-in
+(default `true`). Link requests, already-mailed links and the email form
+on `/sign-in` are all disabled, leaving "Log in with GitHub" as the only
+method. Configure the GitHub App first, or nobody can sign in. Existing
+sessions are unaffected.
+
 `AppConfig` is deliberately all-or-nothing across all six variables, so
 GitHub *login* also needs the webhook secret set. Since the point of the
 feature is to install the App during login, the coupling is intentional.

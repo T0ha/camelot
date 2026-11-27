@@ -12,6 +12,28 @@ defmodule Camelot.Accounts.User.Senders.SendMagicLinkTest do
     :ok
   end
 
+  describe "with magic link disabled" do
+    setup do
+      original = Application.get_env(:camelot, :magic_link_enabled)
+      Application.put_env(:camelot, :magic_link_enabled, false)
+
+      on_exit(fn ->
+        Application.put_env(:camelot, :magic_link_enabled, original)
+      end)
+    end
+
+    test "sends nothing to an email" do
+      :ok = SendMagicLink.send("stranger@example.com", "tok-123", [])
+      assert_no_email_sent()
+    end
+
+    test "sends nothing to a known user" do
+      user = Ash.Seed.seed!(User, %{email: "invited@example.com"})
+      :ok = SendMagicLink.send(user, "tok-123", [])
+      assert_no_email_sent()
+    end
+  end
+
   describe "with registration enabled" do
     setup do
       Application.put_env(:camelot, :registration_enabled, true)
@@ -27,6 +49,18 @@ defmodule Camelot.Accounts.User.Senders.SendMagicLinkTest do
       user = Ash.Seed.seed!(User, %{email: "invited@example.com"})
       :ok = SendMagicLink.send(user, "tok-123", [])
       assert_email_sent(to: [{"", "invited@example.com"}])
+    end
+
+    test "links straight to the sign-in endpoint, not an interstitial page" do
+      user = Ash.Seed.seed!(User, %{email: "invited@example.com"})
+      :ok = SendMagicLink.send(user, "tok-123", [])
+
+      url = CamelotWeb.Endpoint.url() <> "/auth/user/magic_link?token=tok-123"
+
+      assert_email_sent(fn email ->
+        assert email.html_body =~ url
+        assert email.text_body =~ url
+      end)
     end
 
     test "renders the shared branded layout" do

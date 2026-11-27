@@ -106,11 +106,21 @@ Camelot with this GitHub account and have any role on the project. The
 | Authors an issue with `camelot:skip-plan` | plan skipped | planned anyway, until an **owner** 👍s the issue |
 | Comments | change request, or `/approve` | ignored, until an **owner** 👍s that comment |
 | 👍 on the plan comment | approves | ignored |
+| An **owner** 👍s an issue | the labels added before the 👍 count as the owner's | — |
 
 When an owner 👍s a stranger's comment, Camelot treats it as an
 ordinary change request. A stranger's `/approve` never counts as an
 approval, even with an owner's 👍. If a comment is edited after the
 👍, the 👍 no longer counts.
+
+An owner's 👍 on an issue approves the issue as it was at that
+moment, labels included. This is how you approve an issue opened by a
+bot, for example a recurring card's agent using the GitHub App
+token: Camelot imports nothing before the 👍, and afterwards counts
+`camelot`, `camelot:agent:<slug>`, `camelot:model:<id>` and
+`camelot:skip-plan` if they were added at or before the 👍. A label a
+stranger adds after the 👍 does not count. If several owners 👍 the
+issue, the latest 👍 counts.
 
 ## Attachments
 
@@ -153,8 +163,10 @@ agent know it is missing. Upload it on the task page instead.
   take a few minutes to appear as a task. Plan approval, change
   requests and merge handling are checked about every 2 minutes.
 - **Stranger-authored issues**: an owner's 👍 on an issue is **not**
-  voided by later edits. Vouch for the issue only once its text is
-  final.
+  voided by later edits of the issue body, because the GitHub REST API
+  cannot tell a body edit from a label change. The same holds for the
+  labels it vouches for: the body Camelot imports is whatever it is at
+  import time. Vouch only for a final issue.
 
 ## For self-hosters
 

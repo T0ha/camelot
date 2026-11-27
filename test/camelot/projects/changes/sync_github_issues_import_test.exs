@@ -16,6 +16,8 @@ defmodule Camelot.Projects.Changes.SyncGithubIssuesImportTest do
   @owner_gh 1001
   @member_gh 1002
   @stranger_gh 1003
+  # A GitHub App bot account: not a Camelot user at all.
+  @bot_gh 4001
 
   setup do
     StubPullRequestApi.install()
@@ -251,6 +253,65 @@ defmodule Camelot.Projects.Changes.SyncGithubIssuesImportTest do
                import!(project, stranger_issue, events_by(@member_gh, labels), reactions)
 
       assert task.stage == :todo
+    end
+  end
+
+  describe "import_issue/4 — owner vouches for a bot issue" do
+    @bot_labels ["camelot:skip-plan", "camelot:model:model-b"]
+
+    defp bot_issue do
+      issue(@bot_labels, %{"user" => %{"id" => @bot_gh, "login" => "camelot[bot]"}})
+    end
+
+    defp owner_thumbs_up(created_at) do
+      %{"content" => "+1", "user" => %{"id" => @owner_gh}, "created_at" => created_at}
+    end
+
+    test "is untrusted without an owner's 👍", %{project: project} do
+      assert :untrusted = import!(project, bot_issue(), events_by(@bot_gh, @bot_labels))
+      assert Ash.read!(Task) == []
+    end
+
+    test "a member's 👍 does not vouch for it", %{project: project} do
+      reactions = [
+        %{"content" => "+1", "user" => %{"id" => @member_gh}, "created_at" => "2026-10-01T11:00:00Z"}
+      ]
+
+      assert :untrusted =
+               import!(project, bot_issue(), events_by(@bot_gh, @bot_labels), reactions)
+    end
+
+    test "an owner's 👍 imports it in execution with the pinned model", %{project: project} do
+      reactions = [owner_thumbs_up("2026-10-01T11:00:00Z")]
+
+      assert {:ok, task} =
+               import!(project, bot_issue(), events_by(@bot_gh, @bot_labels), reactions)
+
+      assert task.stage == :executing
+      assert task.plan == "Build the widget page."
+      assert task.next_model == "model-b"
+    end
+
+    test "a model label the bot adds after the 👍 is ignored", %{project: project} do
+      events = [
+        labeled("camelot", @bot_gh, "2026-10-01T10:00:00Z"),
+        labeled("camelot:skip-plan", @bot_gh, "2026-10-01T10:00:00Z"),
+        labeled("camelot:model:model-b", @bot_gh, "2026-10-01T12:00:00Z")
+      ]
+
+      reactions = [owner_thumbs_up("2026-10-01T11:00:00Z")]
+
+      assert {:ok, task} = import!(project, bot_issue(), events, reactions)
+
+      assert task.stage == :executing
+      assert is_nil(task.next_model)
+    end
+
+    test "a camelot label the bot adds after the 👍 is not imported", %{project: project} do
+      events = [labeled("camelot", @bot_gh, "2026-10-01T12:00:00Z")]
+      reactions = [owner_thumbs_up("2026-10-01T11:00:00Z")]
+
+      assert :untrusted = import!(project, issue([]), events, reactions)
     end
   end
 

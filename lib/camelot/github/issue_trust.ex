@@ -12,8 +12,9 @@ defmodule Camelot.Github.IssueTrust do
 
   Everything else — strangers' labels, comments and reactions — is
   ignored, except that a project owner can vouch for one specific
-  stranger comment (or a stranger-authored issue) with a 👍 reaction;
-  see `owner_approved?/3`. Lookups run with `authorize?: false`: they
+  stranger comment (or a stranger-authored issue) with a 👍 reaction —
+  see `owner_approved?/3` — and a 👍 on an issue vouches for the labels
+  applied to it up to that moment — see `owner_vouched_label?/4`. Lookups run with `authorize?: false`: they
   run unattended from Oban jobs with no web actor, like
   `Camelot.Projects.Membership.owner?/2`.
   """
@@ -84,6 +85,49 @@ defmodule Camelot.Github.IssueTrust do
   def owner_approved?(subject, reactions, project_id) do
     not is_nil(owner_approval(subject, reactions, project_id))
   end
+
+  @doc """
+  Whether a project owner vouched for `label` on an issue by 👍-ing
+  the issue after the label was applied.
+
+  The owner's latest 👍 among `reactions` approves the issue as it was
+  at that moment: `label` counts when its latest `labeled` event in
+  `events` is from the same moment as that 👍 or earlier. A label
+  added (or re-added) after the 👍 is not vouched for.
+  """
+  @spec owner_vouched_label?(String.t(), [map()], [map()], Ash.UUID.t()) ::
+          boolean()
+  def owner_vouched_label?(label, events, reactions, project_id) do
+    vouched_at = latest_owner_thumbs_up_at(reactions, project_id)
+    labeled_at = latest_labeled_at(events, label)
+
+    labeled_by?(labeled_at, vouched_at)
+  end
+
+  defp latest_owner_thumbs_up_at(reactions, project_id) do
+    reactions
+    |> Enum.filter(&(thumbs_up?(&1) and owner?(actor_id(&1), project_id)))
+    |> Enum.map(& &1["created_at"])
+    |> Enum.reject(&is_nil/1)
+    |> Enum.max(fn -> nil end)
+  end
+
+  defp latest_labeled_at(events, label) do
+    events
+    |> Enum.filter(&labeled_event?(&1, label))
+    |> List.last()
+    |> event_created_at()
+  end
+
+  defp labeled_event?(%{"event" => "labeled", "label" => %{"name" => label}}, label), do: true
+  defp labeled_event?(_event, _label), do: false
+
+  defp event_created_at(%{"created_at" => created_at}), do: created_at
+  defp event_created_at(_event), do: nil
+
+  defp labeled_by?(nil, _vouched_at), do: false
+  defp labeled_by?(_labeled_at, nil), do: false
+  defp labeled_by?(labeled_at, vouched_at), do: labeled_at <= vouched_at
 
   @doc "Whether a reaction is a 👍."
   @spec thumbs_up?(map()) :: boolean()
