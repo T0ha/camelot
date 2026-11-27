@@ -33,6 +33,12 @@ defmodule Camelot.Runtime.Runner.SecretEnv do
 
   def to_env(%{kind: :openai_api_key, value: v}), do: ["OPENAI_API_KEY=#{v}"]
 
+  # `agy` reads either variable, so set both and let a value baked into
+  # the container under the other name never win.
+  def to_env(%{kind: :gemini_api_key, value: v}) do
+    ["GEMINI_API_KEY=#{v}", "GOOGLE_API_KEY=#{v}"]
+  end
+
   # Kimi Code reads no API-key env var of its own: the entrypoint's
   # `kimi_configure` probes which endpoint the key belongs to and
   # writes `$KIMI_CODE_HOME/config.toml`. Same pair the generic

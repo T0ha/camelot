@@ -22,6 +22,13 @@ defmodule Camelot.Runtime.Runner.SecretEnvTest do
       assert SecretEnv.to_env(%{kind: :openai_api_key, value: "sk-oai"}) == ["OPENAI_API_KEY=sk-oai"]
     end
 
+    test "gemini_api_key sets both GEMINI_API_KEY and GOOGLE_API_KEY" do
+      assert SecretEnv.to_env(%{kind: :gemini_api_key, value: "AIza-key"}) == [
+               "GEMINI_API_KEY=AIza-key",
+               "GOOGLE_API_KEY=AIza-key"
+             ]
+    end
+
     # The entrypoint's CAMELOT_SECRET_* loop hands it to
     # `materialise_one kimi_api_key`, which writes the kimi config.
     test "kimi_api_key maps to CAMELOT_SECRET_KIMI_API_KEY" do

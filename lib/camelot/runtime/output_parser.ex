@@ -12,6 +12,9 @@ defmodule Camelot.Runtime.OutputParser do
     messages arriving as `item.completed` events whose item
     `type` is `agent_message`. Under `--output-schema` that
     final message is a JSON object, surfaced as `structured`.
+  - `:antigravity_json` expects the `agy --output-format stream-json`
+    event stream, reading the run from its final
+    `{"event": "result", "result": {...}}` object.
   - `:kimi_jsonl` expects the `kimi --output-format stream-json`
     event stream: `role`-tagged JSON lines (`meta`, `assistant`,
     `tool`), interleaved with whatever the CLI and its `Bash` tool
@@ -20,7 +23,12 @@ defmodule Camelot.Runtime.OutputParser do
   - `:raw_text` passes the buffer through unchanged.
   """
 
-  @type parser :: :claude_code_json | :codex_jsonl | :kimi_jsonl | :raw_text
+  @type parser ::
+          :claude_code_json
+          | :codex_jsonl
+          | :kimi_jsonl
+          | :antigravity_json
+          | :raw_text
 
   @type permission_denial :: %{
           tool_name: String.t(),
@@ -61,6 +69,13 @@ defmodule Camelot.Runtime.OutputParser do
     case decode_lines(buffer) do
       [] -> {:error, "no JSON object found in output"}
       events -> from_codex_events(events)
+    end
+  end
+
+  def parse(:antigravity_json, buffer) do
+    case decode_lines(buffer) do
+      [] -> {:error, "no JSON object found in output"}
+      events -> events |> last_agy_result() |> from_agy_result()
     end
   end
 
@@ -373,6 +388,56 @@ defmodule Camelot.Runtime.OutputParser do
 
   defp codex_event?(%{"type" => type}, type), do: true
   defp codex_event?(_event, _type), do: false
+
+  # `agy` writes progress events (init, messages, tool calls) ahead of a
+  # single closing result event; only that one describes the run.
+  defp last_agy_result(events) do
+    events
+    |> Enum.filter(&agy_result_event?/1)
+    |> List.last()
+  end
+
+  defp agy_result_event?(%{"event" => "result", "result" => %{}}), do: true
+  defp agy_result_event?(_event), do: false
+
+  # A run that hit a quota or a bad model id still exits through a result
+  # event, so its `status` — not the exit code — says whether it worked.
+  defp from_agy_result(nil), do: {:error, "no result event found in output"}
+
+  defp from_agy_result(%{"result" => %{"status" => "SUCCESS"} = result}) do
+    response = agy_response(result["response"])
+
+    {:ok,
+     %{
+       result_text: response,
+       cost_usd: nil,
+       duration_ms: agy_duration_ms(result["duration_seconds"]),
+       duration_api_ms: nil,
+       num_turns: result["num_turns"],
+       usage: result["usage"],
+       permission_denials: [],
+       structured: structured_output(result),
+       assistant_texts: codex_assistant_texts(response)
+     }}
+  end
+
+  defp from_agy_result(%{"result" => result}) do
+    {:error, "antigravity error: " <> agy_error_message(result)}
+  end
+
+  defp agy_response(response) when is_binary(response), do: String.trim(response)
+  defp agy_response(_response), do: ""
+
+  defp agy_duration_ms(seconds) when is_number(seconds), do: round(seconds * 1000)
+  defp agy_duration_ms(_seconds), do: nil
+
+  defp agy_error_message(%{"error" => %{"message" => "" <> message}}), do: message
+  defp agy_error_message(%{"error" => "" <> message}) when message != "", do: message
+  defp agy_error_message(%{"response" => "" <> message}) when message != "", do: message
+  defp agy_error_message(result), do: "status #{inspect_status(result["status"])}"
+
+  defp inspect_status("" <> status), do: status
+  defp inspect_status(status), do: inspect(status)
 
   # kimi-code 2.3.0 reports a failed run on stderr only — stdout carries
   # just the `system.version` event — as
