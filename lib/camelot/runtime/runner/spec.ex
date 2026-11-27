@@ -62,6 +62,18 @@ defmodule Camelot.Runtime.Runner.Spec do
         }
 
   @doc """
+  The `ATTACHMENTS_JSON` env entry for `spec`, or none.
+
+  Sent both at container create time (read by `entrypoint.sh`) and on
+  every session exec (read by `exec-wrapper.sh`). A per-task container
+  outlives its sessions, so files imported from GitHub after it
+  booted only reach `.camelot/attachments/` through the exec env.
+  """
+  @spec attachments_env(t()) :: [String.t()]
+  def attachments_env(%__MODULE__{attachments_json: nil}), do: []
+  def attachments_env(%__MODULE__{attachments_json: json}), do: ["ATTACHMENTS_JSON=#{json}"]
+
+  @doc """
   Path the run's JSON output schema is materialised at.
 
   A CLI that takes its structured-output schema as a file

@@ -3,7 +3,9 @@ defmodule Camelot.Board.Changes.CheckIssuePlanTest do
 
   alias Camelot.Board.Changes.CheckIssuePlan
   alias Camelot.Board.Task
+  alias Camelot.Board.TaskAttachment
   alias Camelot.Board.TaskMessage
+  alias Camelot.Github.IssueAttachments
   alias Camelot.Projects.Membership
   alias Camelot.Projects.Project
 
@@ -257,6 +259,64 @@ defmodule Camelot.Board.Changes.CheckIssuePlanTest do
 
       assert :approved = CheckIssuePlan.apply_activity(task, activity)
       assert_receive {:task_updated, %Task{stage: :executing}}
+    end
+  end
+
+  describe "apply_activity/2 — attachments" do
+    @file_url "https://github.com/user-attachments/files/9/data.xlsx"
+
+    setup do
+      Req.Test.stub(IssueAttachments, &Plug.Conn.send_resp(&1, 200, "xlsx"))
+      :ok
+    end
+
+    defp attachments(task) do
+      TaskAttachment
+      |> Ash.Query.filter(task_id == ^task.id)
+      |> Ash.read!()
+    end
+
+    test "imports a member comment's attachment and points the message at it", %{task: task} do
+      activity = activity(%{comments: [comment(501, @member_gh, "Use [data.xlsx](#{@file_url})")]})
+
+      assert :changes_requested = CheckIssuePlan.apply_activity(task, activity)
+
+      assert [%{filename: "data.xlsx", source: :github_comment}] = attachments(task)
+      assert [%{content: "Use [data.xlsx](.camelot/attachments/data.xlsx)"}] = messages(task)
+    end
+
+    test "imports a stranger's attachment once an owner vouches for it", %{task: task} do
+      activity =
+        activity(%{
+          comments: [comment(501, @stranger_gh, @file_url)],
+          comment_reactions: %{501 => [thumbs_up(@owner_gh)]}
+        })
+
+      assert :changes_requested = CheckIssuePlan.apply_activity(task, activity)
+      assert [%{filename: "data.xlsx"}] = attachments(task)
+    end
+
+    test "never downloads an unvouched stranger's attachment", %{task: task} do
+      activity = activity(%{comments: [comment(501, @stranger_gh, @file_url)]})
+
+      assert :no_change = CheckIssuePlan.apply_activity(task, activity)
+      assert attachments(task) == []
+    end
+
+    test "does not import the same file twice across polls", %{task: task} do
+      first = activity(%{comments: [comment(501, @member_gh, @file_url)]})
+      CheckIssuePlan.apply_activity(task, first)
+
+      task = Ash.get!(Task, task.id)
+
+      later = %{
+        "created_at" => DateTime.to_iso8601(DateTime.add(task.issue_comments_seen_at, 60))
+      }
+
+      second = activity(%{comments: [comment(502, @member_gh, @file_url, later)]})
+      CheckIssuePlan.apply_activity(task, second)
+
+      assert [_one] = attachments(task)
     end
   end
 

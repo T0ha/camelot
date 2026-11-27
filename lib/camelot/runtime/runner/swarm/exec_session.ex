@@ -523,7 +523,11 @@ defmodule Camelot.Runtime.Runner.Swarm.ExecSession do
   # fallback only; these values override anything mounted from
   # /run/secrets/ at container-start time.
   defp session_env(%Spec{} = spec) do
-    session_id_env(spec) ++ secret_env(spec) ++ mcp_env(spec) ++ output_schema_env(spec)
+    session_id_env(spec) ++
+      secret_env(spec) ++
+      mcp_env(spec) ++
+      output_schema_env(spec) ++
+      Spec.attachments_env(spec)
   end
 
   # The exec-wrapper tees output to /tmp/camelot-output-<id>.log so we
