@@ -102,6 +102,11 @@ See [Get Started](https://docs.camelotai.tech/cloud/get-started) (source:
 [`docs/cloud/get-started.md`](docs/cloud/get-started.md)) for a full
 walkthrough from first login to your first merged PR.
 
+**Coming from another tool?** Moving to Camelot AI takes about 10 minutes:
+see the guides for [Vibe Kanban](https://docs.camelotai.tech/migration/from-vibe-kanban),
+[Cline Kanban](https://docs.camelotai.tech/migration/from-cline-kanban) and
+[GitHub Copilot coding agent](https://docs.camelotai.tech/migration/from-copilot-coding-agent).
+
 ## Configuration
 
 Key environment variables (see `config/runtime.exs` for full details):
